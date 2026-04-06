@@ -137,12 +137,13 @@ Go standard library covers: HTTP, TLS, templating, SQL, JSON, crypto, context, l
 
 Necessary external dependencies (each must be justified):
 
-| Dep | Purpose | Why no stdlib alternative |
-|-----|---------|---------------------------|
-| `modernc.org/sqlite` | SQLite driver | No stdlib SQLite. `modernc.org/sqlite` is pure Go (no CGo), which keeps cross-compile trivial. |
-| `github.com/jackc/pgx/v5` | PostgreSQL driver | Stdlib has `database/sql` but needs a driver; pgx is the de-facto best. |
-| `github.com/yuin/gopher-lua` | Lua runtime | No stdlib Lua. Gopher-Lua is pure Go, widely used, sandboxable. |
-| YAML loader | Config | Stdlib has no YAML. See decision below. |
+| Dep | Status | Purpose | Why no stdlib alternative |
+|-----|--------|---------|---------------------------|
+| `golang.org/x/crypto` | landed M3 | argon2id + bcrypt password hashing | Stdlib has primitives but no high-level argon2id; x/crypto is the canonical source and Google-maintained. |
+| `modernc.org/sqlite` | landed M3 | SQLite driver | No stdlib SQLite. `modernc.org/sqlite` is pure Go (no CGo), which keeps cross-compile trivial and the production binary statically linked. |
+| `github.com/jackc/pgx/v5` | landed M3 | PostgreSQL driver | Stdlib has `database/sql` but needs a driver; pgx is the de-facto best and exposes a `database/sql` adapter so the SQL handler shape matches sqlite. |
+| `github.com/yuin/gopher-lua` | M5 | Lua runtime | No stdlib Lua. Gopher-Lua is pure Go, widely used, sandboxable. |
+| YAML loader | landed M0 | Config | Stdlib has no YAML. See decision below. |
 
 **YAML decision:** we will implement a *minimal* YAML 1.2 subset loader in-tree (`internal/config/yaml`) supporting only the constructs ircat needs: maps, sequences, scalars, anchors not required. If that proves fragile, we fall back to `sigs.k8s.io/yaml` (which itself shells out to `gopkg.in/yaml.v3`). The decision will be revisited after milestone M2 with a benchmark / bug-count check-in.
 
