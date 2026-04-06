@@ -1,0 +1,18 @@
+version: 1
+server:
+  name: irc.local
+  description: "ircat"
+  network: ircat
+  listeners:
+    - address: "0.0.0.0:6667"
+      tls: false
+storage:
+  driver: sqlite
+  sqlite:
+    path: /var/lib/ircat/ircat.db
+dashboard:
+  enabled: true
+  address: "0.0.0.0:8080"
+logging:
+  level: info
+  format: json
