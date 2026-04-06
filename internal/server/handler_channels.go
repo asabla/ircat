@@ -72,7 +72,7 @@ func (c *Conn) joinOne(name, key string) {
 	// the early-out gives correct error numerics for the common
 	// cases.
 	if existing := c.server.world.FindChannel(name); existing != nil {
-		if reason := checkJoinPolicy(existing, c.user, key); reason != "" {
+		if reason := checkJoinPolicy(c, existing, c.user, key); reason != "" {
 			switch reason {
 			case "+i":
 				c.send(protocol.NumericReply(srv, nick, protocol.ERR_INVITEONLYCHAN, name, "Cannot join channel (+i)"))
@@ -115,7 +115,7 @@ func (c *Conn) joinOne(name, key string) {
 // checkJoinPolicy returns the mode character that prevented the
 // join, or "" if the join is allowed. Used to translate from "no"
 // to a specific 47x numeric.
-func checkJoinPolicy(ch *state.Channel, _ *state.User, key string) string {
+func checkJoinPolicy(c *Conn, ch *state.Channel, u *state.User, key string) string {
 	inviteOnly, _, _, _, _, _, chanKey, limit := ch.Modes()
 	if inviteOnly {
 		return "+i"
@@ -126,8 +126,9 @@ func checkJoinPolicy(ch *state.Channel, _ *state.User, key string) string {
 	if limit > 0 && ch.MemberCount() >= limit {
 		return "+l"
 	}
-	// Bans are M2-deferred until +b is wired up; we'll add the
-	// matching pass here once SetMode handles list-form modes.
+	if ch.MatchesBan(u.Hostmask(), c.server.world.CaseMapping().Fold) {
+		return "+b"
+	}
 	return ""
 }
 

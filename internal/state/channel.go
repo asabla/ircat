@@ -200,6 +200,185 @@ func (c *Channel) SetMembership(id UserID, m Membership) bool {
 	return true
 }
 
+// AddMembership ORs flags onto the member without dropping existing
+// ones. Returns the new membership and true on success.
+func (c *Channel) AddMembership(id UserID, flags Membership) (Membership, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cur, ok := c.members[id]
+	if !ok {
+		return 0, false
+	}
+	c.members[id] = cur | flags
+	return c.members[id], true
+}
+
+// RemoveMembership clears flags from the member. Returns the new
+// membership and true on success.
+func (c *Channel) RemoveMembership(id UserID, flags Membership) (Membership, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cur, ok := c.members[id]
+	if !ok {
+		return 0, false
+	}
+	c.members[id] = cur &^ flags
+	return c.members[id], true
+}
+
+// Boolean mode setters. Each takes the canonical mode char and a
+// boolean. Returns true if the mode actually changed (so the caller
+// knows whether to broadcast).
+func (c *Channel) SetBoolMode(mode byte, on bool) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	target := c.boolModePtr(mode)
+	if target == nil || *target == on {
+		return false
+	}
+	*target = on
+	return true
+}
+
+func (c *Channel) boolModePtr(mode byte) *bool {
+	switch mode {
+	case 'i':
+		return &c.modes.inviteOnly
+	case 'm':
+		return &c.modes.moderated
+	case 'n':
+		return &c.modes.noExternal
+	case 'p':
+		return &c.modes.private
+	case 's':
+		return &c.modes.secret
+	case 't':
+		return &c.modes.topicLocked
+	}
+	return nil
+}
+
+// SetKey installs (or clears) the channel key. Returns true if the
+// key actually changed.
+func (c *Channel) SetKey(key string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.key == key {
+		return false
+	}
+	c.key = key
+	return true
+}
+
+// Key returns the current channel key, or "" if none is set.
+func (c *Channel) Key() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.key
+}
+
+// SetLimit installs (or clears) the channel user limit. limit <= 0
+// disables the limit. Returns true if the limit changed.
+func (c *Channel) SetLimit(limit int) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if limit < 0 {
+		limit = 0
+	}
+	if c.limit == limit {
+		return false
+	}
+	c.limit = limit
+	return true
+}
+
+// Limit returns the current user limit, or 0 if no limit is set.
+func (c *Channel) Limit() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.limit
+}
+
+// AddBan adds mask to the ban list. Returns true if the mask was
+// new.
+func (c *Channel) AddBan(mask string, at time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.bans[mask]; ok {
+		return false
+	}
+	c.bans[mask] = at
+	return true
+}
+
+// RemoveBan drops mask from the ban list. Returns true if the mask
+// was present.
+func (c *Channel) RemoveBan(mask string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.bans[mask]; !ok {
+		return false
+	}
+	delete(c.bans, mask)
+	return true
+}
+
+// Bans returns a snapshot of the ban list as (mask, set time)
+// pairs in arbitrary order.
+func (c *Channel) Bans() map[string]time.Time {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make(map[string]time.Time, len(c.bans))
+	for k, v := range c.bans {
+		out[k] = v
+	}
+	return out
+}
+
+// MatchesBan reports whether hostmask matches any of the channel's
+// bans. The match algorithm is the simple IRC glob: '*' matches any
+// run of characters, '?' matches a single character, everything
+// else literal and case-insensitive under the world's case mapping.
+func (c *Channel) MatchesBan(hostmask string, fold func(string) string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	folded := fold(hostmask)
+	for mask := range c.bans {
+		if globMatch(fold(mask), folded) {
+			return true
+		}
+	}
+	return false
+}
+
+// globMatch implements the simple IRC glob algorithm with '*' and
+// '?' wildcards. Returns true if pattern matches s end-to-end.
+func globMatch(pattern, s string) bool {
+	pi, si := 0, 0
+	starP, starS := -1, -1
+	for si < len(s) {
+		switch {
+		case pi < len(pattern) && (pattern[pi] == s[si] || pattern[pi] == '?'):
+			pi++
+			si++
+		case pi < len(pattern) && pattern[pi] == '*':
+			starP = pi
+			starS = si
+			pi++
+		case starP >= 0:
+			pi = starP + 1
+			starS++
+			si = starS
+		default:
+			return false
+		}
+	}
+	for pi < len(pattern) && pattern[pi] == '*' {
+		pi++
+	}
+	return pi == len(pattern)
+}
+
 // Modes returns a copy of the boolean mode flags. List-form modes
 // (bans, exceptions) are exposed via separate methods.
 func (c *Channel) Modes() (inviteOnly, moderated, noExternal, private, secret, topicLocked bool, key string, limit int) {

@@ -41,6 +41,8 @@ func (c *Conn) dispatch(m *protocol.Message) {
 		c.handleWho(m)
 	case "WHOIS":
 		c.handleWhois(m)
+	case "MODE":
+		c.handleMode(m)
 	case "PING":
 		c.handlePing(m)
 	case "PONG":
