@@ -120,6 +120,10 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /users/{nick}/kick", a.requireToken(a.handleKickUser))
 	mux.HandleFunc("GET /channels", a.requireToken(a.handleListChannels))
 	mux.HandleFunc("GET /channels/{name}", a.requireToken(a.handleGetChannel))
+	mux.HandleFunc("GET /tokens", a.requireToken(a.handleListTokens))
+	mux.HandleFunc("POST /tokens", a.requireToken(a.handleCreateToken))
+	mux.HandleFunc("DELETE /tokens/{id}", a.requireToken(a.handleDeleteToken))
+	mux.HandleFunc("GET /events", a.requireToken(a.handleListEvents))
 	return mux
 }
 
