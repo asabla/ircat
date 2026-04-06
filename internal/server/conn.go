@@ -139,8 +139,12 @@ func (c *Conn) close() {
 	c.closeOnce.Do(func() {
 		c.cancel(io.EOF)
 		_ = c.nc.Close()
-		// Drop the user from the world if we promoted one.
+		// Drop the user from the world if we promoted one. Channel
+		// memberships and the connection registry both reference the
+		// UserID, so we tear down the registry entry first to make
+		// sure no in-flight broadcast lands on a closed channel.
 		if c.user != nil {
+			c.server.unregisterConn(c.user.ID)
 			c.server.world.RemoveUser(c.user.ID)
 			c.user = nil
 		}

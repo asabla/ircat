@@ -65,6 +65,7 @@ func (c *Conn) tryCompleteRegistration() {
 		return
 	}
 	c.user = user
+	c.server.registerConn(c)
 	c.logger.Info("registered", "nick", user.Nick, "user", user.User)
 	c.sendWelcomeBurst()
 }

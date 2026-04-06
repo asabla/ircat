@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/asabla/ircat/internal/config"
+	"github.com/asabla/ircat/internal/protocol"
 	"github.com/asabla/ircat/internal/state"
 )
 
@@ -59,6 +60,13 @@ type Server struct {
 	// shutdown can wait for them to finish.
 	connWG sync.WaitGroup
 
+	// conns maps registered UserID to its owning Conn so handlers
+	// can fan messages out to other users (PRIVMSG, JOIN, NICK,
+	// QUIT broadcasts). Pre-registration connections are not in the
+	// map; they have no UserID yet.
+	connsMu sync.RWMutex
+	conns   map[state.UserID]*Conn
+
 	// motd is the message-of-the-day file content split into lines.
 	// Loaded once at startup; nil if no MOTD is configured or the
 	// file is missing (we send ERR_NOMOTD in that case).
@@ -86,6 +94,7 @@ func New(cfg *config.Config, world *state.World, logger *slog.Logger, opts ...Op
 		world:  world,
 		logger: logger,
 		now:    time.Now,
+		conns:  make(map[state.UserID]*Conn),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -93,6 +102,50 @@ func New(cfg *config.Config, world *state.World, logger *slog.Logger, opts ...Op
 	s.createdAt = s.now()
 	s.motd = loadMOTD(cfg.Server.MOTDFile, logger)
 	return s
+}
+
+// registerConn associates a registered Conn with its UserID so other
+// handlers can find it for fan-out. Called from
+// tryCompleteRegistration after the user has been added to the world.
+func (s *Server) registerConn(c *Conn) {
+	if c.user == nil {
+		return
+	}
+	s.connsMu.Lock()
+	defer s.connsMu.Unlock()
+	s.conns[c.user.ID] = c
+}
+
+// unregisterConn drops a Conn from the registry. Called from
+// Conn.close.
+func (s *Server) unregisterConn(id state.UserID) {
+	s.connsMu.Lock()
+	defer s.connsMu.Unlock()
+	delete(s.conns, id)
+}
+
+// connFor returns the Conn currently registered for id, or nil. Used
+// by message fan-out to look up the target of a directed message
+// and by channel broadcast to walk the membership.
+func (s *Server) connFor(id state.UserID) *Conn {
+	s.connsMu.RLock()
+	defer s.connsMu.RUnlock()
+	return s.conns[id]
+}
+
+// broadcastToChannel sends msg to every Conn whose user is currently
+// a member of ch. If except is non-zero, the matching member is
+// skipped (used by PRIVMSG so the sender doesn't echo to themselves).
+// If includeSelf is true, the except parameter is ignored.
+func (s *Server) broadcastToChannel(ch *state.Channel, msg *protocol.Message, except state.UserID, includeSelf bool) {
+	for id := range ch.MemberIDs() {
+		if !includeSelf && id == except {
+			continue
+		}
+		if c := s.connFor(id); c != nil {
+			c.send(msg)
+		}
+	}
 }
 
 // Run binds every configured listener and serves until ctx is
