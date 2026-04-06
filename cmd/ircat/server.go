@@ -154,6 +154,13 @@ func runServer(args []string) error {
 	}
 	defer sup.Stop()
 
+	// Start the federation supervisor. Each configured link with
+	// connect=true is dialed on its own goroutine; the returned
+	// wait func blocks until every link goroutine has drained on
+	// shutdown.
+	fedWait := startFederation(runCtxOrBg(ctx), cfg, srv, logger)
+	defer fedWait()
+
 	logger.Info("ircat ready",
 		"listeners", listenerAddresses(cfg),
 		"storage_driver", cfg.Storage.Driver,
@@ -194,6 +201,12 @@ func runServer(args []string) error {
 	logger.Info("ircat stopped")
 	return nil
 }
+
+// runCtxOrBg is a tiny helper: startFederation wants a context
+// that stays alive for the lifetime of the server run, not just
+// for the listener bind. We use the parent ctx (signal-bound) so
+// SIGTERM drains federation links alongside the IRC listener.
+func runCtxOrBg(ctx context.Context) context.Context { return ctx }
 
 // openStore wires up the persistent storage backend selected in
 // config. Both sqlite (default, file-backed, pure-Go) and postgres
