@@ -1,0 +1,38 @@
+{
+  "name": "ircat",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": true,
+      "configureZshAsDefaultShell": true
+    },
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.go",
+        "redhat.vscode-yaml",
+        "ms-azuretools.vscode-docker",
+        "editorconfig.editorconfig"
+      ],
+      "settings": {
+        "go.useLanguageServer": true,
+        "go.lintTool": "staticcheck",
+        "[go]": {
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": { "source.organizeImports": "always" }
+        }
+      }
+    }
+  },
+  "forwardPorts": [6667, 6697, 8080],
+  "postCreateCommand": "go mod download || true",
+  "remoteUser": "vscode",
+  "mounts": [
+    "source=ircat-gomodcache,target=/home/vscode/go/pkg/mod,type=volume",
+    "source=ircat-gobuildcache,target=/home/vscode/.cache/go-build,type=volume"
+  ]
+}
