@@ -83,6 +83,12 @@ type Server struct {
 	// "no fan-out" — the server still writes to the store.
 	eventBus EventPublisher
 
+	// fedLinks is the federation link registry, keyed by peer
+	// server name. See internal/server/federation.go for the
+	// API the broadcast path uses.
+	fedMu    sync.RWMutex
+	fedLinks map[string]fedLinkSender
+
 	// motd is the message-of-the-day file content split into lines.
 	// Loaded once at startup; nil if no MOTD is configured or the
 	// file is missing (we send ERR_NOMOTD in that case).

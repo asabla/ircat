@@ -28,7 +28,17 @@ type User struct {
 	Modes      string // sorted user mode chars (e.g. "iow")
 	Registered bool   // true once both NICK and USER have completed
 	ConnectAt  time.Time
+
+	// HomeServer is the name of the ircat node that owns this user.
+	// Empty means "local to this node". Non-empty users are
+	// remote: the local node knows about them via federation burst
+	// and forwards directed messages back through the owning link
+	// rather than delivering to a local Conn.
+	HomeServer string
 }
+
+// IsRemote reports whether the user lives on a different node.
+func (u *User) IsRemote() bool { return u.HomeServer != "" }
 
 // Hostmask renders the user as "nick!user@host", the canonical form
 // used for prefixes in messages originating from this user.

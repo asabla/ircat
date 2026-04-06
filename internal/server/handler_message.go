@@ -123,7 +123,9 @@ func (c *Conn) deliverOneTarget(target, text, command string, emitErrors bool) {
 		// Channel broadcasts skip the sender so they do not see
 		// their own message echoed (matching RFC 2812 §3.3 and
 		// every production ircd). The sender knows what they sent.
-		c.server.broadcastToChannel(ch, msg, c.user.ID, false)
+		// We use the federation-aware variant so the broadcast
+		// also reaches any remote members via their peer links.
+		c.server.broadcastToChannelFederated(ch, msg, c.user.ID, false)
 		return
 	}
 
