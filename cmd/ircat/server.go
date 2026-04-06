@@ -11,6 +11,8 @@ import (
 
 	"github.com/asabla/ircat/internal/config"
 	"github.com/asabla/ircat/internal/logging"
+	"github.com/asabla/ircat/internal/server"
+	"github.com/asabla/ircat/internal/state"
 )
 
 // runServer is the default subcommand: load config, initialize
@@ -70,15 +72,22 @@ func runServer(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// TODO(M1+): start IRC listener(s), dashboard, API, federation,
-	//            bot supervisor, event sinks. For M0 we just announce
-	//            readiness and wait for a signal.
+	world := state.NewWorld()
+	srv := server.New(cfg, world, logger)
+
 	logger.Info("ircat ready", "listeners", listenerAddresses(cfg))
 
-	<-ctx.Done()
-	logger.Info("ircat shutting down", "reason", context.Cause(ctx))
+	// Server.Run blocks until ctx is done; it owns the listeners and
+	// the per-connection drain. Future milestones add the dashboard,
+	// API, federation links, bot supervisor, and event sinks here in
+	// parallel and orchestrate their shutdown alongside the IRC
+	// listener.
+	if err := srv.Run(ctx); err != nil {
+		logger.Error("server stopped with error", "error", err)
+		return err
+	}
 
-	// TODO(M1+): drain subsystems in reverse dependency order.
+	logger.Info("ircat shutting down", "reason", context.Cause(ctx))
 	logger.Info("ircat stopped")
 	return nil
 }

@@ -173,29 +173,61 @@ func (c *Conn) readLoop() {
 }
 
 // writeLoop drains the outbound queue and writes to the socket. It
-// exits when ctx is done or when a write fails.
+// exits when ctx is done *and* the queue has drained, or when a
+// write fails.
+//
+// The drain step matters for QUIT: handleQuit queues an ERROR and
+// then cancels the context. Without the drain, the select could pick
+// ctx.Done() before pulling the ERROR off the queue, and the client
+// would see a bare EOF instead of the goodbye line.
 func (c *Conn) writeLoop() {
 	defer c.cancel(errors.New("write loop exited"))
 	for {
 		select {
 		case <-c.ctx.Done():
+			c.drainOutbound()
 			return
 		case msg, ok := <-c.out:
 			if !ok {
 				return
 			}
-			data, err := msg.Bytes()
-			if err != nil {
-				c.logger.Warn("encode error, dropping message", "error", err, "command", msg.Command)
-				continue
-			}
-			_ = c.nc.SetWriteDeadline(c.server.now().Add(30 * time.Second))
-			if _, err := c.nc.Write(data); err != nil {
-				c.logger.Debug("write error", "error", err)
+			if !c.writeMessage(msg) {
 				return
 			}
 		}
 	}
+}
+
+// drainOutbound writes every message currently sitting in the
+// outbound queue and then returns. It is non-blocking — once the
+// queue is empty it stops.
+func (c *Conn) drainOutbound() {
+	for {
+		select {
+		case msg := <-c.out:
+			if !c.writeMessage(msg) {
+				return
+			}
+		default:
+			return
+		}
+	}
+}
+
+// writeMessage encodes msg and writes it to the socket. Returns
+// false on write error so the caller can stop.
+func (c *Conn) writeMessage(msg *protocol.Message) bool {
+	data, err := msg.Bytes()
+	if err != nil {
+		c.logger.Warn("encode error, dropping message", "error", err, "command", msg.Command)
+		return true
+	}
+	_ = c.nc.SetWriteDeadline(c.server.now().Add(30 * time.Second))
+	if _, err := c.nc.Write(data); err != nil {
+		c.logger.Debug("write error", "error", err)
+		return false
+	}
+	return true
 }
 
 // pingLoop sends a PING when the connection has been idle for longer
