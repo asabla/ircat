@@ -102,6 +102,7 @@ func runServer(args []string) error {
 		Store:      store,
 		World:      world,
 		Actuator:   srv,
+		BotManager: sup,
 		ServerInfo: srv,
 		Logger:     logger.With("component", "api"),
 	})

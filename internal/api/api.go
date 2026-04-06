@@ -37,12 +37,13 @@ import (
 // [API.Handler] to get an http.Handler suitable for mounting under
 // the dashboard's /api/v1 prefix.
 type API struct {
-	store     storage.Store
-	world     *state.World
-	logger    *slog.Logger
-	actuator  Actuator
-	now       func() time.Time
-	allowList []string // optional CORS allow-list (M4 polish: defer)
+	store      storage.Store
+	world      *state.World
+	logger     *slog.Logger
+	actuator   Actuator
+	botManager BotManager
+	now        func() time.Time
+	allowList  []string // optional CORS allow-list (M4 polish: defer)
 
 	// serverInfo describes the running ircat node. Captured at
 	// New time so the /server endpoint does not need to grow a
@@ -86,6 +87,7 @@ type Options struct {
 	Store      storage.Store
 	World      *state.World
 	Actuator   Actuator
+	BotManager BotManager
 	ServerInfo ServerInfoSource
 	Logger     *slog.Logger
 }
@@ -100,6 +102,7 @@ func New(opts Options) *API {
 		store:      opts.Store,
 		world:      opts.World,
 		actuator:   opts.Actuator,
+		botManager: opts.BotManager,
 		serverInfo: opts.ServerInfo,
 		logger:     logger,
 		now:        time.Now,
@@ -124,6 +127,11 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /tokens", a.requireToken(a.handleCreateToken))
 	mux.HandleFunc("DELETE /tokens/{id}", a.requireToken(a.handleDeleteToken))
 	mux.HandleFunc("GET /events", a.requireToken(a.handleListEvents))
+	mux.HandleFunc("GET /bots", a.requireToken(a.handleListBots))
+	mux.HandleFunc("GET /bots/{id}", a.requireToken(a.handleGetBot))
+	mux.HandleFunc("POST /bots", a.requireToken(a.handleCreateBot))
+	mux.HandleFunc("PUT /bots/{id}", a.requireToken(a.handleUpdateBot))
+	mux.HandleFunc("DELETE /bots/{id}", a.requireToken(a.handleDeleteBot))
 	return mux
 }
 
