@@ -20,6 +20,10 @@ type PageDeps struct {
 	Store      storage.Store
 	World      *state.World
 	ServerInfo PageServerInfo
+	// Actuator provides the live actions the page handlers expose
+	// via form posts (kick, etc.). Optional — without it the
+	// corresponding buttons return 503.
+	Actuator PageActuator
 }
 
 // PageServerInfo is the small interface the overview page reads.
@@ -30,6 +34,13 @@ type PageServerInfo interface {
 	Version() string
 	StartedAt() time.Time
 	ListenerAddresses() []string
+}
+
+// PageActuator is the small interface the dashboard mutation
+// handlers (kick, etc.) call into. internal/server.Server
+// satisfies it via its existing KickUser method.
+type PageActuator interface {
+	KickUser(ctx context.Context, nick, reason string) error
 }
 
 // pageData is the per-request render struct.
@@ -84,6 +95,24 @@ type eventPayload struct {
 	Actor     string
 	Target    string
 	DataJSON  string
+}
+
+// csrfToken returns the per-session CSRF token via the session
+// store. Templates render it via {{.CSRF}}.
+func (s *Server) csrfToken(sess *session) string {
+	if s.sessions == nil {
+		return ""
+	}
+	return s.sessions.csrfToken(sess)
+}
+
+// checkCSRF verifies the supplied csrf field matches the per-session
+// token. False means reject the request.
+func (s *Server) checkCSRF(sess *session, supplied string) bool {
+	if s.sessions == nil {
+		return false
+	}
+	return s.sessions.checkCSRF(sess, supplied)
 }
 
 // requireSession is the page-level analogue of the api token
@@ -167,7 +196,7 @@ func (s *Server) handleOverview(sess *session, w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleUsersPage(sess *session, w http.ResponseWriter, r *http.Request) {
-	data := &pageData{Title: "users", Operator: sess.Operator}
+	data := &pageData{Title: "users", Operator: sess.Operator, CSRF: s.csrfToken(sess)}
 	if s.pages != nil && s.pages.World != nil {
 		snap := s.pages.World.Snapshot()
 		for _, u := range snap {
@@ -221,6 +250,34 @@ func (s *Server) handleOperatorsPage(sess *session, w http.ResponseWriter, r *ht
 		}
 	}
 	s.renderPage(w, "operators", data)
+}
+
+// handleKickUserPage is the dashboard form post that mirrors the
+// API kick path. The form template lives in templates/users.html.
+func (s *Server) handleKickUserPage(sess *session, w http.ResponseWriter, r *http.Request) {
+	nick := r.PathValue("nick")
+	if s.pages == nil || s.pages.Actuator == nil {
+		http.Error(w, "kick disabled", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if !s.checkCSRF(sess, r.PostForm.Get("csrf")) {
+		http.Error(w, "bad csrf token", http.StatusForbidden)
+		return
+	}
+	reason := r.PostForm.Get("reason")
+	if reason == "" {
+		reason = "Kicked from dashboard by " + sess.Operator
+	}
+	if err := s.pages.Actuator.KickUser(r.Context(), nick, reason); err != nil {
+		s.logger.Warn("dashboard kick failed", "nick", nick, "error", err)
+		http.Error(w, "kick failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/dashboard/users", http.StatusSeeOther)
 }
 
 func (s *Server) handleEventsPage(sess *session, w http.ResponseWriter, r *http.Request) {

@@ -106,6 +106,7 @@ func runServer(args []string) error {
 			Store:      store,
 			World:      world,
 			ServerInfo: srv,
+			Actuator:   srv,
 		},
 		ReadyFunc: func() error {
 			// Ready once the IRC server has bound at least one

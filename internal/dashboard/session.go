@@ -108,6 +108,28 @@ func (s *sessionStore) encode(sess session) string {
 	return body + "|" + sig
 }
 
+// csrfToken returns a per-session CSRF token. The token is the HMAC
+// of the operator name plus a constant string with the session
+// store key, so it is stable for the life of the session and tied
+// to the operator identity. Forms render it as a hidden input;
+// handlers verify it via [sessionStore.checkCSRF] before applying
+// the mutation.
+func (s *sessionStore) csrfToken(sess *session) string {
+	if sess == nil {
+		return ""
+	}
+	mac := hmac.New(sha256.New, s.key)
+	mac.Write([]byte("csrf:" + sess.Operator))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+// checkCSRF compares the supplied token to the expected one for
+// this session in constant time.
+func (s *sessionStore) checkCSRF(sess *session, supplied string) bool {
+	want := s.csrfToken(sess)
+	return hmac.Equal([]byte(want), []byte(supplied))
+}
+
 // decode reverses encode and verifies the HMAC in constant time.
 func (s *sessionStore) decode(value string) (*session, error) {
 	parts := strings.SplitN(value, "|", 3)

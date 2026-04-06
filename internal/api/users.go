@@ -71,6 +71,13 @@ type kickRequest struct {
 	Reason string `json:"reason"`
 }
 
+// kickReasonCap is the hard upper bound on the kick reason an API
+// client can supply. Mirrors the IRC kick reason length limit the
+// M2 channel handlers enforce. We do not pull from the running
+// config because the api package does not depend on config; a
+// fixed cap is fine for the API surface.
+const kickReasonCap = 255
+
 func (a *API) handleKickUser(w http.ResponseWriter, r *http.Request) {
 	if a.actuator == nil {
 		writeError(w, http.StatusServiceUnavailable, "no_actuator", "server actuator not configured")
@@ -86,6 +93,9 @@ func (a *API) handleKickUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Reason == "" {
 		req.Reason = "Kicked by admin API"
+	}
+	if len(req.Reason) > kickReasonCap {
+		req.Reason = req.Reason[:kickReasonCap]
 	}
 	if err := a.actuator.KickUser(r.Context(), nick, req.Reason); err != nil {
 		if errors.Is(err, ErrNotFound) {

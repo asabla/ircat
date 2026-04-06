@@ -180,6 +180,86 @@ func TestOperatorsPage_RendersOperator(t *testing.T) {
 	}
 }
 
+// fakeKickActuator records every KickUser call for the tests.
+type fakeKickActuator struct {
+	last   string
+	reason string
+	err    error
+	calls  int
+}
+
+func (f *fakeKickActuator) KickUser(ctx context.Context, nick, reason string) error {
+	f.calls++
+	f.last = nick
+	f.reason = reason
+	return f.err
+}
+
+func newPageServerWithActuator(t *testing.T, act PageActuator) (*Server, *sqlite.Store, *state.World) {
+	t.Helper()
+	srv, store, world := newPageServer(t)
+	srv.pages.Actuator = act
+	return srv, store, world
+}
+
+func TestKickFromDashboard_RequiresCSRF(t *testing.T) {
+	act := &fakeKickActuator{}
+	srv, _, _ := newPageServerWithActuator(t, act)
+	cookie := loginCookie(t, srv, "admin", "secret")
+
+	// POST without a CSRF token -> 403.
+	form := url.Values{}
+	req := httptest.NewRequest("POST", "/dashboard/users/alice/kick", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status %d, want 403", rec.Code)
+	}
+	if act.calls != 0 {
+		t.Errorf("kick fired without CSRF: %d calls", act.calls)
+	}
+}
+
+func TestKickFromDashboard_WithCSRFKicks(t *testing.T) {
+	act := &fakeKickActuator{}
+	srv, _, world := newPageServerWithActuator(t, act)
+	// Add a user so the users page renders the kick form (and the
+	// CSRF input we need to extract).
+	_, _ = world.AddUser(&state.User{Nick: "alice", User: "alice", Host: "h", Registered: true})
+	cookie := loginCookie(t, srv, "admin", "secret")
+
+	// Pull the CSRF token from the rendered users page.
+	req := httptest.NewRequest("GET", "/dashboard/users", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	idx := strings.Index(body, `name="csrf" value="`)
+	if idx < 0 {
+		t.Fatalf("csrf input missing: %s", body)
+	}
+	idx += len(`name="csrf" value="`)
+	end := strings.Index(body[idx:], `"`)
+	csrf := body[idx : idx+end]
+
+	form := url.Values{}
+	form.Set("csrf", csrf)
+	form.Set("reason", "test kick")
+	req = httptest.NewRequest("POST", "/dashboard/users/alice/kick", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	rec = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	if act.calls != 1 || act.last != "alice" || act.reason != "test kick" {
+		t.Errorf("actuator = %+v", act)
+	}
+}
+
 func TestLogout_ClearsCookieAndRedirects(t *testing.T) {
 	srv, _, _ := newPageServer(t)
 	cookie := loginCookie(t, srv, "admin", "secret")
