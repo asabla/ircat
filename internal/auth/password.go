@@ -64,15 +64,40 @@ func DefaultArgon2idParams() Argon2idParams {
 	}
 }
 
+// withArgon2idDefaults fills any zero field on p with the matching
+// value from [DefaultArgon2idParams]. Callers supplying only the
+// cost parameters (memory, iterations, parallelism) get safe salt
+// and key lengths automatically.
+func withArgon2idDefaults(p Argon2idParams) Argon2idParams {
+	d := DefaultArgon2idParams()
+	if p.MemoryKiB == 0 {
+		p.MemoryKiB = d.MemoryKiB
+	}
+	if p.Iterations == 0 {
+		p.Iterations = d.Iterations
+	}
+	if p.Parallelism == 0 {
+		p.Parallelism = d.Parallelism
+	}
+	if p.SaltLength == 0 {
+		p.SaltLength = d.SaltLength
+	}
+	if p.KeyLength == 0 {
+		p.KeyLength = d.KeyLength
+	}
+	return p
+}
+
 // Hash produces an encoded hash for password using algorithm.
 // algorithm is one of "argon2id" or "bcrypt". The argon2id branch
-// uses the supplied params, or [DefaultArgon2idParams] if zero.
+// fills in any zero field on params with the [DefaultArgon2idParams]
+// value, so callers can supply just the cost parameters they care
+// about (memory, iterations, parallelism) and let the salt and key
+// lengths default.
 func Hash(algorithm, password string, params Argon2idParams) (string, error) {
 	switch algorithm {
 	case AlgorithmArgon2id:
-		if params == (Argon2idParams{}) {
-			params = DefaultArgon2idParams()
-		}
+		params = withArgon2idDefaults(params)
 		return hashArgon2id(password, params)
 	case AlgorithmBcrypt:
 		out, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
