@@ -166,6 +166,10 @@ func (s *Server) Run(ctx context.Context) error {
 		return errors.New("server: no listeners configured")
 	}
 
+	if err := s.restorePersistentChannels(ctx); err != nil {
+		return fmt.Errorf("restore persistent channels: %w", err)
+	}
+
 	bound := make([]net.Listener, 0, len(s.cfg.Server.Listeners))
 	for _, lc := range s.cfg.Server.Listeners {
 		l, err := bindListener(lc)

@@ -460,6 +460,10 @@ func (c *Conn) handleTopic(m *protocol.Message) {
 		text = text[:maxLen]
 	}
 	ch.SetTopic(text, c.user.Hostmask(), c.server.now())
+	// Persist the new topic before broadcasting so a crash between
+	// the in-memory mutation and the broadcast cannot leave the
+	// channel record stale on restart.
+	c.server.persistChannel(c.ctx, ch)
 	// Broadcast TOPIC to every member, including the setter so they
 	// see their own change reflected.
 	topicMsg := &protocol.Message{

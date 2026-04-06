@@ -465,6 +465,44 @@ func (c *Channel) ModeString() (modes string, params []string) {
 	return string(out), params
 }
 
+// RestoreState writes persisted channel state into a fresh
+// (empty-membership) channel. Used by the server boot path to
+// hydrate channels from PersistentChannelStore. Members are NOT
+// restored — they reconnect on their own.
+func (c *Channel) RestoreState(topic, topicSetBy string, topicSetAt time.Time, modeWord, key string, limit int, bans map[string]time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.topic = topic
+	c.topicSetBy = topicSetBy
+	c.topicSetAt = topicSetAt
+	c.key = key
+	c.limit = limit
+	// Reset boolean modes then apply each char from the mode word.
+	c.modes = channelModes{}
+	for i := 0; i < len(modeWord); i++ {
+		switch modeWord[i] {
+		case '+':
+			continue
+		case 'i':
+			c.modes.inviteOnly = true
+		case 'm':
+			c.modes.moderated = true
+		case 'n':
+			c.modes.noExternal = true
+		case 'p':
+			c.modes.private = true
+		case 's':
+			c.modes.secret = true
+		case 't':
+			c.modes.topicLocked = true
+		}
+	}
+	c.bans = make(map[string]time.Time, len(bans))
+	for k, v := range bans {
+		c.bans[k] = v
+	}
+}
+
 // SortedMemberIDs returns a snapshot of the member IDs in a stable
 // order. Used by NAMES so the output is deterministic across calls.
 func (c *Channel) SortedMemberIDs() []UserID {
