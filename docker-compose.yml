@@ -1,0 +1,83 @@
+# Production-oriented compose stack.
+# - ircat built from source via multi-stage Dockerfile
+# - Postgres as the primary datastore
+# - Redis for the event stream sink
+# - Named volumes for durable data
+#
+# Override via docker-compose.override.yml or environment variables.
+# Secrets are read from a local .env file; do not commit it.
+
+services:
+  ircat:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        VERSION: ${IRCAT_VERSION:-dev}
+    image: ghcr.io/asabla/ircat:${IRCAT_VERSION:-dev}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "6667:6667"
+      - "6697:6697"
+      - "8080:8080"
+    environment:
+      IRCAT_INITIAL_ADMIN_PASSWORD: ${IRCAT_INITIAL_ADMIN_PASSWORD:?set in .env}
+      IRCAT_WEBHOOK_SECRET: ${IRCAT_WEBHOOK_SECRET:-}
+    volumes:
+      - ./config/production.yaml:/etc/ircat/config.yaml:ro
+      - ircat-data:/var/lib/ircat
+      - ircat-logs:/var/log/ircat
+    healthcheck:
+      test: ["CMD", "/app/ircat", "healthcheck", "--address", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ircat
+      POSTGRES_USER: ircat
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+    volumes:
+      - ircat-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ircat -d ircat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "yes"]
+    volumes:
+      - ircat-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  ircat-data:
+  ircat-logs:
+  ircat-pgdata:
+  ircat-redis:

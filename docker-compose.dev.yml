@@ -1,0 +1,47 @@
+# Development compose stack.
+# - Bind-mounts the source tree into the container.
+# - Uses `air` for hot reload.
+# - SQLite by default (zero config). Postgres is present but optional.
+
+services:
+  ircat:
+    build:
+      context: .
+      dockerfile: docker/dev.Dockerfile
+    working_dir: /src
+    command: ["air", "-c", ".air.toml"]
+    ports:
+      - "6667:6667"
+      - "8080:8080"
+    volumes:
+      - .:/src
+      - gomodcache:/go/pkg/mod
+      - gobuildcache:/root/.cache/go-build
+      - ircat-dev-data:/var/lib/ircat
+    environment:
+      IRCAT_CONFIG: /src/config/dev.yaml
+      IRCAT_INITIAL_ADMIN_PASSWORD: admin
+    depends_on:
+      - postgres
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ircat
+      POSTGRES_USER: ircat
+      POSTGRES_PASSWORD: ircat
+    ports:
+      - "5432:5432"
+    volumes:
+      - ircat-dev-pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  gomodcache:
+  gobuildcache:
+  ircat-dev-data:
+  ircat-dev-pgdata:
