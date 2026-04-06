@@ -1,0 +1,274 @@
+package server
+
+import (
+	"bufio"
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"net"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/asabla/ircat/internal/protocol"
+	"github.com/asabla/ircat/internal/state"
+)
+
+// outboundQueue is the bounded per-connection write queue. Picked to
+// be small enough that a stuck client triggers SendQ-exceeded quickly
+// without blocking the rest of the network, and large enough that
+// normal bursty traffic (a JOIN that triggers NAMES + WHO replies)
+// flows through without back-pressuring the sender.
+const outboundQueue = 64
+
+// Conn is one accepted client connection. The lifetime is owned by
+// [Server.acceptLoop]; nothing outside this package should hold a
+// reference to a Conn.
+//
+// Locking discipline:
+//   - Fields touched only by the read goroutine (registration state,
+//     pending) need no synchronization.
+//   - lastActivity is touched by both the read goroutine (each
+//     parsed line) and the ping goroutine (timeout check), so it
+//     uses atomic.Int64.
+//   - The send method is the only writer for the outbound channel
+//     and is safe to call from any goroutine; the actual socket
+//     write happens in writeLoop.
+type Conn struct {
+	server *Server
+	nc     net.Conn
+	logger *slog.Logger
+
+	// out is the bounded outbound queue. writeLoop drains it; send
+	// fills it. Closed by the lifecycle owner during teardown.
+	out chan *protocol.Message
+
+	// ctx is the per-connection context. Cancelling it stops every
+	// goroutine attached to this connection. Cancellation is the
+	// universal "this connection is going away" signal.
+	ctx    context.Context
+	cancel context.CancelCauseFunc
+
+	// closeOnce guarantees the underlying net.Conn is closed exactly
+	// once even if multiple goroutines reach for the brakes.
+	closeOnce sync.Once
+
+	// lastActivity is the unix-nanos timestamp of the most recent
+	// inbound message. Read by the ping goroutine, written by the
+	// read goroutine.
+	lastActivity atomic.Int64
+
+	// pending tracks the registration state machine.
+	pending pending
+
+	// user is the state.User backing this connection once
+	// registration completes. Nil before that.
+	user *state.User
+
+	// remoteHost is the resolved peer host, captured at connect time.
+	remoteHost string
+}
+
+// pending holds the partial state collected during registration.
+// Once both nick and userParams are present we promote it to a
+// state.User and add it to the world.
+type pending struct {
+	nick     string
+	user     string
+	realname string
+	password string
+	nickSet  bool
+	userSet  bool
+}
+
+func newConn(srv *Server, nc net.Conn) *Conn {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	host, _, err := net.SplitHostPort(nc.RemoteAddr().String())
+	if err != nil {
+		host = nc.RemoteAddr().String()
+	}
+	c := &Conn{
+		server:     srv,
+		nc:         nc,
+		logger:     srv.logger.With("remote", nc.RemoteAddr().String()),
+		out:        make(chan *protocol.Message, outboundQueue),
+		ctx:        ctx,
+		cancel:     cancel,
+		remoteHost: host,
+	}
+	c.lastActivity.Store(srv.now().UnixNano())
+	return c
+}
+
+// serve runs the read, write, and ping goroutines for this connection
+// and returns once they have all finished. The parent context is the
+// server-wide shutdown signal; cancelling it tears down the connection.
+func (c *Conn) serve(parent context.Context) {
+	// Tie the per-conn context to the server context so a global
+	// shutdown drains every connection.
+	stop := context.AfterFunc(parent, func() {
+		c.cancel(errors.New("server shutting down"))
+	})
+	defer stop()
+	defer c.close()
+
+	var wg sync.WaitGroup
+	wg.Add(3)
+	go func() { defer wg.Done(); c.readLoop() }()
+	go func() { defer wg.Done(); c.writeLoop() }()
+	go func() { defer wg.Done(); c.pingLoop() }()
+	wg.Wait()
+}
+
+func (c *Conn) close() {
+	c.closeOnce.Do(func() {
+		c.cancel(io.EOF)
+		_ = c.nc.Close()
+		// Drop the user from the world if we promoted one.
+		if c.user != nil {
+			c.server.world.RemoveUser(c.user.ID)
+			c.user = nil
+		}
+	})
+}
+
+// readLoop reads CRLF-delimited lines, parses them, and dispatches
+// each one to the command handler. It exits on EOF, parse limit
+// breach, or write error from the dispatcher.
+func (c *Conn) readLoop() {
+	defer c.cancel(errors.New("read loop exited"))
+	r := bufio.NewReaderSize(c.nc, protocol.MaxMessageBytes*2)
+	for {
+		// Read deadline so a stuck client cannot hold us forever.
+		// We refresh the deadline far enough in the future that the
+		// ping loop is responsible for actually disconnecting idle
+		// clients; this deadline only catches half-open sockets.
+		_ = c.nc.SetReadDeadline(c.server.now().Add(15 * time.Minute))
+
+		line, err := r.ReadBytes('\n')
+		if err != nil {
+			if errors.Is(err, io.EOF) || isClosedNetError(err) {
+				return
+			}
+			c.logger.Debug("read error", "error", err)
+			return
+		}
+		if len(line) > protocol.MaxMessageBytes {
+			c.logger.Debug("oversized line, dropping client", "bytes", len(line))
+			c.sendError("Message too long")
+			return
+		}
+		c.lastActivity.Store(c.server.now().UnixNano())
+
+		msg, err := protocol.Parse(line)
+		if err != nil {
+			// Tolerate garbage from the wire — many real clients
+			// occasionally emit empty lines or stray bytes.
+			continue
+		}
+		c.dispatch(msg)
+	}
+}
+
+// writeLoop drains the outbound queue and writes to the socket. It
+// exits when ctx is done or when a write fails.
+func (c *Conn) writeLoop() {
+	defer c.cancel(errors.New("write loop exited"))
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case msg, ok := <-c.out:
+			if !ok {
+				return
+			}
+			data, err := msg.Bytes()
+			if err != nil {
+				c.logger.Warn("encode error, dropping message", "error", err, "command", msg.Command)
+				continue
+			}
+			_ = c.nc.SetWriteDeadline(c.server.now().Add(30 * time.Second))
+			if _, err := c.nc.Write(data); err != nil {
+				c.logger.Debug("write error", "error", err)
+				return
+			}
+		}
+	}
+}
+
+// pingLoop sends a PING when the connection has been idle for longer
+// than the configured interval and disconnects when the idle time
+// exceeds the configured timeout.
+func (c *Conn) pingLoop() {
+	interval := time.Duration(c.server.cfg.Server.Limits.PingIntervalSeconds) * time.Second
+	timeout := time.Duration(c.server.cfg.Server.Limits.PingTimeoutSeconds) * time.Second
+	if interval <= 0 {
+		interval = 120 * time.Second
+	}
+	if timeout <= 0 {
+		timeout = 240 * time.Second
+	}
+	// Poll roughly four times per interval; the cost is negligible
+	// and it gives the timeout sub-interval resolution.
+	tick := interval / 4
+	if tick < time.Second {
+		tick = time.Second
+	}
+	t := time.NewTicker(tick)
+	defer t.Stop()
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-t.C:
+			now := c.server.now()
+			last := time.Unix(0, c.lastActivity.Load())
+			idle := now.Sub(last)
+			if idle >= timeout {
+				c.sendError("Ping timeout: " + idle.Truncate(time.Second).String())
+				c.cancel(errors.New("ping timeout"))
+				return
+			}
+			if idle >= interval {
+				c.send(&protocol.Message{
+					Command: "PING",
+					Params:  []string{c.server.cfg.Server.Name},
+				})
+			}
+		}
+	}
+}
+
+// send queues a message for delivery. If the queue is full the
+// connection is killed (the historical "SendQ exceeded" behaviour).
+func (c *Conn) send(m *protocol.Message) {
+	select {
+	case c.out <- m:
+	default:
+		c.logger.Debug("sendq exceeded, killing client")
+		c.cancel(errors.New("sendq exceeded"))
+	}
+}
+
+// sendError emits an ERROR line and is the canonical way to tell a
+// client we are about to drop them. ERROR is unusual in that it has
+// only a trailing parameter and never carries a numeric prefix.
+func (c *Conn) sendError(reason string) {
+	c.send(&protocol.Message{
+		Command: "ERROR",
+		Params:  []string{"Closing Link: " + c.remoteHost + " (" + reason + ")"},
+	})
+}
+
+// isClosedNetError reports whether err is the "use of closed network
+// connection" error or its modern equivalent. The standard library
+// does not export a sentinel for this so we string-match, like every
+// other Go network library.
+func isClosedNetError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, net.ErrClosed) || strings.Contains(err.Error(), "use of closed network connection")
+}
