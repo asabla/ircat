@@ -127,6 +127,46 @@ function on_command(ctx, event)
 end
 `
 
+// dmEchoBot replies to any PRIVMSG by echoing the text back to
+// event.channel. For DMs, the supervisor rewrites event.channel to
+// the sender nick so the reply naturally DMs back to the human
+// rather than looping into the bot's own inbox.
+const dmEchoBot = `
+function on_message(ctx, event)
+  ctx:say(event.channel, "echo: " .. event.text)
+end
+`
+
+func TestE2E_BotDMEchoRepliesToSender(t *testing.T) {
+	addr, teardown := startServerWithBot(t, "echobot", dmEchoBot)
+	defer teardown()
+	time.Sleep(200 * time.Millisecond)
+
+	c, err := ircclient.Dial(addr, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.Register("alice", time.Now().Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Alice DMs the bot. The bot must reply to alice (not to
+	// itself) — proving event.channel was rewritten to the sender
+	// for DMs.
+	if err := c.Send("PRIVMSG echobot :hello"); err != nil {
+		t.Fatal(err)
+	}
+	_, trace, err := c.Expect(time.Now().Add(2*time.Second), func(line string) bool {
+		return strings.HasPrefix(line, ":echobot!") &&
+			strings.Contains(line, " PRIVMSG alice ") &&
+			strings.HasSuffix(line, ":echo: hello")
+	})
+	if err != nil {
+		t.Fatalf("DM echo not observed: %v\n trace: %v", err, trace)
+	}
+}
+
 func TestE2E_BotPingPong(t *testing.T) {
 	addr, teardown := startServerWithBot(t, "botty", pingPongBot)
 	defer teardown()

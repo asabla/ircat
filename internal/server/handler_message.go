@@ -137,20 +137,29 @@ func (c *Conn) deliverOneTarget(target, text, command string, emitErrors bool) {
 		}
 		return
 	}
-	dest := c.server.connFor(u.ID)
-	if dest == nil {
-		// User is in the world but the conn is gone (mid-shutdown).
-		if emitErrors {
-			c.send(protocol.NumericReply(srv, nick, protocol.ERR_NOSUCHNICK,
-				target, "No such nick/channel"))
-		}
-		return
-	}
-	dest.send(&protocol.Message{
+	msg := &protocol.Message{
 		Prefix:  c.user.Hostmask(),
 		Command: command,
 		Params:  []string{u.Nick, text},
-	})
+	}
+	// Human target: deliver to the registered Conn.
+	if destConn := c.server.connFor(u.ID); destConn != nil {
+		destConn.send(msg)
+		return
+	}
+	// Bot target: deliver via the virtual BotDeliverer. The bot's
+	// Session.dispatchOne rewrites event.channel to the sender
+	// for DMs so ctx:say(event.channel, ...) replies to the human.
+	if destBot := c.server.botFor(u.ID); destBot != nil {
+		destBot.Deliver(msg)
+		return
+	}
+	// User is in the world but neither a conn nor a bot — mid
+	// shutdown or similar.
+	if emitErrors {
+		c.send(protocol.NumericReply(srv, nick, protocol.ERR_NOSUCHNICK,
+			target, "No such nick/channel"))
+	}
 }
 
 // isChannelName reports whether s looks like a channel target. We

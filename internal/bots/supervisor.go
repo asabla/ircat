@@ -189,15 +189,14 @@ func (s *Supervisor) startBot(ctx context.Context, bot storage.Bot) error {
 	}
 
 	session := &Session{
-		userID:      id,
-		nickName:    bot.Name,
-		logger:      s.logger.With("bot", bot.Name),
-		actuator:    s.opts.IRCActuator,
-		store:       s.opts.Store,
-		botID:       bot.ID,
-		inbox:       make(chan *protocol.Message, 64),
-		now:         time.Now,
-		shutdownLog: make([]string, 0, 32),
+		userID:   id,
+		nickName: bot.Name,
+		logger:   s.logger.With("bot", bot.Name),
+		actuator: s.opts.IRCActuator,
+		store:    s.opts.Store,
+		botID:    bot.ID,
+		inbox:    make(chan *protocol.Message, 64),
+		now:      time.Now,
 	}
 
 	rt, err := NewRuntime(bot.Source, session, DefaultBudget())
@@ -310,9 +309,6 @@ type Session struct {
 	now   func() time.Time
 
 	runtime *Runtime
-
-	mu          sync.Mutex
-	shutdownLog []string
 }
 
 // Deliver implements server.BotDeliverer. Non-blocking: a full
@@ -349,9 +345,21 @@ func (s *Session) dispatchOne(ctx context.Context, rt *Runtime, msg *protocol.Me
 		if len(msg.Params) < 2 {
 			return
 		}
+		target := msg.Params[0]
+		sender := senderFromPrefix(msg.Prefix)
+		// Resolve the "reply target" presented to the Lua script.
+		// For a channel PRIVMSG the script wants ctx:say(event.channel, ...)
+		// to go back to the channel. For a direct message (target is
+		// the bot's own nick) the script wants it to go back to the
+		// sender. Setting event.channel to the sender for DMs gives
+		// scripts one uniform "reply here" slot instead of making
+		// every script resolve DM vs channel manually.
+		if !isChannelTarget(target) && target == s.nickName {
+			target = sender
+		}
 		ev := Event{
-			Channel:  msg.Params[0],
-			Sender:   senderFromPrefix(msg.Prefix),
+			Channel:  target,
+			Sender:   sender,
 			Hostmask: msg.Prefix,
 			Text:     msg.Params[1],
 		}
@@ -399,6 +407,12 @@ func senderFromPrefix(prefix string) string {
 	return prefix
 }
 
+// isChannelTarget reports whether a PRIVMSG target is a channel
+// (starts with '#' or '&') rather than a nickname.
+func isChannelTarget(target string) bool {
+	return len(target) > 0 && (target[0] == '#' || target[0] == '&')
+}
+
 // Actions interface implementation follows.
 
 func (s *Session) Say(target, text string) error {
@@ -427,10 +441,21 @@ func (s *Session) PartChannel(channelName, reason string) error {
 }
 func (s *Session) Nick() string { return s.nickName }
 func (s *Session) Log(level, message string) {
-	s.logger.Log(context.Background(), slog.LevelInfo, message, "level", level)
-	s.mu.Lock()
-	s.shutdownLog = append(s.shutdownLog, level+": "+message)
-	s.mu.Unlock()
+	s.logger.Log(context.Background(), parseLogLevel(level), message)
+}
+
+// parseLogLevel maps a Lua-side level string to the matching slog
+// level. Unknown strings fall back to Info.
+func parseLogLevel(level string) slog.Level {
+	switch strings.ToLower(level) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error", "err":
+		return slog.LevelError
+	}
+	return slog.LevelInfo
 }
 func (s *Session) Now() time.Time {
 	if s.now != nil {

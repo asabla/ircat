@@ -217,6 +217,39 @@ func TestRuntime_CompileError(t *testing.T) {
 	}
 }
 
+func TestIsChannelTarget(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"#chan", true},
+		{"&local", true},
+		{"alice", false},
+		{"", false},
+		{"!nope", false},
+	}
+	for _, tc := range cases {
+		if got := isChannelTarget(tc.in); got != tc.want {
+			t.Errorf("isChannelTarget(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestParseLogLevel(t *testing.T) {
+	if parseLogLevel("debug").Level() != -4 { // slog.LevelDebug
+		t.Errorf("debug")
+	}
+	if parseLogLevel("warn").String() != "WARN" {
+		t.Errorf("warn")
+	}
+	if parseLogLevel("error").String() != "ERROR" {
+		t.Errorf("error")
+	}
+	if parseLogLevel("nonsense").String() != "INFO" {
+		t.Errorf("default")
+	}
+}
+
 func TestExtractCommand(t *testing.T) {
 	cases := []struct {
 		in      string
