@@ -15,15 +15,18 @@ var (
 	// ErrNoSuchUser is returned when an operation refers to a UserID
 	// or nickname that does not exist.
 	ErrNoSuchUser = errors.New("state: no such user")
+	// ErrNoSuchChannel is returned when an operation refers to a
+	// channel name that does not exist.
+	ErrNoSuchChannel = errors.New("state: no such channel")
 )
 
 // World is the authoritative in-memory state of one ircat node.
 //
-// In M1 it only tracks users; channels land in M2, federation
-// routing in M7. The lock is a single RWMutex for now: simpler than
-// sharding and the hot path (per-connection command handling) does
-// most of its work outside the lock anyway. We benchmark and shard
-// later if it shows up in profiles.
+// Federation routing lands in M7. The World mutex protects the user
+// and channel indexes; per-channel state is protected by its own
+// mutex (see [Channel]) so independent channels can evolve in
+// parallel without contending on the World lock. We benchmark and
+// shard later if profiles say to.
 type World struct {
 	mu      sync.RWMutex
 	mapping CaseMapping
@@ -34,6 +37,8 @@ type World struct {
 	// byID is the secondary index used by command handlers that hold
 	// a UserID for the connection they own.
 	byID map[UserID]*User
+	// byChannel maps the case-folded channel name to its [Channel].
+	byChannel map[string]*Channel
 
 	// now is the time source. Tests can swap it; production uses
 	// time.Now.
@@ -58,10 +63,11 @@ func WithClock(now func() time.Time) Option {
 // NewWorld constructs an empty World.
 func NewWorld(opts ...Option) *World {
 	w := &World{
-		mapping: CaseMappingRFC1459,
-		byNick:  make(map[string]*User),
-		byID:    make(map[UserID]*User),
-		now:     time.Now,
+		mapping:   CaseMappingRFC1459,
+		byNick:    make(map[string]*User),
+		byID:      make(map[UserID]*User),
+		byChannel: make(map[string]*Channel),
+		now:       time.Now,
 	}
 	for _, opt := range opts {
 		opt(w)
@@ -175,6 +181,109 @@ func (w *World) Snapshot() []User {
 	out := make([]User, 0, len(w.byID))
 	for _, u := range w.byID {
 		out = append(out, *u)
+	}
+	return out
+}
+
+// FindChannel returns the channel matching name under the case
+// mapping, or nil if no such channel exists.
+func (w *World) FindChannel(name string) *Channel {
+	if name == "" {
+		return nil
+	}
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.byChannel[w.mapping.Fold(name)]
+}
+
+// EnsureChannel returns the channel matching name, creating it if
+// necessary. The returned bool reports whether the channel was
+// created in this call (true) or already existed (false). The
+// caller is responsible for any membership operations.
+func (w *World) EnsureChannel(name string) (*Channel, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	key := w.mapping.Fold(name)
+	if ch, ok := w.byChannel[key]; ok {
+		return ch, false
+	}
+	ch := newChannel(name, w.now())
+	w.byChannel[key] = ch
+	return ch, true
+}
+
+// JoinChannel adds the user to the channel, creating the channel if
+// it doesn't exist yet. The returned bool reports whether the user
+// was newly added; the returned Membership is the user's membership
+// flags after the call (the first joiner is automatically opped).
+//
+// Returns ErrNoSuchUser if id is unknown.
+func (w *World) JoinChannel(id UserID, channelName string) (*Channel, Membership, bool, error) {
+	if w.FindByID(id) == nil {
+		return nil, 0, false, ErrNoSuchUser
+	}
+	ch, created := w.EnsureChannel(channelName)
+	mem, added := ch.addMember(id, created)
+	return ch, mem, added, nil
+}
+
+// PartChannel removes the user from the channel. Returns the channel
+// (so the caller can broadcast PART to its remaining members) and a
+// boolean indicating whether the channel became empty and was
+// dropped. Returns ErrNoSuchChannel if name does not exist, or
+// ErrNoSuchUser if id is not a member.
+func (w *World) PartChannel(id UserID, name string) (*Channel, bool, error) {
+	ch := w.FindChannel(name)
+	if ch == nil {
+		return nil, false, ErrNoSuchChannel
+	}
+	if !ch.removeMember(id) {
+		return ch, false, ErrNoSuchUser
+	}
+	if ch.MemberCount() == 0 {
+		w.dropChannel(name)
+		return ch, true, nil
+	}
+	return ch, false, nil
+}
+
+func (w *World) dropChannel(name string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	delete(w.byChannel, w.mapping.Fold(name))
+}
+
+// ChannelCount returns the number of channels currently in the world.
+func (w *World) ChannelCount() int {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return len(w.byChannel)
+}
+
+// ChannelsSnapshot returns a snapshot of every channel in the world.
+// The returned slice is detached from the world; the channels
+// themselves still need to be locked individually for field access.
+func (w *World) ChannelsSnapshot() []*Channel {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	out := make([]*Channel, 0, len(w.byChannel))
+	for _, ch := range w.byChannel {
+		out = append(out, ch)
+	}
+	return out
+}
+
+// UserChannels returns the channels the user is currently a member
+// of. Used by NICK propagation and QUIT broadcasts. The returned
+// slice is detached from the world.
+func (w *World) UserChannels(id UserID) []*Channel {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	var out []*Channel
+	for _, ch := range w.byChannel {
+		if ch.IsMember(id) {
+			out = append(out, ch)
+		}
 	}
 	return out
 }
