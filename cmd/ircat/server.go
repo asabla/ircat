@@ -88,8 +88,17 @@ func runServer(args []string) error {
 		return fmt.Errorf("bootstrap storage: %w", err)
 	}
 
+	eventBus, err := buildEventBus(cfg, logger)
+	if err != nil {
+		return fmt.Errorf("build event bus: %w", err)
+	}
+	defer eventBus.Close()
+
 	world := state.NewWorld()
-	srv := server.New(cfg, world, logger, server.WithStore(store))
+	srv := server.New(cfg, world, logger,
+		server.WithStore(store),
+		server.WithEventBus(eventBus),
+	)
 
 	sup := bots.New(bots.Options{
 		Store:       store,

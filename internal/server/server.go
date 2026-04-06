@@ -77,6 +77,12 @@ type Server struct {
 	// broadcast hot path.
 	bots map[state.UserID]BotDeliverer
 
+	// eventBus is the optional outbound event publisher. Audit
+	// events land here alongside the store write so external
+	// sinks (jsonl/webhook/redis) can observe them. Nil means
+	// "no fan-out" — the server still writes to the store.
+	eventBus EventPublisher
+
 	// motd is the message-of-the-day file content split into lines.
 	// Loaded once at startup; nil if no MOTD is configured or the
 	// file is missing (we send ERR_NOMOTD in that case).
@@ -111,6 +117,13 @@ func WithClock(now func() time.Time) Option {
 // surfaces can leave it nil.
 func WithStore(store storage.Store) Option {
 	return func(s *Server) { s.store = store }
+}
+
+// WithEventBus attaches an outbound event publisher. Audit events
+// are published to it alongside the store write so external sinks
+// can observe them.
+func WithEventBus(bus EventPublisher) Option {
+	return func(s *Server) { s.eventBus = bus }
 }
 
 // New constructs a Server. It does not bind any sockets; that happens
