@@ -39,13 +39,13 @@ type Config struct {
 
 // ServerConfig groups settings for the IRC daemon proper.
 type ServerConfig struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	Network     string         `json:"network"`
-	MOTDFile    string         `json:"motd_file"`
-	Admin       AdminInfo      `json:"admin"`
-	Listeners   []Listener     `json:"listeners"`
-	Limits      LimitsConfig   `json:"limits"`
+	Name        string       `json:"name"`
+	Description string       `json:"description"`
+	Network     string       `json:"network"`
+	MOTDFile    string       `json:"motd_file"`
+	Admin       AdminInfo    `json:"admin"`
+	Listeners   []Listener   `json:"listeners"`
+	Limits      LimitsConfig `json:"limits"`
 }
 
 // AdminInfo is the contact block advertised via /ADMIN.
@@ -196,10 +196,10 @@ type RetryBlock struct {
 
 // BotsConfig configures the Lua bot runtime.
 type BotsConfig struct {
-	Enabled                bool `json:"enabled"`
-	MaxBots                int  `json:"max_bots"`
-	PerBotMemoryMB         int  `json:"per_bot_memory_mb"`
-	PerBotInstructionBudget int `json:"per_bot_instruction_budget"`
+	Enabled                 bool `json:"enabled"`
+	MaxBots                 int  `json:"max_bots"`
+	PerBotMemoryMB          int  `json:"per_bot_memory_mb"`
+	PerBotInstructionBudget int  `json:"per_bot_instruction_budget"`
 }
 
 // FederationConfig declares server-to-server links.

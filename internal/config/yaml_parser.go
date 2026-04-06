@@ -368,7 +368,7 @@ func parseScalar(s string) any {
 }
 
 // unquote strips a single layer of quotes from a YAML scalar.
-// Single-quoted: '' becomes '. Double-quoted: \\ \" \n \t \r are
+// Single-quoted: ” becomes '. Double-quoted: \\ \" \n \t \r are
 // recognized; any other escape is returned literally without the
 // backslash.
 func unquote(s string) string {

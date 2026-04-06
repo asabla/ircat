@@ -24,6 +24,11 @@ func (c *Config) Validate() error {
 		return invalidf("server.network: required")
 	}
 
+	if l := c.Server.Limits; l.PingTimeoutSeconds <= l.PingIntervalSeconds {
+		return invalidf("server.limits.ping_timeout_seconds (%d) must be greater than ping_interval_seconds (%d)",
+			l.PingTimeoutSeconds, l.PingIntervalSeconds)
+	}
+
 	if len(c.Server.Listeners) == 0 {
 		return invalidf("server.listeners: at least one listener is required")
 	}

@@ -24,7 +24,12 @@ server:
 storage:
   driver: postgres
   postgres:
-    dsn: "postgres://ircat:${POSTGRES_PASSWORD}@postgres:5432/ircat?sslmode=disable"
+    # The DSN is pulled from $IRCAT_POSTGRES_DSN at boot. The compose
+    # stack constructs it from POSTGRES_PASSWORD; in other deployments
+    # set it directly. The config loader does NOT do shell-style env
+    # interpolation, so embedding ${VAR} literally in `dsn` would be
+    # passed verbatim to pgx and break the connection.
+    dsn_env: IRCAT_POSTGRES_DSN
     max_open_conns: 20
     max_idle_conns: 5
 

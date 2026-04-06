@@ -21,19 +21,29 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+    # Host ports are env-overridable to avoid collisions with whatever
+    # else is running on the host. Defaults are the canonical IRC,
+    # IRC-TLS, and dashboard ports.
     ports:
-      - "6667:6667"
-      - "6697:6697"
-      - "8080:8080"
+      - "${IRCAT_IRC_PORT:-6667}:6667"
+      - "${IRCAT_IRC_TLS_PORT:-6697}:6697"
+      - "${IRCAT_DASHBOARD_PORT:-8080}:8080"
     environment:
       IRCAT_INITIAL_ADMIN_PASSWORD: ${IRCAT_INITIAL_ADMIN_PASSWORD:?set in .env}
       IRCAT_WEBHOOK_SECRET: ${IRCAT_WEBHOOK_SECRET:-}
+      # Compose interpolates ${POSTGRES_PASSWORD} from .env and the
+      # resulting plain DSN is what ircat reads via dsn_env.
+      IRCAT_POSTGRES_DSN: postgres://ircat:${POSTGRES_PASSWORD:?set in .env}@postgres:5432/ircat?sslmode=disable
     volumes:
       - ./config/production.yaml:/etc/ircat/config.yaml:ro
       - ircat-data:/var/lib/ircat
       - ircat-logs:/var/log/ircat
+    # Until M4 lands the dashboard /healthz endpoint, the healthcheck
+    # is just a "binary still works" probe via the version subcommand.
+    # Swap to: ["CMD", "/app/ircat", "healthcheck", "--address",
+    # "http://localhost:8080/healthz"] once M4 is in.
     healthcheck:
-      test: ["CMD", "/app/ircat", "healthcheck", "--address", "http://localhost:8080/healthz"]
+      test: ["CMD", "/app/ircat", "version"]
       interval: 30s
       timeout: 5s
       retries: 3

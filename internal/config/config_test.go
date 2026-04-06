@@ -158,6 +158,16 @@ func TestValidate_TLSListenerNeedsCert(t *testing.T) {
 	}
 }
 
+func TestValidate_PingIntervalLessThanTimeout(t *testing.T) {
+	cfg := minimalLoaded(t)
+	cfg.Server.Limits.PingIntervalSeconds = 240
+	cfg.Server.Limits.PingTimeoutSeconds = 120
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "ping_timeout_seconds") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestValidate_PostgresNeedsDSN(t *testing.T) {
 	cfg := minimalLoaded(t)
 	cfg.Storage.Driver = "postgres"
