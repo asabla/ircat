@@ -88,6 +88,29 @@ func (c *Client) ExpectNumeric(code string, deadline time.Time) (string, []strin
 	})
 }
 
+// Register completes the standard NICK + USER handshake and reads
+// through the welcome burst, returning when 422 (or 376 if the test
+// later switches to providing an MOTD) lands. Convenience for tests
+// that just want a connected client.
+func (c *Client) Register(nick string, deadline time.Time) error {
+	if err := c.Send("NICK " + nick); err != nil {
+		return err
+	}
+	if err := c.Send("USER " + nick + " 0 * :" + nick); err != nil {
+		return err
+	}
+	for {
+		line, err := c.ReadLine(deadline)
+		if err != nil {
+			return fmt.Errorf("register: %w", err)
+		}
+		num := ExtractNumeric(line)
+		if num == "422" || num == "376" {
+			return nil
+		}
+	}
+}
+
 // ExtractNumeric returns the 3-digit numeric code from a server line
 // like ":server NNN target ..." or "" if the line is not a numeric
 // reply.

@@ -16,7 +16,6 @@ import (
 	"github.com/asabla/ircat/internal/state"
 )
 
-
 // outboundQueue is the bounded per-connection write queue. Picked to
 // be small enough that a stuck client triggers SendQ-exceeded quickly
 // without blocking the rest of the network, and large enough that

@@ -17,11 +17,11 @@ import (
 type tokenBucket struct {
 	mu sync.Mutex
 
-	burst       float64
-	refillRate  float64 // tokens per second
-	available   float64
-	lastRefill  time.Time
-	clock       func() time.Time
+	burst      float64
+	refillRate float64 // tokens per second
+	available  float64
+	lastRefill time.Time
+	clock      func() time.Time
 }
 
 func newTokenBucket(burst, refillPerSecond int, clock func() time.Time) *tokenBucket {
