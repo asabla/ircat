@@ -77,16 +77,17 @@ type Host interface {
 	LocalServerName() string
 	// WorldState returns the state.World the link mutates on
 	// burst. Named with the "State" suffix so it does not collide
-	// with other methods named World on Host implementations (for
-	// example the server.Server already exposes World indirectly
-	// through other interfaces).
+	// with other methods named World on Host implementations.
 	WorldState() *state.World
 	// DeliverLocal fans a protocol message out to local members of
 	// a channel (for channel-target messages) or to the single
-	// matching local user (for user-target messages). exclude is a
-	// home-server name the link should NOT forward back to, so
-	// loops are impossible.
-	DeliverLocal(msg *protocol.Message, excludeOrigin string)
+	// matching local user (for user-target messages).
+	// Implementations MUST NOT re-forward to any federation link
+	// from this method — the contract is "deliver locally,
+	// period". Loops across nodes are prevented at the broadcast
+	// entrypoint by distinguishing local vs remote senders, not
+	// by an exclude-mask here.
+	DeliverLocal(msg *protocol.Message)
 }
 
 // LinkConfig is the per-peer configuration needed to bring up a
@@ -97,6 +98,16 @@ type LinkConfig struct {
 	PasswordOut string
 	Description string
 	Version     string
+
+	// OnActive is called exactly once when the handshake
+	// completes and the link transitions to LinkActive. Optional.
+	// cmd/ircat uses it to register the link with the server's
+	// broadcast registry so a dangling half-handshaked link is
+	// never reachable from the broadcast hot path.
+	OnActive func(l *Link)
+	// OnClosed is called exactly once when the link state reaches
+	// LinkClosed. Optional. cmd/ircat uses it to unregister.
+	OnClosed func(l *Link)
 }
 
 // Link is one active peer connection. It is constructed once the
@@ -184,7 +195,8 @@ func (l *Link) Send(msg *protocol.Message) {
 	}
 }
 
-// Close releases the link. Idempotent.
+// Close releases the link. Idempotent. Fires OnClosed exactly
+// once if the config registered one.
 func (l *Link) Close() error {
 	l.mu.Lock()
 	if l.state == LinkClosed {
@@ -192,8 +204,12 @@ func (l *Link) Close() error {
 		return nil
 	}
 	l.state = LinkClosed
+	cb := l.cfg.OnClosed
 	l.mu.Unlock()
 	close(l.closed)
+	if cb != nil {
+		cb(l)
+	}
 	return nil
 }
 
@@ -328,6 +344,9 @@ func (l *Link) handleServer(msg *protocol.Message) {
 	l.sendBurst()
 	l.setState(LinkActive)
 	l.logger.Info("link active", "peer", peer)
+	if l.cfg.OnActive != nil {
+		l.cfg.OnActive(l)
+	}
 }
 
 // sendBurst streams the local state to the peer. M7 covers users
@@ -424,10 +443,7 @@ func (l *Link) handleRemoteQuit(msg *protocol.Message) {
 // handleRemoteMessage forwards a PRIVMSG or NOTICE the peer sent us
 // into the local world.
 func (l *Link) handleRemoteMessage(msg *protocol.Message) {
-	// Let the host deliver this to local members. The excludeOrigin
-	// argument is the peer server name so we never echo the
-	// message back down this link.
-	l.host.DeliverLocal(msg, l.PeerName())
+	l.host.DeliverLocal(msg)
 }
 
 // handleRemoteJoin ingests a peer JOIN line: "<prefix> JOIN
@@ -449,7 +465,7 @@ func (l *Link) handleRemoteJoin(msg *protocol.Message) {
 	_, _, _, _ = world.JoinChannel(u.ID, msg.Params[0])
 	// Also fan the JOIN out to local members of the channel so
 	// they see the remote user arrive.
-	l.host.DeliverLocal(msg, l.PeerName())
+	l.host.DeliverLocal(msg)
 }
 
 // handleRemotePart ingests a peer PART and removes the user from
@@ -467,7 +483,7 @@ func (l *Link) handleRemotePart(msg *protocol.Message) {
 	if u == nil || !u.IsRemote() {
 		return
 	}
-	l.host.DeliverLocal(msg, l.PeerName())
+	l.host.DeliverLocal(msg)
 	_, _, _ = world.PartChannel(u.ID, msg.Params[0])
 }
 

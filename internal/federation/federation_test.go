@@ -32,7 +32,7 @@ func newFakeHost(name string) *fakeHost {
 
 func (h *fakeHost) LocalServerName() string { return h.name }
 func (h *fakeHost) WorldState() *state.World { return h.world }
-func (h *fakeHost) DeliverLocal(msg *protocol.Message, excludeOrigin string) {
+func (h *fakeHost) DeliverLocal(msg *protocol.Message) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.delivered = append(h.delivered, msg)

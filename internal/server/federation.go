@@ -64,11 +64,13 @@ func (s *Server) WorldState() *state.World { return s.world }
 
 // DeliverLocal implements federation.Host. Called by a Link when
 // it receives a message it wants broadcast to local members only.
-// excludeOrigin is the peer server name the message came from, so
-// the fan-out never forwards back over the same link.
-func (s *Server) DeliverLocal(msg *protocol.Message, excludeOrigin string) {
+// This method MUST NOT re-forward to any federation link — the
+// contract is "deliver locally, period". Loops across nodes are
+// prevented at the broadcast entrypoint by treating local origins
+// and remote origins differently, not by an exclude-mask here.
+func (s *Server) DeliverLocal(msg *protocol.Message) {
 	switch msg.Command {
-	case "PRIVMSG", "NOTICE", "JOIN", "PART":
+	case "PRIVMSG", "NOTICE":
 		if len(msg.Params) < 1 {
 			return
 		}
@@ -81,7 +83,6 @@ func (s *Server) DeliverLocal(msg *protocol.Message, excludeOrigin string) {
 			s.deliverChannelLocalOnly(ch, msg)
 			return
 		}
-		// User-target form: look up the local nick.
 		u := s.world.FindByNick(target)
 		if u == nil || u.IsRemote() {
 			return
@@ -89,8 +90,62 @@ func (s *Server) DeliverLocal(msg *protocol.Message, excludeOrigin string) {
 		if c := s.connFor(u.ID); c != nil {
 			c.send(msg)
 		}
+	case "JOIN", "PART":
+		if len(msg.Params) < 1 {
+			return
+		}
+		ch := s.world.FindChannel(msg.Params[0])
+		if ch == nil {
+			return
+		}
+		s.deliverChannelLocalOnly(ch, msg)
+	case "QUIT", "NICK":
+		// QUIT and post-registration NICK have no channel target;
+		// they apply to every channel the sender is in. Fan out
+		// to every local member of every shared channel.
+		s.deliverPerUserChannels(msg)
 	}
-	_ = excludeOrigin
+}
+
+// deliverPerUserChannels delivers msg to every local member of
+// every channel the message's sender (identified by the prefix)
+// currently belongs to. Used for QUIT and NICK-change events
+// forwarded from federation so local peers see them just like a
+// local QUIT/NICK.
+func (s *Server) deliverPerUserChannels(msg *protocol.Message) {
+	senderNick := senderNickFromPrefix(msg.Prefix)
+	u := s.world.FindByNick(senderNick)
+	if u == nil {
+		return
+	}
+	seen := make(map[state.UserID]bool)
+	for _, ch := range s.world.UserChannels(u.ID) {
+		for id := range ch.MemberIDs() {
+			if seen[id] || id == u.ID {
+				continue
+			}
+			peer := s.world.FindByID(id)
+			if peer == nil || peer.IsRemote() {
+				continue
+			}
+			seen[id] = true
+			if c := s.connFor(id); c != nil {
+				c.send(msg)
+			}
+		}
+	}
+}
+
+// senderNickFromPrefix extracts the nick half of a "nick!user@host"
+// prefix. Local helper so this file does not import strings just
+// for one lookup.
+func senderNickFromPrefix(prefix string) string {
+	for i := 0; i < len(prefix); i++ {
+		if prefix[i] == '!' {
+			return prefix[:i]
+		}
+	}
+	return prefix
 }
 
 // deliverChannelLocalOnly fans msg out to local conns and bots in

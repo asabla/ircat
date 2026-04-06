@@ -85,21 +85,23 @@ func (s *fedSupervisor) dialOutbound(spec config.LinkSpec) {
 
 // runLink is the shared drain routine for both outbound and
 // inbound connections. It constructs a federation.Link over the
-// supplied conn, opens the handshake, registers with the server
-// on transition to Active, and waits for the link to close.
+// supplied conn, opens the handshake, and waits for the link to
+// close. Registration with the server's broadcast hot path is
+// deferred until the link reaches LinkActive via the OnActive
+// callback so a failed handshake leaves no dangling entry.
 func (s *fedSupervisor) runLink(conn net.Conn, cfg federation.LinkConfig, outbound bool) {
+	cfg.OnActive = func(l *federation.Link) {
+		s.srv.RegisterLink(cfg.PeerName, l)
+		s.logger.Info("federation link registered", "peer", cfg.PeerName)
+	}
+	cfg.OnClosed = func(l *federation.Link) {
+		s.srv.UnregisterLink(cfg.PeerName)
+		s.logger.Info("federation link unregistered", "peer", cfg.PeerName)
+	}
 	link := federation.New(s.srv, cfg, s.logger)
 	reader := federation.WrapConnRead(conn)
 	writer := federation.WrapConnWrite(conn)
 
-	// Register with the server so the broadcast hot path can
-	// forward over this link once the handshake is done. We
-	// register eagerly on the configured peer name (not the
-	// link's authoritative PeerName which is only known after the
-	// SERVER line). Refined in a follow-up once the Link exposes
-	// a "reached Active" callback.
-	s.srv.RegisterLink(cfg.PeerName, link)
-	defer s.srv.UnregisterLink(cfg.PeerName)
 	defer conn.Close()
 
 	if outbound {
