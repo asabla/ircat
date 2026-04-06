@@ -14,9 +14,11 @@ import (
 	"github.com/asabla/ircat/internal/state"
 )
 
-// startTestServer brings up a Server bound to a random localhost port
-// and returns the address plus a teardown function. Each test gets
-// its own World and Server.
+// startTestServer brings up a Server bound to a kernel-assigned
+// localhost port and returns the address plus a teardown function.
+// The server is asked to bind ":0"; once it has done so, the test
+// reads the actual address back via [Server.ListenerAddrs] so there
+// is no port-stealing race window.
 func startTestServer(t *testing.T) (addr string, teardown func()) {
 	t.Helper()
 	cfg := &config.Config{
@@ -44,19 +46,6 @@ func startTestServer(t *testing.T) (addr string, teardown func()) {
 	}
 	world := state.NewWorld()
 
-	// Bind a real listener so the test can dial it.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg.Server.Listeners[0].Address = ln.Addr().String()
-	// Hand the already-bound listener to the server by injecting it
-	// after construction. We close ln immediately because Server.Run
-	// will rebind on the same address; on Linux that's fine because
-	// the kernel releases the port instantly.
-	addr = ln.Addr().String()
-	_ = ln.Close()
-
 	srv := New(cfg, world, logger)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -65,19 +54,18 @@ func startTestServer(t *testing.T) (addr string, teardown func()) {
 		close(done)
 	}()
 
-	// Wait briefly for the server to actually be listening.
+	// Spin until ListenerAddrs reports the kernel-assigned port.
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		c, err := net.DialTimeout("tcp", addr, 50*time.Millisecond)
-		if err == nil {
-			_ = c.Close()
+		if addrs := srv.ListenerAddrs(); len(addrs) > 0 {
+			addr = addrs[0].String()
 			break
 		}
 		if time.Now().After(deadline) {
 			cancel()
-			t.Fatalf("server did not start listening on %s", addr)
+			t.Fatal("server did not bind in time")
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	}
 
 	teardown = func() {

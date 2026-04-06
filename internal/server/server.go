@@ -50,8 +50,10 @@ type Server struct {
 	createdAt time.Time
 
 	// listeners holds the bound listeners. They are closed in Run on
-	// shutdown.
-	listeners []net.Listener
+	// shutdown. Protected by listenerMu so external callers can read
+	// the bound addresses without racing the Run goroutine.
+	listenerMu sync.RWMutex
+	listeners  []net.Listener
 
 	// connWG counts every active per-connection goroutine tree so
 	// shutdown can wait for them to finish.
@@ -101,15 +103,21 @@ func (s *Server) Run(ctx context.Context) error {
 		return errors.New("server: no listeners configured")
 	}
 
+	bound := make([]net.Listener, 0, len(s.cfg.Server.Listeners))
 	for _, lc := range s.cfg.Server.Listeners {
 		l, err := bindListener(lc)
 		if err != nil {
-			s.closeAllListeners()
+			for _, prev := range bound {
+				_ = prev.Close()
+			}
 			return fmt.Errorf("bind %s: %w", lc.Address, err)
 		}
-		s.logger.Info("listener bound", "address", lc.Address, "tls", lc.TLS)
-		s.listeners = append(s.listeners, l)
+		s.logger.Info("listener bound", "address", l.Addr().String(), "tls", lc.TLS)
+		bound = append(bound, l)
 	}
+	s.listenerMu.Lock()
+	s.listeners = bound
+	s.listenerMu.Unlock()
 
 	// Per-listener accept loop. Each loop runs in its own goroutine
 	// and feeds new Conns into connWG.
@@ -159,9 +167,26 @@ func (s *Server) acceptLoop(ctx context.Context, l net.Listener) {
 }
 
 func (s *Server) closeAllListeners() {
+	s.listenerMu.RLock()
+	defer s.listenerMu.RUnlock()
 	for _, l := range s.listeners {
 		_ = l.Close()
 	}
+}
+
+// ListenerAddrs returns the addresses the server has actually bound,
+// in the order the listeners were declared in the config. Useful for
+// tests that ask the server to bind ":0" and need to discover the
+// kernel-assigned port. Returns nil before [Server.Run] has finished
+// binding.
+func (s *Server) ListenerAddrs() []net.Addr {
+	s.listenerMu.RLock()
+	defer s.listenerMu.RUnlock()
+	out := make([]net.Addr, 0, len(s.listeners))
+	for _, l := range s.listeners {
+		out = append(out, l.Addr())
+	}
+	return out
 }
 
 // bindListener binds either a plain TCP or a TLS listener depending
