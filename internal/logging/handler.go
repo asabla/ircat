@@ -62,7 +62,7 @@ func (h *teeHandler) clone() *teeHandler {
 	cp := *h
 	cp.attrs = append([]slog.Attr(nil), h.attrs...)
 	cp.groups = append([]string(nil), h.groups...)
-	return cp
+	return &cp
 }
 
 // recordToEntry merges any handler-level attrs/groups onto the record

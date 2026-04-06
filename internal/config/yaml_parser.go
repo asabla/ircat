@@ -142,14 +142,14 @@ func (p *yamlParser) parseMapping(indent int) (map[string]any, error) {
 	out := make(map[string]any)
 	for p.pos < len(p.lines) {
 		line := p.lines[p.pos]
+		if line.indent == -1 {
+			return nil, fmt.Errorf("line %d: tab indentation is not supported", line.num)
+		}
 		if line.indent < indent {
 			break
 		}
 		if line.indent > indent {
 			return nil, fmt.Errorf("line %d: unexpected indent %d (expected %d)", line.num, line.indent, indent)
-		}
-		if line.indent == -1 {
-			return nil, fmt.Errorf("line %d: tab indentation is not supported", line.num)
 		}
 		if strings.HasPrefix(line.text, "- ") || line.text == "-" {
 			return nil, fmt.Errorf("line %d: sequence item inside a mapping at the same indent", line.num)
@@ -175,6 +175,9 @@ func (p *yamlParser) parseSequence(indent int) ([]any, error) {
 	var out []any
 	for p.pos < len(p.lines) {
 		line := p.lines[p.pos]
+		if line.indent == -1 {
+			return nil, fmt.Errorf("line %d: tab indentation is not supported", line.num)
+		}
 		if line.indent < indent {
 			break
 		}

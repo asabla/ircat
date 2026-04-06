@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"flag"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -39,11 +41,11 @@ func TestRunHealthcheck_UnreachableIsError(t *testing.T) {
 }
 
 func TestDispatch_DefaultsToServer_HelpFlag(t *testing.T) {
-	// `ircat --help` should reach the server flag set's help and
-	// return ErrHelp without panicking.
+	// `ircat --help` should print usage and surface flag.ErrHelp so
+	// main can return cleanly without treating it as a startup failure.
 	err := dispatch([]string{"--help"})
-	if err != nil {
-		t.Fatalf("dispatch returned %v", err)
+	if !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("dispatch returned %v, want flag.ErrHelp", err)
 	}
 }
 
