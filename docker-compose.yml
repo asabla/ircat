@@ -1,8 +1,10 @@
 # Production-oriented compose stack.
 # - ircat built from source via multi-stage Dockerfile
 # - Postgres as the primary datastore
-# - Redis for the event stream sink
 # - Named volumes for durable data
+#
+# Event export uses the built-in jsonl and webhook sinks; there is
+# no external event broker in the production stack.
 #
 # Override via docker-compose.override.yml or environment variables.
 # Secrets are read from a local .env file; do not commit it.
@@ -19,8 +21,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_started
     # Host ports are env-overridable to avoid collisions with whatever
     # else is running on the host. Defaults are the canonical IRC,
     # IRC-TLS, and dashboard ports.
@@ -70,20 +70,7 @@ services:
       timeout: 5s
       retries: 5
 
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    command: ["redis-server", "--save", "60", "1", "--appendonly", "yes"]
-    volumes:
-      - ircat-redis:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-
 volumes:
   ircat-data:
   ircat-logs:
   ircat-pgdata:
-  ircat-redis:

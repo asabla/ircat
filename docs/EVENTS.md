@@ -58,20 +58,6 @@ Append-only file, rotated by size. Default sink. Good for "just give me the raw 
   types: []   # empty = all types
 ```
 
-### Redis Streams
-
-Uses `XADD` with a `MAXLEN ~` to cap stream size. Single Redis round-trip per event. Batched when the outbound queue is backed up.
-
-```yaml
-- type: redis
-  address: redis:6379
-  stream: ircat:events
-  maxlen: 100000
-  types: [message, join, part]
-```
-
-Implementation note: we speak the Redis protocol directly with a tiny in-tree client, not `go-redis`. Streams + XADD is all we need and the wire format is <150 lines of code.
-
 ### Webhook
 
 POST JSON to a configured URL. Supports:
@@ -96,7 +82,7 @@ POST JSON to a configured URL. Supports:
 ## Delivery semantics
 
 - **Audit log** (DB): synchronous for `admin_action`, `oper_up`, `kill` — the action is not considered complete until logged. Everything else is fire-and-forget to the DB.
-- **External sinks:** at-least-once for webhook (DLQ captures what we couldn't deliver), best-effort for redis and jsonl (they drop on backpressure with a metric incremented).
+- **External sinks:** at-least-once for webhook (DLQ captures what we couldn't deliver), best-effort for jsonl (drops on backpressure with a metric incremented).
 - **Ordering:** events are ordered per-actor within a single process. Across federation, ordering is not guaranteed — rely on the `ts` + `id` fields for merging.
 
 ## Privacy and redaction
@@ -116,4 +102,7 @@ POST JSON to a configured URL. Supports:
 - Unit tests verify the envelope shape and redaction.
 - Integration test pipes to a `jsonl` sink in a temp dir and asserts on the produced file after a scripted session.
 - Webhook sink is tested with `httptest.NewServer` including a forced failure scenario to exercise retry + DLQ.
-- Redis sink is tested against a real Redis container in CI.
+
+## Other transports
+
+Redis Streams was considered for M6 and removed during scope review: JSONL + webhook already cover every concrete operator use case we have, and both are in-tree with zero external dependencies. Additional transports (Redis, Kafka, NATS, etc.) can land as new files in `internal/events/` implementing the `Sink` interface without touching the bus.

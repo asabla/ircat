@@ -67,8 +67,6 @@ func buildSink(spec config.SinkConfig) (events.Sink, error) {
 			}
 		}
 		return events.NewWebhookSink(opts)
-	case "redis":
-		return nil, fmt.Errorf("redis sink is not implemented yet")
 	}
-	return nil, fmt.Errorf("unknown sink type %q", spec.Type)
+	return nil, fmt.Errorf("unknown sink type %q (want jsonl or webhook)", spec.Type)
 }

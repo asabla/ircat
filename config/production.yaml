@@ -54,10 +54,6 @@ events:
       path: /var/log/ircat/events.jsonl
       rotate_mb: 100
       keep: 14
-    - type: redis
-      address: redis:6379
-      stream: ircat:events
-      maxlen: 100000
 
 bots:
   enabled: true

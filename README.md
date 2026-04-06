@@ -10,7 +10,7 @@ A modern, portable IRC server written in Go with a built-in htmx dashboard, Lua 
 - **Pluggable storage** — SQLite (default, zero-config) or PostgreSQL, selected via config.
 - **Admin API** — HTTP/JSON, token-authenticated, usable for automation and external tooling.
 - **Lua bots** — sandboxed bot runtime with an event API (messages, joins, commands).
-- **Event export** — Redis streams, webhooks, or raw JSONL sinks.
+- **Event export** — webhooks and raw JSONL sinks built in; additional transports can land as drop-in sinks later.
 - **Config flexibility** — JSON *or* YAML, same schema.
 - **Container-first** — devcontainer for development, multi-stage Dockerfile, dev and production Compose stacks.
 

@@ -31,7 +31,7 @@ internal/
   dashboard/         # htmx UI, SSE streams, templates, static assets
   api/               # admin HTTP/JSON API
   bots/              # Lua runtime, sandboxing, event dispatch
-  events/            # event bus, redis/webhook/jsonl sinks
+  events/            # event bus, jsonl/webhook sinks
   auth/              # operator accounts, API tokens, TLS
   logging/           # structured logger, log tail SSE source
 pkg/                 # (only if something is genuinely reusable by third parties)

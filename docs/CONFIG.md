@@ -82,11 +82,6 @@ events:
       path: /var/log/ircat/events.jsonl
       rotate_mb: 100
       keep: 7
-    - type: redis
-      enabled: false
-      address: redis:6379
-      stream: ircat:events
-      maxlen: 100000
     - type: webhook
       enabled: false
       url: https://hooks.example.org/ircat

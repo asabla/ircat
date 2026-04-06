@@ -114,12 +114,12 @@ Milestones are ordered. Do not start milestone N+1 until N's exit criteria are m
 
 **Goal:** external systems can consume ircat events.
 
-- Redis Streams sink (XADD, configurable stream name and maxlen).
 - Webhook sink (POST JSON, retry with exponential backoff, dead-letter to disk).
-- JSONL file sink.
+- JSONL file sink (one event per line, size-based rotation).
 - Each sink is optional and independently configurable.
+- Additional transports (Redis, Kafka, NATS, ...) can land later as drop-in `Sink` implementations without touching the bus.
 
-**Exit:** a running Redis container receives messages as they happen; a webhook endpoint receives them with at-least-once semantics.
+**Exit:** a webhook endpoint receives events with at-least-once semantics; a jsonl file accumulates events and rotates on size.
 
 ---
 

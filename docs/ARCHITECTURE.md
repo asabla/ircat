@@ -6,7 +6,7 @@
 2. **Federation-capable** — multiple ircat servers can link via RFC 2813 server-to-server protocol and behave as one network.
 3. **Single binary, container-native** — one Go binary, one process, configured by one file.
 4. **Operator-friendly** — built-in dashboard and admin API make day-to-day ops (who's online, ban a user, reload config) trivial.
-5. **Extensible without forking** — Lua bots for in-network automation; Redis/webhook sinks for out-of-process consumers.
+5. **Extensible without forking** — Lua bots for in-network automation; JSONL and webhook sinks for out-of-process consumers.
 6. **Minimal dependencies** — Go standard library does the heavy lifting.
 
 ## Non-goals (v1)
@@ -41,7 +41,7 @@
               ▼           ▼
         ┌────────────┐  ┌──────────┐
         │ federation │  │  sinks   │
-        │   (S2S)    │  │ redis/wh │
+        │   (S2S)    │  │jsonl/webh│
         └────────────┘  └──────────┘
 ```
 
@@ -96,12 +96,11 @@ Two drivers: `sqlite` (default) and `postgres`. Each driver has its own SQL file
 ### `internal/events`
 Single event bus (`chan Event` behind a fan-out). Consumers:
 - Dashboard SSE log/chat streams.
-- Redis Streams sink (if configured).
 - Webhook sink (if configured).
 - JSONL file sink (if configured).
 - Audit log (always-on, to the DB).
 
-Events are append-only and typed (`MessageEvent`, `JoinEvent`, `ModeEvent`, `AdminEvent`, etc.).
+Events are append-only and typed (`MessageEvent`, `JoinEvent`, `ModeEvent`, `AdminEvent`, etc.). Additional transports (Redis, Kafka, NATS, ...) can land as new files in `internal/events/` implementing the `Sink` interface.
 
 ### `internal/dashboard`
 - `net/http` + `html/template` + htmx 1.9 (shipped as a single static asset).

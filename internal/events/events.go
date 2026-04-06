@@ -8,8 +8,10 @@
 // drops the event and increments a drop counter on the sink
 // instead.
 //
-// The package is deliberately small. JSONL, webhook, and Redis
-// sinks live in their own files and implement the [Sink] interface.
+// The package is deliberately small. JSONL and webhook sinks live
+// in their own files and implement the [Sink] interface. Other
+// transports (redis, kafka, nats, ...) can land later by dropping a
+// new sink file in this package; the bus needs no changes.
 package events
 
 import (
@@ -58,7 +60,7 @@ func NewID(now time.Time) (string, error) {
 // blocking Handle will only stall its own sink.
 type Sink interface {
 	// Name returns a short identifier for logs and metrics
-	// ("jsonl", "webhook", "redis", ...).
+	// ("jsonl", "webhook", ...).
 	Name() string
 	// Handle processes one event. A non-nil error is logged but
 	// does not stop the subscriber loop; sinks that want to stop

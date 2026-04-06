@@ -79,7 +79,7 @@ type Server struct {
 
 	// eventBus is the optional outbound event publisher. Audit
 	// events land here alongside the store write so external
-	// sinks (jsonl/webhook/redis) can observe them. Nil means
+	// sinks (jsonl, webhook) can observe them. Nil means
 	// "no fan-out" — the server still writes to the store.
 	eventBus EventPublisher
 

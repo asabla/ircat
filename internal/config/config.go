@@ -177,11 +177,6 @@ type SinkConfig struct {
 	RotateMB int    `json:"rotate_mb,omitempty"`
 	Keep     int    `json:"keep,omitempty"`
 
-	// redis
-	Address string `json:"address,omitempty"`
-	Stream  string `json:"stream,omitempty"`
-	MaxLen  int    `json:"maxlen,omitempty"`
-
 	// webhook
 	URL            string      `json:"url,omitempty"`
 	Secret         string      `json:"secret,omitempty"`

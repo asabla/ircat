@@ -131,13 +131,6 @@ func validateSink(i int, sink SinkConfig) error {
 		if sink.Path == "" {
 			return invalidf("events.sinks[%d].path: required for jsonl sink", i)
 		}
-	case "redis":
-		if sink.Address == "" {
-			return invalidf("events.sinks[%d].address: required for redis sink", i)
-		}
-		if sink.Stream == "" {
-			return invalidf("events.sinks[%d].stream: required for redis sink", i)
-		}
 	case "webhook":
 		if sink.URL == "" {
 			return invalidf("events.sinks[%d].url: required for webhook sink", i)
@@ -145,7 +138,7 @@ func validateSink(i int, sink SinkConfig) error {
 	case "":
 		return invalidf("events.sinks[%d].type: required", i)
 	default:
-		return invalidf("events.sinks[%d].type: %q (want jsonl, redis, or webhook)", i, sink.Type)
+		return invalidf("events.sinks[%d].type: %q (want jsonl or webhook)", i, sink.Type)
 	}
 	return nil
 }
