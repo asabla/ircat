@@ -33,6 +33,7 @@ import (
 	"github.com/asabla/ircat/internal/config"
 	"github.com/asabla/ircat/internal/protocol"
 	"github.com/asabla/ircat/internal/state"
+	"github.com/asabla/ircat/internal/storage"
 )
 
 // Server is the running IRC daemon.
@@ -43,6 +44,7 @@ import (
 type Server struct {
 	cfg    *config.Config
 	world  *state.World
+	store  storage.Store
 	logger *slog.Logger
 	now    func() time.Time
 
@@ -84,6 +86,14 @@ type Option func(*Server)
 // WithClock overrides the time source. Production never sets it.
 func WithClock(now func() time.Time) Option {
 	return func(s *Server) { s.now = now }
+}
+
+// WithStore wires a persistent storage backend into the server.
+// Without it OPER fails with ERR_NOOPERHOST and persistent channel
+// state is not restored on startup. Tests that exercise non-OPER
+// surfaces can leave it nil.
+func WithStore(store storage.Store) Option {
+	return func(s *Server) { s.store = store }
 }
 
 // New constructs a Server. It does not bind any sockets; that happens

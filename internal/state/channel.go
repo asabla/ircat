@@ -2,6 +2,7 @@ package state
 
 import (
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -378,6 +379,14 @@ func (c *Channel) ConsumeInvite(id UserID) bool {
 	}
 	delete(c.invites, id)
 	return true
+}
+
+// GlobMatchHost is the public form of [globMatch], used outside
+// this package for things like operator host_mask matching.
+// Comparison is case-insensitive (operators routinely write masks
+// in upper or lower case interchangeably).
+func GlobMatchHost(pattern, s string) bool {
+	return globMatch(strings.ToLower(pattern), strings.ToLower(s))
 }
 
 // globMatch implements the simple IRC glob algorithm with '*' and

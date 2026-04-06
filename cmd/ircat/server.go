@@ -13,6 +13,8 @@ import (
 	"github.com/asabla/ircat/internal/logging"
 	"github.com/asabla/ircat/internal/server"
 	"github.com/asabla/ircat/internal/state"
+	"github.com/asabla/ircat/internal/storage"
+	"github.com/asabla/ircat/internal/storage/sqlite"
 )
 
 // runServer is the default subcommand: load config, initialize
@@ -72,10 +74,19 @@ func runServer(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	world := state.NewWorld()
-	srv := server.New(cfg, world, logger)
+	store, err := openStore(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("open storage: %w", err)
+	}
+	defer store.Close()
 
-	logger.Info("ircat ready", "listeners", listenerAddresses(cfg))
+	world := state.NewWorld()
+	srv := server.New(cfg, world, logger, server.WithStore(store))
+
+	logger.Info("ircat ready",
+		"listeners", listenerAddresses(cfg),
+		"storage_driver", cfg.Storage.Driver,
+	)
 
 	// Server.Run blocks until ctx is done; it owns the listeners and
 	// the per-connection drain. Future milestones add the dashboard,
@@ -90,6 +101,28 @@ func runServer(args []string) error {
 	logger.Info("ircat shutting down", "reason", context.Cause(ctx))
 	logger.Info("ircat stopped")
 	return nil
+}
+
+// openStore wires up the persistent storage backend selected in
+// config. The Postgres driver lands in M3 follow-up; for now only
+// sqlite is supported and a postgres config will be rejected at
+// boot.
+func openStore(ctx context.Context, cfg *config.Config) (storage.Store, error) {
+	switch cfg.Storage.Driver {
+	case "sqlite":
+		s, err := sqlite.Open(cfg.Storage.SQLite.Path)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.Migrate(ctx); err != nil {
+			_ = s.Close()
+			return nil, fmt.Errorf("migrate: %w", err)
+		}
+		return s, nil
+	case "postgres":
+		return nil, errors.New("postgres driver not implemented yet")
+	}
+	return nil, fmt.Errorf("unknown storage driver %q", cfg.Storage.Driver)
 }
 
 func defaultConfigPath() string {

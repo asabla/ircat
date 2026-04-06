@@ -31,6 +31,8 @@ func (c *Conn) dispatch(m *protocol.Message) {
 		c.handleKick(m)
 	case "INVITE":
 		c.handleInvite(m)
+	case "OPER":
+		c.handleOper(m)
 	case "PRIVMSG":
 		c.handlePrivmsg(m)
 	case "NOTICE":

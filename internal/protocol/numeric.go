@@ -18,6 +18,10 @@ const (
 	RPL_MYINFO   = "004" // "<servername> <version> <umodes> <cmodes>"
 	RPL_ISUPPORT = "005" // "<token>... :are supported by this server"
 
+	// --- Operator promotion ---
+	RPL_YOUREOPER  = "381" // ":You are now an IRC operator"
+	ERR_NOOPERHOST = "491" // ":No O-lines for your host"
+
 	// --- MOTD (372-376, 422) ---
 	RPL_MOTDSTART = "375" // ":- <server> Message of the day -"
 	RPL_MOTD      = "372" // ":- <text>"
