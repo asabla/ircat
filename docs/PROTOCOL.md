@@ -100,6 +100,30 @@ We advertise `CASEMAPPING=rfc1459` in `RPL_ISUPPORT`. Operators may switch to `a
 
 Tracked in `internal/protocol/numeric.go`. At minimum: 001–005, 221, 251–255, 263, 301, 305, 306, 311–319, 321–323, 324, 331–333, 341, 346, 347, 348, 349, 351, 352, 353, 366, 372, 375, 376, 381, 391, 401–404, 406, 407, 409, 411, 412, 421, 422, 431, 432, 433, 436, 441, 442, 443, 451, 461, 462, 464, 465, 471, 472, 473, 474, 475, 476, 481, 482, 483, 491, 501, 502.
 
+## Encoder canonical form
+
+Our encoder always emits the *last* parameter of every message in
+the trailing form (with a leading colon), even when the parameter
+is a single token without spaces. So `004 alice irc.example.org
+ircat-0.0.1 iow biklmnopstv` is encoded as `:irc.example.org 004
+alice irc.example.org ircat-0.0.1 iow :biklmnopstv`.
+
+This is RFC-conformant per RFC 2812 §2.3.1 (the trailing form is
+allowed for any parameter, not just ones containing spaces) and
+matches what most production ircds do, but it is unusual on certain
+numerics — 004 in particular is conventionally rendered with the
+mode-list as a middle parameter. Real clients (irssi, weechat,
+hexchat, mIRC) accept either form.
+
+We chose this approach to dodge the "is this a middle or a trailing"
+ambiguity for parsers that rely on the colon as a rest-of-line
+marker, and to keep the encoder simple — there is no special-casing
+for empty params, embedded colons, or commands that traditionally
+prefer the bare form. If a specific client compatibility issue
+forces the change, the right move is to add an explicit
+"force-middle for last param" flag on Message rather than reverting
+to per-byte heuristics.
+
 ## Open interpretation points
 
 - **`LIST` during netsplit** — we freeze the list for the duration of the burst. Decision pending e2e testing.
