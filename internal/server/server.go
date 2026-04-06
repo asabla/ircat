@@ -69,6 +69,14 @@ type Server struct {
 	connsMu sync.RWMutex
 	conns   map[state.UserID]*Conn
 
+	// bots maps registered UserID to a virtual delivery hook, used
+	// by non-TCP members (the Lua bot supervisor in M5). The
+	// broadcast path falls through to this map when a channel
+	// member has no matching real Conn. Protected by connsMu since
+	// the two registries are always accessed together on the
+	// broadcast hot path.
+	bots map[state.UserID]BotDeliverer
+
 	// motd is the message-of-the-day file content split into lines.
 	// Loaded once at startup; nil if no MOTD is configured or the
 	// file is missing (we send ERR_NOMOTD in that case).
@@ -77,6 +85,15 @@ type Server struct {
 	// shuttingDown is set to 1 once Run begins its drain. New accepts
 	// observe it and refuse cleanly instead of racing the close.
 	shuttingDown atomic.Bool
+}
+
+// BotDeliverer is the small interface the bot supervisor registers
+// with the server so channel broadcasts reach bots. Deliver is
+// called synchronously from the broadcast path and MUST NOT block;
+// implementations should queue the message onto an internal
+// goroutine channel and return immediately.
+type BotDeliverer interface {
+	Deliver(*protocol.Message)
 }
 
 // Option lets callers override defaults at construction time. Tests
@@ -105,6 +122,7 @@ func New(cfg *config.Config, world *state.World, logger *slog.Logger, opts ...Op
 		logger: logger,
 		now:    time.Now,
 		conns:  make(map[state.UserID]*Conn),
+		bots:   make(map[state.UserID]BotDeliverer),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -143,10 +161,39 @@ func (s *Server) connFor(id state.UserID) *Conn {
 	return s.conns[id]
 }
 
-// broadcastToChannel sends msg to every Conn whose user is currently
-// a member of ch. If except is non-zero, the matching member is
-// skipped (used by PRIVMSG so the sender doesn't echo to themselves).
-// If includeSelf is true, the except parameter is ignored.
+// RegisterBot associates a virtual delivery hook with id so
+// broadcasts reach the supplied bot. The id must already belong
+// to a state.User in the world (the bot supervisor creates one
+// per bot). Called from [internal/bots.Supervisor] on bot start.
+func (s *Server) RegisterBot(id state.UserID, deliverer BotDeliverer) {
+	s.connsMu.Lock()
+	defer s.connsMu.Unlock()
+	s.bots[id] = deliverer
+}
+
+// UnregisterBot drops a virtual delivery hook. Called from the bot
+// supervisor on bot stop.
+func (s *Server) UnregisterBot(id state.UserID) {
+	s.connsMu.Lock()
+	defer s.connsMu.Unlock()
+	delete(s.bots, id)
+}
+
+// botFor returns the deliverer registered for id, or nil. Used by
+// broadcastToChannel to fall through to the virtual path when the
+// conn registry has no real Conn for the member.
+func (s *Server) botFor(id state.UserID) BotDeliverer {
+	s.connsMu.RLock()
+	defer s.connsMu.RUnlock()
+	return s.bots[id]
+}
+
+// broadcastToChannel sends msg to every member of ch. Real
+// connections receive via Conn.send; virtual bot members receive
+// via their registered BotDeliverer. If except is non-zero, the
+// matching member is skipped (used by PRIVMSG so the sender doesn't
+// echo to themselves). If includeSelf is true, the except parameter
+// is ignored.
 func (s *Server) broadcastToChannel(ch *state.Channel, msg *protocol.Message, except state.UserID, includeSelf bool) {
 	for id := range ch.MemberIDs() {
 		if !includeSelf && id == except {
@@ -154,6 +201,10 @@ func (s *Server) broadcastToChannel(ch *state.Channel, msg *protocol.Message, ex
 		}
 		if c := s.connFor(id); c != nil {
 			c.send(msg)
+			continue
+		}
+		if b := s.botFor(id); b != nil {
+			b.Deliver(msg)
 		}
 	}
 }
