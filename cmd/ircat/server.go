@@ -81,6 +81,10 @@ func runServer(args []string) error {
 	}
 	defer store.Close()
 
+	if err := bootstrapStore(ctx, store, cfg, logger); err != nil {
+		return fmt.Errorf("bootstrap storage: %w", err)
+	}
+
 	world := state.NewWorld()
 	srv := server.New(cfg, world, logger, server.WithStore(store))
 
