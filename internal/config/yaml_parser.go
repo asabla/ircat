@@ -258,7 +258,63 @@ func (p *yamlParser) parseValue(parentIndent int, rest string) (any, error) {
 	case "[]":
 		return []any{}, nil
 	}
+	// Inline flow sequence: [a, b, c]. We keep the supported shape
+	// narrow: no nesting, items are the same scalars parseScalar
+	// handles on their own. Anything more exotic has to be written
+	// in block style.
+	if len(rest) >= 2 && rest[0] == '[' && rest[len(rest)-1] == ']' {
+		return parseFlowSequence(rest[1 : len(rest)-1])
+	}
 	return parseScalar(rest), nil
+}
+
+// parseFlowSequence parses the body of a flow sequence (without the
+// surrounding brackets). Supports comma-separated scalars with
+// optional whitespace around each one, including single- or
+// double-quoted strings. Nesting is not supported.
+func parseFlowSequence(body string) ([]any, error) {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return []any{}, nil
+	}
+	var (
+		out   []any
+		cur   strings.Builder
+		inDQ  bool
+		inSQ  bool
+	)
+	flush := func() {
+		tok := strings.TrimSpace(cur.String())
+		cur.Reset()
+		if tok == "" {
+			return
+		}
+		out = append(out, parseScalar(tok))
+	}
+	for i := 0; i < len(body); i++ {
+		c := body[i]
+		switch {
+		case c == '\\' && inDQ && i+1 < len(body):
+			cur.WriteByte(c)
+			cur.WriteByte(body[i+1])
+			i++
+		case c == '"' && !inSQ:
+			inDQ = !inDQ
+			cur.WriteByte(c)
+		case c == '\'' && !inDQ:
+			inSQ = !inSQ
+			cur.WriteByte(c)
+		case c == ',' && !inDQ && !inSQ:
+			flush()
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	if inDQ || inSQ {
+		return nil, fmt.Errorf("yaml: unterminated quote in flow sequence %q", body)
+	}
+	flush()
+	return out, nil
 }
 
 // parseValueAfterDash handles a bare "-" line whose value lives on

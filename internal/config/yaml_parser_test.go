@@ -227,6 +227,80 @@ events:
 	}
 }
 
+func TestParseYAML_InlineFlowSequence(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []any
+	}{
+		{`a: [1, 2, 3]`, []any{int64(1), int64(2), int64(3)}},
+		{`a: [one, two]`, []any{"one", "two"}},
+		{`a: ["first", "second"]`, []any{"first", "second"}},
+		{`a: [1, "two", 3.5, true]`, []any{int64(1), "two", 3.5, true}},
+		{`a: [ 1 , 2 ]`, []any{int64(1), int64(2)}},
+		{`a: []`, []any{}},
+	}
+	for _, tc := range cases {
+		got, err := parseYAML([]byte(tc.in))
+		if err != nil {
+			t.Errorf("%s: %v", tc.in, err)
+			continue
+		}
+		m, ok := got.(map[string]any)
+		if !ok {
+			t.Errorf("%s: not a map: %#v", tc.in, got)
+			continue
+		}
+		seq, ok := m["a"].([]any)
+		if !ok {
+			t.Errorf("%s: a is not a sequence: %#v", tc.in, m["a"])
+			continue
+		}
+		if !reflect.DeepEqual(seq, tc.want) {
+			t.Errorf("%s: got %#v, want %#v", tc.in, seq, tc.want)
+		}
+	}
+}
+
+func TestParseYAML_InlineFlowSequence_CommaInQuotedString(t *testing.T) {
+	got, err := parseYAML([]byte(`a: ["a, b", "c"]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := got.(map[string]any)
+	seq := m["a"].([]any)
+	if len(seq) != 2 {
+		t.Fatalf("len = %d", len(seq))
+	}
+	if seq[0] != "a, b" {
+		t.Errorf("seq[0] = %q", seq[0])
+	}
+}
+
+func TestParseYAML_InlineFlowSequence_UnterminatedQuote(t *testing.T) {
+	if _, err := parseYAML([]byte(`a: ["oops]`)); err == nil {
+		t.Error("expected error for unterminated quote")
+	}
+}
+
+// TestParseYAML_DocExampleFlowSequence pins the backoff_seconds
+// example from docs/CONFIG.md so a future change that breaks it
+// fails this test rather than surprising a user copy-pasting the
+// doc.
+func TestParseYAML_DocExampleFlowSequence(t *testing.T) {
+	in := `retry:
+  max_attempts: 5
+  backoff_seconds: [1, 2, 5, 15, 60]`
+	got, err := parseYAML([]byte(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry := got.(map[string]any)["retry"].(map[string]any)
+	seq := retry["backoff_seconds"].([]any)
+	if len(seq) != 5 || seq[0] != int64(1) || seq[4] != int64(60) {
+		t.Errorf("backoff_seconds = %#v", seq)
+	}
+}
+
 func TestParseYAML_Empty(t *testing.T) {
 	got, err := parseYAML([]byte(""))
 	if err != nil || got != nil {
