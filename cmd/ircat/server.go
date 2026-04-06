@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/asabla/ircat/internal/api"
+	"github.com/asabla/ircat/internal/bots"
 	"github.com/asabla/ircat/internal/config"
 	"github.com/asabla/ircat/internal/dashboard"
 	"github.com/asabla/ircat/internal/logging"
@@ -90,6 +91,13 @@ func runServer(args []string) error {
 	world := state.NewWorld()
 	srv := server.New(cfg, world, logger, server.WithStore(store))
 
+	sup := bots.New(bots.Options{
+		Store:       store,
+		World:       world,
+		IRCActuator: srv,
+		Logger:      logger.With("component", "bots"),
+	})
+
 	apiSrv := api.New(api.Options{
 		Store:      store,
 		World:      world,
@@ -119,10 +127,23 @@ func runServer(args []string) error {
 		},
 	})
 
+	// Bring up the bot supervisor before the listener so any bot
+	// that ctx:join's a channel in init() runs before the first
+	// user connects. Then register every running bot as a
+	// BotDeliverer on the server so channel broadcasts reach it.
+	if err := sup.Start(ctx); err != nil {
+		logger.Warn("bot supervisor start failed", "error", err)
+	}
+	for id, sess := range sup.Sessions() {
+		srv.RegisterBot(id, sess)
+	}
+	defer sup.Stop()
+
 	logger.Info("ircat ready",
 		"listeners", listenerAddresses(cfg),
 		"storage_driver", cfg.Storage.Driver,
 		"dashboard_enabled", cfg.Dashboard.Enabled,
+		"bots", len(sup.Sessions()),
 	)
 
 	// Run the IRC server and the dashboard in parallel; cancel both

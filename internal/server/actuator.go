@@ -86,3 +86,103 @@ func (s *Server) StartedAt() time.Time { return s.createdAt }
 // removes the protocol import path. The package itself uses
 // protocol elsewhere.
 var _ = protocol.RPL_WELCOME
+
+// ----- bot IRC actuator surface ---------------------------------
+//
+// These methods implement [internal/bots.IRCActuator], the
+// interface the Lua bot supervisor uses to produce IRC-side side
+// effects on behalf of a bot. They mirror the code paths the
+// normal command handlers take but use the bot's virtual state.User
+// as the source.
+
+// BotJoin makes the bot identified by botID a member of
+// channelName and broadcasts JOIN to existing members.
+func (s *Server) BotJoin(botID state.UserID, channelName string) error {
+	u := s.world.FindByID(botID)
+	if u == nil {
+		return ErrUserNotFound
+	}
+	ch, _, added, err := s.world.JoinChannel(botID, channelName)
+	if err != nil {
+		return err
+	}
+	if !added {
+		return nil
+	}
+	msg := &protocol.Message{
+		Prefix:  u.Hostmask(),
+		Command: "JOIN",
+		Params:  []string{ch.Name()},
+	}
+	s.broadcastToChannel(ch, msg, 0, true)
+	return nil
+}
+
+// BotPart removes the bot from a channel and broadcasts PART.
+func (s *Server) BotPart(botID state.UserID, channelName, reason string) error {
+	u := s.world.FindByID(botID)
+	if u == nil {
+		return ErrUserNotFound
+	}
+	ch := s.world.FindChannel(channelName)
+	if ch == nil || !ch.IsMember(botID) {
+		return nil
+	}
+	params := []string{ch.Name()}
+	if reason != "" {
+		params = append(params, reason)
+	}
+	msg := &protocol.Message{
+		Prefix:  u.Hostmask(),
+		Command: "PART",
+		Params:  params,
+	}
+	s.broadcastToChannel(ch, msg, 0, true)
+	_, _, _ = s.world.PartChannel(botID, ch.Name())
+	return nil
+}
+
+// BotPrivmsg delivers a PRIVMSG from the bot to target.
+func (s *Server) BotPrivmsg(botID state.UserID, target, text string) error {
+	return s.botDeliverMessage(botID, target, text, "PRIVMSG")
+}
+
+// BotNotice delivers a NOTICE from the bot to target.
+func (s *Server) BotNotice(botID state.UserID, target, text string) error {
+	return s.botDeliverMessage(botID, target, text, "NOTICE")
+}
+
+func (s *Server) botDeliverMessage(botID state.UserID, target, text, command string) error {
+	u := s.world.FindByID(botID)
+	if u == nil {
+		return ErrUserNotFound
+	}
+	msg := &protocol.Message{
+		Prefix:  u.Hostmask(),
+		Command: command,
+		Params:  []string{target, text},
+	}
+	if len(target) > 0 && (target[0] == '#' || target[0] == '&') {
+		ch := s.world.FindChannel(target)
+		if ch == nil {
+			return ErrUserNotFound
+		}
+		// Exclude the bot itself from the broadcast. Delivering
+		// back to the same session from within the session's
+		// dispatch goroutine would deadlock on the inbox.
+		s.broadcastToChannel(ch, msg, botID, false)
+		return nil
+	}
+	dest := s.world.FindByNick(target)
+	if dest == nil {
+		return ErrUserNotFound
+	}
+	if c := s.connFor(dest.ID); c != nil {
+		c.send(msg)
+		return nil
+	}
+	if b := s.botFor(dest.ID); b != nil {
+		b.Deliver(msg)
+	}
+	return nil
+}
