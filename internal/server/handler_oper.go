@@ -87,6 +87,9 @@ func (c *Conn) handleOper(m *protocol.Message) {
 		Params:  []string{nick, "+" + c.user.Modes},
 	})
 	c.logger.Info("oper success", "operator", op.Name, "nick", nick)
+	c.server.emitAudit(c.ctx, AuditTypeOperUp, c.user.Hostmask(), op.Name, map[string]any{
+		"flags": op.Flags,
+	})
 }
 
 // operatorHostMatches reports whether userMask satisfies the

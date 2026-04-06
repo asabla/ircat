@@ -84,6 +84,10 @@ func (c *Conn) handleChannelMode(name string, params []string) {
 	// the in-memory mutation and the wire echo cannot leave the
 	// channel record stale on restart.
 	c.server.persistChannel(c.ctx, ch)
+	c.server.emitAudit(c.ctx, AuditTypeMode, c.user.Hostmask(), ch.Name(), map[string]any{
+		"changes": applied.changes,
+		"params":  applied.params,
+	})
 	// Broadcast the actually-applied changes to every channel member.
 	out := []string{ch.Name(), applied.changes}
 	out = append(out, applied.params...)

@@ -400,6 +400,14 @@ func (c *Conn) kickOne(channelName, targetNick, reason string) {
 		Command: "KICK",
 		Params:  []string{ch.Name(), target.Nick, reason},
 	}
+	// Audit emit happens before the broadcast so a test that reads
+	// the events store immediately after seeing the wire KICK line
+	// is guaranteed to see the corresponding row. The same ordering
+	// is used by handleTopic and handleChannelMode.
+	c.server.emitAudit(c.ctx, AuditTypeKick, c.user.Hostmask(), ch.Name(), map[string]any{
+		"victim": target.Nick,
+		"reason": reason,
+	})
 	c.server.broadcastToChannel(ch, kickMsg, 0, true)
 	if _, _, err := c.server.world.PartChannel(target.ID, ch.Name()); err != nil {
 		c.logger.Warn("kick remove failed", "error", err)
@@ -464,6 +472,9 @@ func (c *Conn) handleTopic(m *protocol.Message) {
 	// the in-memory mutation and the broadcast cannot leave the
 	// channel record stale on restart.
 	c.server.persistChannel(c.ctx, ch)
+	c.server.emitAudit(c.ctx, AuditTypeTopic, c.user.Hostmask(), ch.Name(), map[string]any{
+		"topic": text,
+	})
 	// Broadcast TOPIC to every member, including the setter so they
 	// see their own change reflected.
 	topicMsg := &protocol.Message{
