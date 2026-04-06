@@ -14,6 +14,7 @@ import (
 	"github.com/asabla/ircat/internal/server"
 	"github.com/asabla/ircat/internal/state"
 	"github.com/asabla/ircat/internal/storage"
+	"github.com/asabla/ircat/internal/storage/postgres"
 	"github.com/asabla/ircat/internal/storage/sqlite"
 )
 
@@ -104,9 +105,8 @@ func runServer(args []string) error {
 }
 
 // openStore wires up the persistent storage backend selected in
-// config. The Postgres driver lands in M3 follow-up; for now only
-// sqlite is supported and a postgres config will be rejected at
-// boot.
+// config. Both sqlite (default, file-backed, pure-Go) and postgres
+// (pgx via the database/sql adapter) are supported.
 func openStore(ctx context.Context, cfg *config.Config) (storage.Store, error) {
 	switch cfg.Storage.Driver {
 	case "sqlite":
@@ -120,7 +120,19 @@ func openStore(ctx context.Context, cfg *config.Config) (storage.Store, error) {
 		}
 		return s, nil
 	case "postgres":
-		return nil, errors.New("postgres driver not implemented yet")
+		dsn := cfg.Storage.Postgres.DSN
+		if dsn == "" {
+			return nil, errors.New("storage.postgres.dsn is empty")
+		}
+		s, err := postgres.Open(dsn)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.Migrate(ctx); err != nil {
+			_ = s.Close()
+			return nil, fmt.Errorf("migrate: %w", err)
+		}
+		return s, nil
 	}
 	return nil, fmt.Errorf("unknown storage driver %q", cfg.Storage.Driver)
 }
