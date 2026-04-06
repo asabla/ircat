@@ -4,6 +4,7 @@ go 1.26
 
 require (
 	github.com/jackc/pgx/v5 v5.9.1
+	github.com/yuin/gopher-lua v1.1.2
 	golang.org/x/crypto v0.49.0
 	modernc.org/sqlite v1.48.1
 )
