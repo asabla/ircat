@@ -109,8 +109,14 @@ func (c *Conn) handleNick(m *protocol.Message) {
 		return
 	}
 
-	// Post-registration NICK is a state mutation in the world.
+	// Post-registration NICK is a state mutation in the world. The
+	// NICK message must be broadcast to every channel the user is
+	// currently in (so other clients can update their nick lists)
+	// and echoed back to the user themselves. The broadcast carries
+	// the *old* hostmask as the prefix so receivers can match the
+	// announcement to whatever they had on file.
 	if c.user != nil && c.user.Registered {
+		oldMask := c.user.Hostmask()
 		if err := c.server.world.RenameUser(c.user.ID, requested); err != nil {
 			if errors.Is(err, state.ErrNickInUse) {
 				c.send(protocol.NumericReply(c.server.cfg.Server.Name, c.user.Nick,
@@ -120,13 +126,29 @@ func (c *Conn) handleNick(m *protocol.Message) {
 			c.logger.Warn("rename failed", "error", err)
 			return
 		}
-		// Echo the change back to the client. Channel propagation is
-		// M2 work; for now only the user themselves sees it.
-		c.send(&protocol.Message{
-			Prefix:  c.user.Hostmask(),
+		nickMsg := &protocol.Message{
+			Prefix:  oldMask,
 			Command: "NICK",
 			Params:  []string{requested},
-		})
+		}
+		// Walk every channel the user is in and broadcast the NICK
+		// to its members. We use a set to avoid sending the message
+		// twice to a user who shares two channels with the renamer.
+		seen := map[state.UserID]bool{c.user.ID: true}
+		for _, ch := range c.server.world.UserChannels(c.user.ID) {
+			for id := range ch.MemberIDs() {
+				if seen[id] {
+					continue
+				}
+				seen[id] = true
+				if peer := c.server.connFor(id); peer != nil {
+					peer.send(nickMsg)
+				}
+			}
+		}
+		// Always echo to the renamer themselves last so they see
+		// the confirmation after any peers process it.
+		c.send(nickMsg)
 		return
 	}
 
@@ -177,6 +199,11 @@ func (c *Conn) handleQuit(m *protocol.Message) {
 	if t, ok := m.Trailing(); ok && t != "" {
 		reason = t
 	}
+	// Stash the reason so close() picks it up for the QUIT broadcast
+	// to channel peers. We do not call broadcastQuit here directly
+	// because the close() path already runs it; doing it twice
+	// would duplicate the message on every peer.
+	c.quitReason = reason
 	c.sendError(reason)
 	c.cancel(errors.New("quit: " + reason))
 }

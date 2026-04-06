@@ -16,6 +16,7 @@ import (
 	"github.com/asabla/ircat/internal/state"
 )
 
+
 // outboundQueue is the bounded per-connection write queue. Picked to
 // be small enough that a stuck client triggers SendQ-exceeded quickly
 // without blocking the rest of the network, and large enough that
@@ -69,6 +70,12 @@ type Conn struct {
 
 	// remoteHost is the resolved peer host, captured at connect time.
 	remoteHost string
+
+	// quitReason is set by handleQuit so close() can broadcast a
+	// QUIT to channel peers with the client-supplied reason rather
+	// than the generic fallback. Atomic-stored under the same lock
+	// as the rest of the lifecycle (the close path is single-shot).
+	quitReason string
 }
 
 // pending holds the partial state collected during registration.
@@ -118,9 +125,19 @@ func newConn(srv *Server, nc net.Conn) *Conn {
 // serve runs the read, write, and ping goroutines for this connection
 // and returns once they have all finished. The parent context is the
 // server-wide shutdown signal; cancelling it tears down the connection.
+//
+// Shutdown ordering is delicate. The cycle is:
+//
+//  1. Something cancels the per-conn context (handleQuit, sendq
+//     overflow, parent shutdown, write error).
+//  2. writeLoop sees ctx.Done, drains any pending outbound messages
+//     to the socket so a queued ERROR (e.g. from QUIT) actually
+//     reaches the client, then closes the underlying net.Conn.
+//  3. Closing the socket unblocks readLoop, which is otherwise
+//     parked in ReadBytes on a 15-minute deadline.
+//  4. wg.Wait() returns once all three loops have exited.
+//  5. close() runs the broadcastQuit + world cleanup.
 func (c *Conn) serve(parent context.Context) {
-	// Tie the per-conn context to the server context so a global
-	// shutdown drains every connection.
 	stop := context.AfterFunc(parent, func() {
 		c.cancel(errors.New("server shutting down"))
 	})
@@ -139,16 +156,58 @@ func (c *Conn) close() {
 	c.closeOnce.Do(func() {
 		c.cancel(io.EOF)
 		_ = c.nc.Close()
-		// Drop the user from the world if we promoted one. Channel
-		// memberships and the connection registry both reference the
-		// UserID, so we tear down the registry entry first to make
-		// sure no in-flight broadcast lands on a closed channel.
-		if c.user != nil {
-			c.server.unregisterConn(c.user.ID)
-			c.server.world.RemoveUser(c.user.ID)
-			c.user = nil
+		// Drop the user from the world if we promoted one. Order
+		// matters here:
+		//   1. Build a QUIT broadcast so peers in shared channels
+		//      see the disappearance with the right hostmask.
+		//   2. Walk the user channels, send QUIT to every other
+		//      member, and remove the user from each channel.
+		//   3. Unregister from the conn registry so no in-flight
+		//      broadcast lands on us.
+		//   4. Drop the user record from the world.
+		if c.user == nil {
+			return
 		}
+		reason := c.quitReason
+		if reason == "" {
+			reason = "Client closed connection"
+		}
+		c.broadcastQuit(reason)
+		c.server.unregisterConn(c.user.ID)
+		c.server.world.RemoveUser(c.user.ID)
+		c.user = nil
 	})
+}
+
+// broadcastQuit sends a QUIT message to every member of every
+// channel the user is currently in (excluding the user themselves)
+// and then removes the user from each of those channels. Used by
+// both close() and handleQuit.
+func (c *Conn) broadcastQuit(reason string) {
+	if c.user == nil {
+		return
+	}
+	quitMsg := &protocol.Message{
+		Prefix:  c.user.Hostmask(),
+		Command: "QUIT",
+		Params:  []string{reason},
+	}
+	chans := c.server.world.UserChannels(c.user.ID)
+	seen := map[state.UserID]bool{c.user.ID: true}
+	for _, ch := range chans {
+		for id := range ch.MemberIDs() {
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			if peer := c.server.connFor(id); peer != nil {
+				peer.send(quitMsg)
+			}
+		}
+		// Remove the user from this channel; if it becomes empty
+		// the world will drop it.
+		_, _, _ = c.server.world.PartChannel(c.user.ID, ch.Name())
+	}
 }
 
 // readLoop reads CRLF-delimited lines, parses them, and dispatches
@@ -193,12 +252,14 @@ func (c *Conn) readLoop() {
 // exits when ctx is done *and* the queue has drained, or when a
 // write fails.
 //
-// The drain step matters for QUIT: handleQuit queues an ERROR and
-// then cancels the context. Without the drain, the select could pick
-// ctx.Done() before pulling the ERROR off the queue, and the client
-// would see a bare EOF instead of the goodbye line.
+// On exit it closes the underlying net.Conn so readLoop (which is
+// otherwise parked in a long ReadBytes) unblocks immediately. The
+// drain-then-close ordering is what lets handleQuit queue an ERROR,
+// cancel the context, and still see the ERROR reach the client
+// before the socket goes away.
 func (c *Conn) writeLoop() {
 	defer c.cancel(errors.New("write loop exited"))
+	defer func() { _ = c.nc.Close() }()
 	for {
 		select {
 		case <-c.ctx.Done():

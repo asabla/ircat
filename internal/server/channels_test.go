@@ -274,6 +274,62 @@ func TestTopic_NonOpUnderTPlus(t *testing.T) {
 	expectNumeric(t, cBob, rBob, "482", time.Now().Add(2*time.Second))
 }
 
+func TestNick_BroadcastsToChannels(t *testing.T) {
+	addr, teardown := startTestServer(t)
+	defer teardown()
+
+	cAlice, rAlice := register(t, addr, "alice")
+	defer cAlice.Close()
+	cBob, rBob := register(t, addr, "bob")
+	defer cBob.Close()
+	cAlice.Write([]byte("JOIN #x\r\n"))
+	readUntil(t, cAlice, rAlice, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "366"
+	})
+	cBob.Write([]byte("JOIN #x\r\n"))
+	readUntil(t, cBob, rBob, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "366"
+	})
+	// Drain bob join echo on alice.
+	readUntil(t, cAlice, rAlice, time.Now().Add(2*time.Second), func(l string) bool {
+		return strings.HasPrefix(l, ":bob!") && strings.Contains(l, " JOIN ")
+	})
+
+	// Bob renames himself. Alice (in the same channel) should see
+	// the NICK message.
+	cBob.Write([]byte("NICK robert\r\n"))
+	readUntil(t, cAlice, rAlice, time.Now().Add(2*time.Second), func(l string) bool {
+		return strings.HasPrefix(l, ":bob!") && strings.Contains(l, " NICK ") && strings.Contains(l, "robert")
+	})
+}
+
+func TestQuit_BroadcastsToChannels(t *testing.T) {
+	addr, teardown := startTestServer(t)
+	defer teardown()
+
+	cAlice, rAlice := register(t, addr, "alice")
+	defer cAlice.Close()
+	cBob, rBob := register(t, addr, "bob")
+	defer cBob.Close()
+	cAlice.Write([]byte("JOIN #x\r\n"))
+	readUntil(t, cAlice, rAlice, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "366"
+	})
+	cBob.Write([]byte("JOIN #x\r\n"))
+	readUntil(t, cBob, rBob, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "366"
+	})
+	// Drain bob join echo on alice.
+	readUntil(t, cAlice, rAlice, time.Now().Add(2*time.Second), func(l string) bool {
+		return strings.HasPrefix(l, ":bob!") && strings.Contains(l, " JOIN ")
+	})
+
+	cBob.Write([]byte("QUIT :gone fishing\r\n"))
+	readUntil(t, cAlice, rAlice, time.Now().Add(2*time.Second), func(l string) bool {
+		return strings.HasPrefix(l, ":bob!") && strings.Contains(l, " QUIT ") && strings.Contains(l, "gone fishing")
+	})
+}
+
 func TestJoin_ZeroPartsAll(t *testing.T) {
 	addr, teardown := startTestServer(t)
 	defer teardown()
