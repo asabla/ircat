@@ -72,8 +72,9 @@ type Conn struct {
 }
 
 // pending holds the partial state collected during registration.
-// Once both nick and userParams are present we promote it to a
-// state.User and add it to the world.
+// Once both nick and userParams are present (and any pending CAP
+// negotiation has finished) we promote it to a state.User and add
+// it to the world.
 type pending struct {
 	nick     string
 	user     string
@@ -81,6 +82,18 @@ type pending struct {
 	password string
 	nickSet  bool
 	userSet  bool
+
+	// capNegotiating is true once we have seen CAP LS or CAP REQ from
+	// the client. While true, registration must wait for CAP END
+	// before sending the welcome burst, even if NICK and USER are
+	// already in. This matches the IRCv3 capability negotiation spec
+	// — clients that opt into CAP signal "I'm done negotiating" via
+	// CAP END, and servers must hold the welcome burst until then.
+	capNegotiating bool
+	// capEnded is set when CAP END arrives. The two flags together
+	// give a clear "negotiation in progress" / "negotiation done"
+	// state machine that tryCompleteRegistration can ask about.
+	capEnded bool
 }
 
 func newConn(srv *Server, nc net.Conn) *Conn {

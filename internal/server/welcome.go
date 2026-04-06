@@ -11,20 +11,34 @@ import (
 	"github.com/asabla/ircat/internal/state"
 )
 
-// tryCompleteRegistration checks whether both NICK and USER have
-// arrived, and if so promotes the connection from "pending" to a
-// fully-registered state.User and sends the welcome burst.
+// tryCompleteRegistration checks whether all the prerequisites for
+// promoting this connection to a fully-registered state.User are
+// satisfied, and if so does the promotion and sends the welcome
+// burst.
 //
-// It is called from both handleNick and handleUser; whichever arrives
-// second triggers completion. Doing the world.AddUser at completion
-// (rather than at NICK time) avoids the lost-nick race that
-// historically plagued ircds where a client could send NICK then
-// disconnect before USER, briefly squatting on a name.
+// The prerequisites are:
+//   - NICK has arrived (pending.nickSet)
+//   - USER has arrived (pending.userSet)
+//   - If CAP negotiation was opened (pending.capNegotiating), CAP
+//     END has been received (pending.capEnded). Modern IRCv3 clients
+//     send CAP LS, then NICK/USER, then CAP END; the welcome burst
+//     must wait for CAP END or the client will think it missed an
+//     ACK and the connection state will desync.
+//
+// It is called from handleNick, handleUser, and handleCap("END") —
+// whichever event satisfies the last prerequisite triggers
+// completion. Doing the world.AddUser at completion (rather than at
+// NICK time) avoids the lost-nick race that historically plagued
+// ircds where a client could send NICK then disconnect before USER,
+// briefly squatting on a name.
 func (c *Conn) tryCompleteRegistration() {
 	if c.user != nil && c.user.Registered {
 		return
 	}
 	if !c.pending.nickSet || !c.pending.userSet {
+		return
+	}
+	if c.pending.capNegotiating && !c.pending.capEnded {
 		return
 	}
 

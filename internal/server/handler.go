@@ -161,24 +161,35 @@ func (c *Conn) handleQuit(m *protocol.Message) {
 	c.cancel(errors.New("quit: " + reason))
 }
 
-// handleCap accepts the IRCv3 capability negotiation handshake just
-// well enough that modern clients can complete connection. We do not
-// advertise any capabilities in M1, and we ack CAP END as the
-// "registration may proceed" signal.
+// handleCap implements just enough of the IRCv3 capability
+// negotiation handshake that modern clients can complete connection.
+// We do not advertise any capabilities in M1, but we still need to
+// honour the negotiation lifecycle — specifically, when the client
+// has opted into CAP, registration must wait for CAP END before the
+// welcome burst goes out.
 func (c *Conn) handleCap(m *protocol.Message) {
 	if len(m.Params) == 0 {
 		return
 	}
-	switch strings.ToUpper(m.Params[0]) {
+	subcommand := strings.ToUpper(m.Params[0])
+	switch subcommand {
 	case "LS":
 		// "We support nothing right now."
+		c.pending.capNegotiating = true
 		c.send(&protocol.Message{
 			Prefix:  c.server.cfg.Server.Name,
 			Command: "CAP",
 			Params:  []string{c.starOrNick(), "LS", ""},
 		})
+	case "LIST":
+		c.send(&protocol.Message{
+			Prefix:  c.server.cfg.Server.Name,
+			Command: "CAP",
+			Params:  []string{c.starOrNick(), "LIST", ""},
+		})
 	case "REQ":
 		// Refuse all requests by NAKing them. M1 supports no caps.
+		c.pending.capNegotiating = true
 		req := ""
 		if len(m.Params) > 1 {
 			req = m.Params[1]
@@ -189,8 +200,12 @@ func (c *Conn) handleCap(m *protocol.Message) {
 			Params:  []string{c.starOrNick(), "NAK", req},
 		})
 	case "END":
-		// No-op; the registration completion check runs naturally
-		// once NICK and USER have arrived.
+		// Negotiation finished — if NICK and USER have already
+		// arrived, this is the trigger that releases the welcome
+		// burst. Otherwise it's recorded for whichever of NICK/USER
+		// arrives last.
+		c.pending.capEnded = true
+		c.tryCompleteRegistration()
 	}
 }
 

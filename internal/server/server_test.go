@@ -269,6 +269,66 @@ func TestUnknownCommand_BeforeRegistration(t *testing.T) {
 	expectNumeric(t, r, "451", time.Now().Add(2*time.Second))
 }
 
+func TestRegistration_GatedOnCapEnd(t *testing.T) {
+	addr, teardown := startTestServer(t)
+	defer teardown()
+
+	c, r := dialClient(t, addr)
+	defer c.Close()
+
+	// IRCv3-style registration: open negotiation, send NICK + USER,
+	// then expect that the welcome burst does NOT arrive until we
+	// send CAP END.
+	if _, err := c.Write([]byte("CAP LS 302\r\nNICK alice\r\nUSER alice 0 * :Alice\r\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Read until we see the CAP LS reply, asserting that no welcome
+	// numeric (001) arrives in the meantime. We use net.Conn's read
+	// deadline rather than the goroutine helper because we need a
+	// real timeout *and* no leaked reader goroutine — the helper
+	// leaves a goroutine reading the bufio.Reader on timeout, which
+	// races with the next call.
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	sawCap := false
+	for !sawCap {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			t.Fatalf("waiting for CAP LS reply: %v", err)
+		}
+		line = strings.TrimRight(line, "\r\n")
+		if strings.Contains(line, " CAP ") && strings.Contains(line, " LS ") {
+			sawCap = true
+			continue
+		}
+		if extractNumeric(line) == "001" {
+			t.Fatalf("got 001 before CAP END: %q", line)
+		}
+	}
+
+	// Now verify no further data arrives within a short window — the
+	// server must hold the welcome burst until CAP END.
+	_ = c.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	if line, err := r.ReadString('\n'); err == nil {
+		t.Fatalf("server sent data while waiting for CAP END: %q", line)
+	}
+
+	// Send CAP END and expect the welcome burst.
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := c.Write([]byte("CAP END\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			t.Fatalf("waiting for 001: %v", err)
+		}
+		if extractNumeric(strings.TrimRight(line, "\r\n")) == "001" {
+			return
+		}
+	}
+}
+
 func TestUnknownCommand_AfterRegistration(t *testing.T) {
 	addr, teardown := startTestServer(t)
 	defer teardown()
