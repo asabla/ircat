@@ -96,6 +96,12 @@ func runServer(args []string) error {
 		World:       world,
 		IRCActuator: srv,
 		Logger:      logger.With("component", "bots"),
+		OnBotStart: func(id state.UserID, session *bots.Session) {
+			srv.RegisterBot(id, session)
+		},
+		OnBotStop: func(id state.UserID) {
+			srv.UnregisterBot(id)
+		},
 	})
 
 	apiSrv := api.New(api.Options{
@@ -130,13 +136,12 @@ func runServer(args []string) error {
 
 	// Bring up the bot supervisor before the listener so any bot
 	// that ctx:join's a channel in init() runs before the first
-	// user connects. Then register every running bot as a
-	// BotDeliverer on the server so channel broadcasts reach it.
+	// user connects. The OnBotStart callback wired above registers
+	// each session with the server's BotDeliverer map, so both
+	// boot-time and API-triggered bot creations reach the broadcast
+	// hot path.
 	if err := sup.Start(ctx); err != nil {
 		logger.Warn("bot supervisor start failed", "error", err)
-	}
-	for id, sess := range sup.Sessions() {
-		srv.RegisterBot(id, sess)
 	}
 	defer sup.Stop()
 

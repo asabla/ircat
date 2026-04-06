@@ -37,6 +37,17 @@ type Options struct {
 	World       *state.World
 	IRCActuator IRCActuator
 	Logger      *slog.Logger
+
+	// OnBotStart is called every time a bot is promoted to a
+	// running state (initial load, CreateBot, UpdateBot into
+	// enabled). Used by cmd/ircat to register the session as a
+	// server.BotDeliverer so channel broadcasts reach the bot.
+	// Called BEFORE init() runs so any ctx:join side effect in
+	// init() lands on the newly-registered session inbox.
+	// Optional.
+	OnBotStart func(userID state.UserID, session *Session)
+	// OnBotStop mirrors OnBotStart for the teardown side.
+	OnBotStop func(userID state.UserID)
 }
 
 // Supervisor owns the set of running Lua bots. It loads them from
@@ -215,15 +226,13 @@ func (s *Supervisor) startBot(ctx context.Context, bot storage.Bot) error {
 	s.running[bot.ID] = h
 	s.mu.Unlock()
 
-	// Register as BotDeliverer — but the supervisor cannot do this
-	// directly because it does not depend on internal/server. The
-	// IRCActuator is how outgoing messages reach the server; the
-	// incoming messages require the server to call our Deliver.
-	// We solve this by having cmd/ircat pass the session to
-	// server.RegisterBot after the supervisor creates it. To
-	// support that, Start returns the handle. For M5 the
-	// supervisor exposes a Sessions() method returning the
-	// current set and cmd/ircat wires them in on every call.
+	// Register the session with the server's BotDeliverer registry
+	// BEFORE init() runs, so any broadcast caused by init()'s
+	// ctx:join lands on the newly-registered session inbox.
+	if s.opts.OnBotStart != nil {
+		s.opts.OnBotStart(id, session)
+	}
+
 	h.wg.Add(1)
 	go func() {
 		defer h.wg.Done()
@@ -245,6 +254,9 @@ func (s *Supervisor) stopBot(id string) {
 	s.mu.Unlock()
 	if !ok {
 		return
+	}
+	if s.opts.OnBotStop != nil {
+		s.opts.OnBotStop(h.userID)
 	}
 	h.cancel()
 	h.wg.Wait()
