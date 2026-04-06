@@ -31,6 +31,8 @@ func (c *Conn) dispatch(m *protocol.Message) {
 		c.handlePrivmsg(m)
 	case "NOTICE":
 		c.handleNotice(m)
+	case "TOPIC":
+		c.handleTopic(m)
 	case "PING":
 		c.handlePing(m)
 	case "PONG":

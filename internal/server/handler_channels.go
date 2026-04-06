@@ -257,6 +257,70 @@ func (c *Conn) partOne(name, reason string) {
 	}
 }
 
+// handleTopic implements TOPIC (RFC 2812 §3.2.4).
+//
+//	TOPIC <channel>             -- read current topic
+//	TOPIC <channel> :<text>     -- set topic
+//	TOPIC <channel> :           -- clear topic
+//
+// Setting requires +t -> chanop, otherwise any member may set.
+func (c *Conn) handleTopic(m *protocol.Message) {
+	if c.user == nil || !c.user.Registered {
+		c.send(protocol.NumericReply(c.server.cfg.Server.Name, c.starOrNick(),
+			protocol.ERR_NOTREGISTERED, "You have not registered"))
+		return
+	}
+	if len(m.Params) < 1 {
+		c.sendNeedMoreParams("TOPIC")
+		return
+	}
+	srv := c.server.cfg.Server.Name
+	nick := c.user.Nick
+	name := m.Params[0]
+	ch := c.server.world.FindChannel(name)
+	if ch == nil {
+		c.send(protocol.NumericReply(srv, nick, protocol.ERR_NOSUCHCHANNEL, name, "No such channel"))
+		return
+	}
+
+	// Read form: only one param (the channel).
+	if len(m.Params) == 1 {
+		if !ch.IsMember(c.user.ID) {
+			// Reading the topic from outside the channel is allowed
+			// for non-secret channels; but RFC 2812 lets servers
+			// require membership. We follow the looser policy.
+		}
+		c.sendTopicState(ch)
+		return
+	}
+
+	// Set form. Membership is required.
+	if !ch.IsMember(c.user.ID) {
+		c.send(protocol.NumericReply(srv, nick, protocol.ERR_NOTONCHANNEL, name, "You are not on that channel"))
+		return
+	}
+	// +t enforcement: only ops can set the topic.
+	_, _, _, _, _, topicLocked, _, _ := ch.Modes()
+	if topicLocked && !ch.Membership(c.user.ID).IsOp() {
+		c.send(protocol.NumericReply(srv, nick, protocol.ERR_CHANOPRIVSNEEDED, name, "You are not channel operator"))
+		return
+	}
+	// Topic length cap.
+	text := m.Params[1]
+	if maxLen := c.server.cfg.Server.Limits.TopicLength; maxLen > 0 && len(text) > maxLen {
+		text = text[:maxLen]
+	}
+	ch.SetTopic(text, c.user.Hostmask(), c.server.now())
+	// Broadcast TOPIC to every member, including the setter so they
+	// see their own change reflected.
+	topicMsg := &protocol.Message{
+		Prefix:  c.user.Hostmask(),
+		Command: "TOPIC",
+		Params:  []string{ch.Name(), text},
+	}
+	c.server.broadcastToChannel(ch, topicMsg, 0, true)
+}
+
 // validChannelName enforces the loose RFC 2812 channel name grammar:
 // must start with '#' or '&', up to maxLen bytes, no SPACE/CR/LF/NUL,
 // no comma, no bell.

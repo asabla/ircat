@@ -91,41 +91,21 @@ func dialClient(t *testing.T, addr string) (net.Conn, *bufio.Reader) {
 }
 
 // expectNumeric reads lines until it sees one whose command field is
-// the requested numeric, then returns it. Lines that do not match
-// (e.g. CAP banter) are discarded but logged. Times out after the
-// configured deadline.
-func expectNumeric(t *testing.T, r *bufio.Reader, code string, deadline time.Time) string {
+// the requested numeric, then returns it. Uses the underlying conn
+// read deadline so there is no goroutine leak when the deadline
+// fires (which is what the older bufio-only helper used to do).
+func expectNumeric(t *testing.T, c net.Conn, r *bufio.Reader, code string, deadline time.Time) string {
 	t.Helper()
 	for {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for numeric %s", code)
-		}
-		_ = r.Buffered() // touch to allow short reads to flush
-		line, err := readLineWithTimeout(r, time.Until(deadline))
+		_ = c.SetReadDeadline(deadline)
+		line, err := r.ReadString('\n')
 		if err != nil {
 			t.Fatalf("read while waiting for %s: %v", code, err)
 		}
+		line = strings.TrimRight(line, "\r\n")
 		if extractNumeric(line) == code {
 			return line
 		}
-	}
-}
-
-func readLineWithTimeout(r *bufio.Reader, d time.Duration) (string, error) {
-	type result struct {
-		line string
-		err  error
-	}
-	ch := make(chan result, 1)
-	go func() {
-		line, err := r.ReadString('\n')
-		ch <- result{strings.TrimRight(line, "\r\n"), err}
-	}()
-	select {
-	case res := <-ch:
-		return res.line, res.err
-	case <-time.After(d):
-		return "", io.ErrUnexpectedEOF
 	}
 }
 
@@ -167,7 +147,7 @@ func TestRegistration_FullWelcomeBurst(t *testing.T) {
 	deadline := time.Now().Add(3 * time.Second)
 	want := []string{"001", "002", "003", "004", "005", "422"} // 422 = no MOTD configured in test
 	for _, code := range want {
-		line := expectNumeric(t, r, code, deadline)
+		line := expectNumeric(t, c, r, code, deadline)
 		if !strings.Contains(line, "alice") && code != "422" {
 			t.Errorf("numeric %s missing nick: %q", code, line)
 		}
@@ -182,13 +162,13 @@ func TestRegistration_NickInUse(t *testing.T) {
 	defer c1.Close()
 	c1.Write([]byte("NICK alice\r\n"))
 	c1.Write([]byte("USER alice 0 * :Alice\r\n"))
-	expectNumeric(t, r1, "001", time.Now().Add(2*time.Second))
+	expectNumeric(t, c1, r1, "001", time.Now().Add(2*time.Second))
 
 	c2, r2 := dialClient(t, addr)
 	defer c2.Close()
 	c2.Write([]byte("NICK ALICE\r\n")) // colliding under rfc1459 fold
 	c2.Write([]byte("USER alice 0 * :Alice2\r\n"))
-	line := expectNumeric(t, r2, "433", time.Now().Add(2*time.Second))
+	line := expectNumeric(t, c2, r2, "433", time.Now().Add(2*time.Second))
 	if !strings.Contains(line, "ALICE") {
 		t.Errorf("433 should mention requested nick: %q", line)
 	}
@@ -202,15 +182,13 @@ func TestPingPong(t *testing.T) {
 	defer c.Close()
 	c.Write([]byte("NICK alice\r\n"))
 	c.Write([]byte("USER alice 0 * :Alice\r\n"))
-	expectNumeric(t, r, "001", time.Now().Add(2*time.Second))
+	expectNumeric(t, c, r, "001", time.Now().Add(2*time.Second))
 
 	c.Write([]byte("PING :token123\r\n"))
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		if time.Now().After(deadline) {
-			t.Fatal("no PONG seen")
-		}
-		line, err := readLineWithTimeout(r, time.Until(deadline))
+		_ = c.SetReadDeadline(deadline)
+		line, err := r.ReadString('\n')
 		if err != nil {
 			t.Fatalf("read: %v", err)
 		}
@@ -228,17 +206,15 @@ func TestQuit_GracefulClose(t *testing.T) {
 	defer c.Close()
 	c.Write([]byte("NICK alice\r\n"))
 	c.Write([]byte("USER alice 0 * :Alice\r\n"))
-	expectNumeric(t, r, "001", time.Now().Add(2*time.Second))
+	expectNumeric(t, c, r, "001", time.Now().Add(2*time.Second))
 
 	c.Write([]byte("QUIT :bye\r\n"))
 	// Server should send ERROR and close. Read until EOF.
 	deadline := time.Now().Add(2 * time.Second)
 	sawError := false
 	for {
-		if time.Now().After(deadline) {
-			t.Fatal("connection not closed after QUIT")
-		}
-		line, err := readLineWithTimeout(r, time.Until(deadline))
+		_ = c.SetReadDeadline(deadline)
+		line, err := r.ReadString('\n')
 		if err == io.EOF || err == io.ErrUnexpectedEOF {
 			if !sawError {
 				t.Error("never saw ERROR before close")
@@ -266,7 +242,7 @@ func TestUnknownCommand_BeforeRegistration(t *testing.T) {
 	c, r := dialClient(t, addr)
 	defer c.Close()
 	c.Write([]byte("WHATEVER foo\r\n"))
-	expectNumeric(t, r, "451", time.Now().Add(2*time.Second))
+	expectNumeric(t, c, r, "451", time.Now().Add(2*time.Second))
 }
 
 func TestRegistration_GatedOnCapEnd(t *testing.T) {
@@ -337,8 +313,8 @@ func TestUnknownCommand_AfterRegistration(t *testing.T) {
 	defer c.Close()
 	c.Write([]byte("NICK alice\r\n"))
 	c.Write([]byte("USER alice 0 * :Alice\r\n"))
-	expectNumeric(t, r, "001", time.Now().Add(2*time.Second))
+	expectNumeric(t, c, r, "001", time.Now().Add(2*time.Second))
 
 	c.Write([]byte("FROBNICATE\r\n"))
-	expectNumeric(t, r, "421", time.Now().Add(2*time.Second))
+	expectNumeric(t, c, r, "421", time.Now().Add(2*time.Second))
 }

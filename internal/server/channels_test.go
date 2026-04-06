@@ -17,7 +17,7 @@ func register(t *testing.T, addr, nick string) (net.Conn, *bufio.Reader) {
 	if _, err := c.Write([]byte("NICK " + nick + "\r\nUSER " + nick + " 0 * :" + nick + "\r\n")); err != nil {
 		t.Fatal(err)
 	}
-	expectNumeric(t, r, "422", time.Now().Add(2*time.Second))
+	expectNumeric(t, c, r, "422", time.Now().Add(2*time.Second))
 	return c, r
 }
 
@@ -117,7 +117,7 @@ func TestJoin_InvalidChannelName(t *testing.T) {
 	c, r := register(t, addr, "alice")
 	defer c.Close()
 	c.Write([]byte("JOIN nothash\r\n"))
-	expectNumeric(t, r, "403", time.Now().Add(2*time.Second))
+	expectNumeric(t, c, r, "403", time.Now().Add(2*time.Second))
 }
 
 func TestPart_BroadcastsAndRemoves(t *testing.T) {
@@ -159,13 +159,119 @@ func TestPart_NotOnChannel(t *testing.T) {
 
 	c, r := register(t, addr, "alice")
 	defer c.Close()
-	cBob, _ := register(t, addr, "bob")
+	cBob, rBob := register(t, addr, "bob")
 	defer cBob.Close()
 
+	// Bob joins #test. We must wait for the NAMES burst (366) to
+	// land on bob before alice acts; otherwise alice can race and
+	// PART before the channel exists, getting 403 instead of 442.
 	cBob.Write([]byte("JOIN #test\r\n"))
-	// alice attempts to part #test without joining.
+	readUntil(t, cBob, rBob, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "366"
+	})
+
+	// Alice tries to part #test without joining. Channel exists
+	// (bob is in it) so she gets 442 not 403.
 	c.Write([]byte("PART #test\r\n"))
-	expectNumeric(t, r, "442", time.Now().Add(2*time.Second))
+	expectNumeric(t, c, r, "442", time.Now().Add(2*time.Second))
+}
+
+func TestTopic_ReadEmpty(t *testing.T) {
+	addr, teardown := startTestServer(t)
+	defer teardown()
+
+	c, r := register(t, addr, "alice")
+	defer c.Close()
+	c.Write([]byte("JOIN #test\r\n"))
+	readUntil(t, c, r, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "366"
+	})
+
+	c.Write([]byte("TOPIC #test\r\n"))
+	expectNumeric(t, c, r, "331", time.Now().Add(2*time.Second))
+}
+
+func TestTopic_SetAndRead(t *testing.T) {
+	addr, teardown := startTestServer(t)
+	defer teardown()
+
+	cAlice, rAlice := register(t, addr, "alice")
+	defer cAlice.Close()
+	cBob, rBob := register(t, addr, "bob")
+	defer cBob.Close()
+
+	cAlice.Write([]byte("JOIN #test\r\n"))
+	readUntil(t, cAlice, rAlice, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "366"
+	})
+	cBob.Write([]byte("JOIN #test\r\n"))
+	readUntil(t, cBob, rBob, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "366"
+	})
+	// Drain bob join echo on alice stream.
+	readUntil(t, cAlice, rAlice, time.Now().Add(2*time.Second), func(l string) bool {
+		return strings.HasPrefix(l, ":bob!") && strings.Contains(l, " JOIN ")
+	})
+
+	// Alice (chan op) sets the topic.
+	cAlice.Write([]byte("TOPIC #test :hello world\r\n"))
+	// Both alice and bob should see the TOPIC broadcast.
+	readUntil(t, cAlice, rAlice, time.Now().Add(2*time.Second), func(line string) bool {
+		return strings.HasPrefix(line, ":alice!") && strings.Contains(line, " TOPIC #test ")
+	})
+	readUntil(t, cBob, rBob, time.Now().Add(2*time.Second), func(line string) bool {
+		return strings.HasPrefix(line, ":bob!") == false &&
+			strings.HasPrefix(line, ":alice!") && strings.Contains(line, " TOPIC #test ")
+	})
+
+	// Reading the topic should now return RPL_TOPIC + RPL_TOPICWHOTIME.
+	cBob.Write([]byte("TOPIC #test\r\n"))
+	line, _ := readUntil(t, cBob, rBob, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "332"
+	})
+	if !strings.Contains(line, "hello world") {
+		t.Errorf("332 missing topic: %q", line)
+	}
+	readUntil(t, cBob, rBob, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "333"
+	})
+}
+
+func TestTopic_NotOnChannel(t *testing.T) {
+	addr, teardown := startTestServer(t)
+	defer teardown()
+
+	cAlice, _ := register(t, addr, "alice")
+	defer cAlice.Close()
+	cAlice.Write([]byte("JOIN #test\r\n"))
+	// We do not need to read alice burst.
+
+	cBob, rBob := register(t, addr, "bob")
+	defer cBob.Close()
+	cBob.Write([]byte("TOPIC #test :i am not in here\r\n"))
+	expectNumeric(t, cBob, rBob, "442", time.Now().Add(2*time.Second))
+}
+
+func TestTopic_NonOpUnderTPlus(t *testing.T) {
+	addr, teardown := startTestServer(t)
+	defer teardown()
+
+	cAlice, rAlice := register(t, addr, "alice")
+	defer cAlice.Close()
+	cBob, rBob := register(t, addr, "bob")
+	defer cBob.Close()
+	cAlice.Write([]byte("JOIN #test\r\n"))
+	readUntil(t, cAlice, rAlice, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "366"
+	})
+	cBob.Write([]byte("JOIN #test\r\n"))
+	readUntil(t, cBob, rBob, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "366"
+	})
+	// Default mode is +nt; bob is not opped, so setting topic must
+	// be rejected with 482.
+	cBob.Write([]byte("TOPIC #test :no thanks\r\n"))
+	expectNumeric(t, cBob, rBob, "482", time.Now().Add(2*time.Second))
 }
 
 func TestJoin_ZeroPartsAll(t *testing.T) {

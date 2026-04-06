@@ -69,7 +69,7 @@ func TestPrivmsg_NoSuchNick(t *testing.T) {
 	c, r := register(t, addr, "alice")
 	defer c.Close()
 	c.Write([]byte("PRIVMSG ghost :anyone home\r\n"))
-	expectNumeric(t, r, "401", time.Now().Add(2*time.Second))
+	expectNumeric(t, c, r, "401", time.Now().Add(2*time.Second))
 }
 
 func TestPrivmsg_NoRecipient(t *testing.T) {
@@ -79,7 +79,7 @@ func TestPrivmsg_NoRecipient(t *testing.T) {
 	c, r := register(t, addr, "alice")
 	defer c.Close()
 	c.Write([]byte("PRIVMSG\r\n"))
-	expectNumeric(t, r, "411", time.Now().Add(2*time.Second))
+	expectNumeric(t, c, r, "411", time.Now().Add(2*time.Second))
 }
 
 func TestPrivmsg_NoTextToSend(t *testing.T) {
@@ -89,7 +89,7 @@ func TestPrivmsg_NoTextToSend(t *testing.T) {
 	c, r := register(t, addr, "alice")
 	defer c.Close()
 	c.Write([]byte("PRIVMSG bob\r\n"))
-	expectNumeric(t, r, "412", time.Now().Add(2*time.Second))
+	expectNumeric(t, c, r, "412", time.Now().Add(2*time.Second))
 }
 
 func TestPrivmsg_ChannelNoExternalMessages(t *testing.T) {
@@ -108,7 +108,7 @@ func TestPrivmsg_ChannelNoExternalMessages(t *testing.T) {
 	cBob, rBob := register(t, addr, "bob")
 	defer cBob.Close()
 	cBob.Write([]byte("PRIVMSG #test :smuggling in\r\n"))
-	expectNumeric(t, rBob, "404", time.Now().Add(2*time.Second))
+	expectNumeric(t, cBob, rBob, "404", time.Now().Add(2*time.Second))
 }
 
 func TestNotice_NoErrorRepliesEvenOnFailure(t *testing.T) {
