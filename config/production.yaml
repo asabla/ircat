@@ -1,0 +1,69 @@
+version: 1
+server:
+  name: irc.example.org
+  description: "ircat production"
+  network: ExampleNet
+  motd_file: /etc/ircat/motd.txt
+  admin:
+    name: "Your Name"
+    email: "admin@example.org"
+  listeners:
+    - address: "0.0.0.0:6667"
+      tls: false
+    - address: "0.0.0.0:6697"
+      tls: true
+      cert_file: /etc/ircat/tls/cert.pem
+      key_file: /etc/ircat/tls/key.pem
+  limits:
+    max_clients: 10000
+    max_channels_per_user: 50
+    sendq_bytes: 1048576
+    ping_interval_seconds: 120
+    ping_timeout_seconds: 240
+
+storage:
+  driver: postgres
+  postgres:
+    dsn: "postgres://ircat:${POSTGRES_PASSWORD}@postgres:5432/ircat?sslmode=disable"
+    max_open_conns: 20
+    max_idle_conns: 5
+
+dashboard:
+  enabled: true
+  address: "0.0.0.0:8080"
+  tls:
+    enabled: false
+
+api:
+  enabled: true
+
+auth:
+  password_hash: argon2id
+  initial_admin:
+    username: admin
+    password_env: IRCAT_INITIAL_ADMIN_PASSWORD
+
+events:
+  sinks:
+    - type: jsonl
+      path: /var/log/ircat/events.jsonl
+      rotate_mb: 100
+      keep: 14
+    - type: redis
+      address: redis:6379
+      stream: ircat:events
+      maxlen: 100000
+
+bots:
+  enabled: true
+  max_bots: 100
+
+federation:
+  enabled: false
+  my_server_name: irc.example.org
+  links: []
+
+logging:
+  level: info
+  format: json
+  ring_buffer_entries: 10000

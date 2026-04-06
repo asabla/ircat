@@ -1,0 +1,53 @@
+version: 1
+server:
+  name: irc.dev.local
+  description: "ircat dev"
+  network: ircat-dev
+  admin:
+    name: "Dev Admin"
+    email: "dev@local"
+  listeners:
+    - address: "0.0.0.0:6667"
+      tls: false
+  limits:
+    max_clients: 1000
+    ping_interval_seconds: 60
+    ping_timeout_seconds: 120
+
+storage:
+  driver: sqlite
+  sqlite:
+    path: /var/lib/ircat/ircat.db
+    journal_mode: wal
+
+dashboard:
+  enabled: true
+  address: "0.0.0.0:8080"
+  session:
+    secure: false
+    same_site: lax
+
+api:
+  enabled: true
+
+auth:
+  password_hash: argon2id
+  initial_admin:
+    username: admin
+    password_env: IRCAT_INITIAL_ADMIN_PASSWORD
+
+events:
+  sinks:
+    - type: jsonl
+      path: /var/lib/ircat/events.jsonl
+      rotate_mb: 10
+      keep: 3
+
+bots:
+  enabled: true
+  max_bots: 10
+
+logging:
+  level: debug
+  format: text
+  ring_buffer_entries: 5000
