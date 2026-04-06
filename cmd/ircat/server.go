@@ -102,6 +102,11 @@ func runServer(args []string) error {
 		Config:     cfg,
 		Logger:     logger.With("component", "dashboard"),
 		APIHandler: apiSrv.Handler(),
+		PageDeps: &dashboard.PageDeps{
+			Store:      store,
+			World:      world,
+			ServerInfo: srv,
+		},
 		ReadyFunc: func() error {
 			// Ready once the IRC server has bound at least one
 			// listener. Before that the IRC side is still wiring

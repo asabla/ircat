@@ -1,0 +1,9 @@
+{{define "content"}}
+<h2>sign in</h2>
+{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+<form method="post" action="/dashboard/login">
+<label>operator <input type="text" name="username" autofocus required></label>
+<label>password <input type="password" name="password" required></label>
+<button type="submit">sign in</button>
+</form>
+{{end}}

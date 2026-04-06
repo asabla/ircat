@@ -1,0 +1,88 @@
+/* ircat dashboard — minimal classless-ish stylesheet.
+ *
+ * No build step, no fonts, no JS framework. Designed to be readable
+ * on any modern browser including text-mode ones, while still
+ * looking like a deliberate UI rather than raw browser default.
+ */
+
+:root {
+  color-scheme: light dark;
+  --bg: #f7f7f5;
+  --fg: #1d1d1f;
+  --muted: #6b6b73;
+  --border: #d4d4dc;
+  --accent: #0d6efd;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14141a;
+    --fg: #e8e8ea;
+    --muted: #8c8c98;
+    --border: #2e2e3a;
+    --accent: #7aa9ff;
+  }
+}
+
+body {
+  font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  margin: 0;
+  padding: 0;
+}
+
+header {
+  border-bottom: 1px solid var(--border);
+  padding: 1rem 2rem;
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+}
+
+header h1 { margin: 0; font-size: 1.4rem; }
+header h1 a { color: var(--fg); text-decoration: none; }
+
+nav {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  flex: 1;
+}
+nav a { color: var(--accent); text-decoration: none; }
+nav a:hover { text-decoration: underline; }
+
+main { padding: 2rem; max-width: 80rem; }
+
+h2 { margin-top: 0; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+th, td {
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+th { color: var(--muted); font-weight: 600; }
+
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.4rem 1rem; }
+dt { color: var(--muted); }
+
+form { display: flex; flex-direction: column; gap: 0.6rem; max-width: 24rem; }
+form.inline { display: inline; }
+label { display: flex; flex-direction: column; gap: 0.2rem; }
+input, button {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  border-radius: 0.25rem;
+  font: inherit;
+}
+button { cursor: pointer; }
+button:hover { background: var(--border); }
+
+.error { color: #c0392b; }
+code { background: var(--border); padding: 0.1rem 0.3rem; border-radius: 0.25rem; font-size: 0.85rem; }

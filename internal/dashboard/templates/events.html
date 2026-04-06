@@ -1,0 +1,21 @@
+{{define "content"}}
+<h2>audit events ({{len .Events}})</h2>
+{{if .Events}}
+<table>
+<thead><tr><th>timestamp</th><th>type</th><th>actor</th><th>target</th><th>data</th></tr></thead>
+<tbody>
+{{range .Events}}
+<tr>
+<td>{{.Timestamp}}</td>
+<td>{{.Type}}</td>
+<td>{{.Actor}}</td>
+<td>{{.Target}}</td>
+<td><code>{{.DataJSON}}</code></td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p>no events recorded yet.</p>
+{{end}}
+{{end}}

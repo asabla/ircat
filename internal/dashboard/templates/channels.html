@@ -1,0 +1,20 @@
+{{define "content"}}
+<h2>channels ({{len .Channels}})</h2>
+{{if .Channels}}
+<table>
+<thead><tr><th>name</th><th>members</th><th>modes</th><th>topic</th></tr></thead>
+<tbody>
+{{range .Channels}}
+<tr>
+<td>{{.Name}}</td>
+<td>{{.MemberCount}}</td>
+<td>{{.ModeWord}}</td>
+<td>{{.Topic}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p>no channels.</p>
+{{end}}
+{{end}}

@@ -1,0 +1,27 @@
+{{define "base"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{.Title}} — ircat</title>
+<link rel="stylesheet" href="/dashboard/static/style.css">
+</head>
+<body>
+<header>
+<h1><a href="/dashboard">ircat</a></h1>
+{{if .Operator}}
+<nav>
+<a href="/dashboard">overview</a>
+<a href="/dashboard/users">users</a>
+<a href="/dashboard/channels">channels</a>
+<a href="/dashboard/operators">operators</a>
+<a href="/dashboard/events">events</a>
+<form method="post" action="/dashboard/logout" class="inline"><button type="submit">logout {{.Operator}}</button></form>
+</nav>
+{{end}}
+</header>
+<main>
+{{template "content" .}}
+</main>
+</body>
+</html>
+{{end}}

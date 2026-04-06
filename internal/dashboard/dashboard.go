@@ -31,6 +31,12 @@ type Options struct {
 	// supplied by internal/api which has its own dependency tree.
 	APIHandler http.Handler
 
+	// PageDeps wires the operator-facing dashboard pages to the
+	// running ircat node. Optional — when nil, the pages render
+	// without runtime data and the login form refuses every
+	// attempt.
+	PageDeps *PageDeps
+
 	// ReadyFunc reports readiness. The /readyz endpoint returns
 	// 200 when this returns nil and 503 when it returns an error.
 	// Used by container orchestration to delay traffic until the
@@ -51,6 +57,10 @@ type Server struct {
 	httpServer *http.Server
 
 	readyFunc func() error
+
+	pages    *PageDeps
+	sessions *sessionStore
+	tmpl     *templates
 }
 
 // New constructs a Server. It does not bind any sockets.
@@ -63,6 +73,7 @@ func New(opts Options) *Server {
 		cfg:    opts.Config,
 		logger: logger,
 		mux:    http.NewServeMux(),
+		pages:  opts.PageDeps,
 		readyFunc: func() error {
 			if opts.ReadyFunc != nil {
 				return opts.ReadyFunc()
@@ -70,6 +81,28 @@ func New(opts Options) *Server {
 			return nil
 		},
 	}
+	cookieName := "ircat_session"
+	maxAge := 24 * time.Hour
+	secure := false
+	if opts.Config != nil {
+		if opts.Config.Dashboard.Session.CookieName != "" {
+			cookieName = opts.Config.Dashboard.Session.CookieName
+		}
+		if h := opts.Config.Dashboard.Session.MaxAgeHours; h > 0 {
+			maxAge = time.Duration(h) * time.Hour
+		}
+		secure = opts.Config.Dashboard.Session.Secure
+	}
+	store, err := newSessionStore(cookieName, maxAge, secure)
+	if err != nil {
+		logger.Error("session store init failed", "error", err)
+	}
+	s.sessions = store
+	tmpl, err := loadTemplates()
+	if err != nil {
+		logger.Error("template load failed", "error", err)
+	}
+	s.tmpl = tmpl
 	s.registerRoutes(opts.APIHandler)
 	return s
 }
@@ -149,6 +182,22 @@ func (s *Server) registerRoutes(api http.Handler) {
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
 	s.mux.HandleFunc("GET /{$}", s.handleRoot)
+
+	// Static assets (CSS).
+	s.mux.Handle("GET /dashboard/static/", http.StripPrefix("/dashboard/", http.FileServer(http.FS(staticFS))))
+
+	// Login surface.
+	s.mux.HandleFunc("GET /login", s.handleLoginGet)
+	s.mux.HandleFunc("POST /dashboard/login", s.handleLoginPost)
+	s.mux.HandleFunc("POST /dashboard/logout", s.handleLogout)
+
+	// Authenticated pages.
+	s.mux.HandleFunc("GET /dashboard", s.requireSession(s.handleOverview))
+	s.mux.HandleFunc("GET /dashboard/users", s.requireSession(s.handleUsersPage))
+	s.mux.HandleFunc("GET /dashboard/channels", s.requireSession(s.handleChannelsPage))
+	s.mux.HandleFunc("GET /dashboard/operators", s.requireSession(s.handleOperatorsPage))
+	s.mux.HandleFunc("GET /dashboard/events", s.requireSession(s.handleEventsPage))
+
 	if api != nil {
 		s.mux.Handle("/api/v1/", http.StripPrefix("/api/v1", api))
 	}

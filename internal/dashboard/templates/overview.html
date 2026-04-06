@@ -1,0 +1,12 @@
+{{define "content"}}
+<h2>overview</h2>
+<dl>
+<dt>server name</dt><dd>{{.Server.Name}}</dd>
+<dt>network</dt><dd>{{.Server.Network}}</dd>
+<dt>version</dt><dd>{{.Server.Version}}</dd>
+<dt>started at</dt><dd>{{.Server.StartedAt}}</dd>
+<dt>users</dt><dd>{{.Server.UserCount}}</dd>
+<dt>channels</dt><dd>{{.Server.ChannelCount}}</dd>
+<dt>listeners</dt><dd>{{range .Server.Listeners}}{{.}} {{end}}</dd>
+</dl>
+{{end}}

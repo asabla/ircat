@@ -1,0 +1,20 @@
+{{define "content"}}
+<h2>operators ({{len .Operators}})</h2>
+{{if .Operators}}
+<table>
+<thead><tr><th>name</th><th>host mask</th><th>flags</th><th>created</th></tr></thead>
+<tbody>
+{{range .Operators}}
+<tr>
+<td>{{.Name}}</td>
+<td>{{if .HostMask}}{{.HostMask}}{{else}}<em>any</em>{{end}}</td>
+<td>{{range .Flags}}{{.}} {{end}}</td>
+<td>{{.CreatedAt}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p>no operators registered.</p>
+{{end}}
+{{end}}
