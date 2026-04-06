@@ -139,10 +139,16 @@ func (s *Server) Run(ctx context.Context) error {
 
 // registerRoutes wires the static / always-on routes onto s.mux.
 // Dynamic routes (login, pages, SSE) get added by later commits.
+//
+// The root pattern uses {$} so it matches only the literal "/"
+// path. Without that, "GET /" would conflict with the more
+// specific "/api/v1/" subtree pattern: Go 1.22+ ServeMux refuses
+// to disambiguate the case where one pattern matches more methods
+// than the other but a more specific path.
 func (s *Server) registerRoutes(api http.Handler) {
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
-	s.mux.HandleFunc("GET /", s.handleRoot)
+	s.mux.HandleFunc("GET /{$}", s.handleRoot)
 	if api != nil {
 		s.mux.Handle("/api/v1/", http.StripPrefix("/api/v1", api))
 	}
@@ -170,12 +176,9 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 
 // handleRoot is a placeholder until the dashboard pages land. It
 // returns a tiny "ircat" page so an operator hitting / from a
-// browser sees something other than a 404.
+// browser sees something other than a 404. The mux pattern already
+// scopes this to the literal "/" path.
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`<!doctype html><html><head><title>ircat</title></head><body><h1>ircat</h1><p>Dashboard pages land in M4 follow-ups.</p></body></html>`))

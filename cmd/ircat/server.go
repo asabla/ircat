@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/asabla/ircat/internal/api"
 	"github.com/asabla/ircat/internal/config"
 	"github.com/asabla/ircat/internal/dashboard"
 	"github.com/asabla/ircat/internal/logging"
@@ -89,9 +90,18 @@ func runServer(args []string) error {
 	world := state.NewWorld()
 	srv := server.New(cfg, world, logger, server.WithStore(store))
 
+	apiSrv := api.New(api.Options{
+		Store:      store,
+		World:      world,
+		Actuator:   srv,
+		ServerInfo: srv,
+		Logger:     logger.With("component", "api"),
+	})
+
 	dash := dashboard.New(dashboard.Options{
-		Config: cfg,
-		Logger: logger.With("component", "dashboard"),
+		Config:     cfg,
+		Logger:     logger.With("component", "dashboard"),
+		APIHandler: apiSrv.Handler(),
 		ReadyFunc: func() error {
 			// Ready once the IRC server has bound at least one
 			// listener. Before that the IRC side is still wiring
