@@ -1,0 +1,192 @@
+// Package dashboard owns ircat's HTTP listener: the operator-facing
+// htmx UI, the live SSE streams, and the mount point for the
+// internal/api admin endpoints.
+//
+// At M4 this package is intentionally thin — only /healthz, /readyz,
+// and an empty router skeleton — so the rest of M4 can land
+// incrementally on top of it. The actual login page, pages, and
+// chat surface come in follow-up commits.
+package dashboard
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/asabla/ircat/internal/config"
+)
+
+// Options configures a [Server] at construction time.
+type Options struct {
+	Config *config.Config
+	Logger *slog.Logger
+
+	// APIHandler, if non-nil, is mounted under /api/v1. It is
+	// supplied by internal/api which has its own dependency tree.
+	APIHandler http.Handler
+
+	// ReadyFunc reports readiness. The /readyz endpoint returns
+	// 200 when this returns nil and 503 when it returns an error.
+	// Used by container orchestration to delay traffic until the
+	// IRC listener and storage are both up.
+	ReadyFunc func() error
+}
+
+// Server is the HTTP-side counterpart to internal/server. Construct
+// with [New], call [Server.Run] from main, cancel the supplied
+// context to shut down.
+type Server struct {
+	cfg    *config.Config
+	logger *slog.Logger
+	mux    *http.ServeMux
+
+	listenerMu sync.RWMutex
+	listener   net.Listener
+	httpServer *http.Server
+
+	readyFunc func() error
+}
+
+// New constructs a Server. It does not bind any sockets.
+func New(opts Options) *Server {
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	s := &Server{
+		cfg:    opts.Config,
+		logger: logger,
+		mux:    http.NewServeMux(),
+		readyFunc: func() error {
+			if opts.ReadyFunc != nil {
+				return opts.ReadyFunc()
+			}
+			return nil
+		},
+	}
+	s.registerRoutes(opts.APIHandler)
+	return s
+}
+
+// Addr returns the bound listener address, or "" if [Server.Run]
+// has not yet bound the listener. Used by tests.
+func (s *Server) Addr() string {
+	s.listenerMu.RLock()
+	defer s.listenerMu.RUnlock()
+	if s.listener == nil {
+		return ""
+	}
+	return s.listener.Addr().String()
+}
+
+// Run binds the configured dashboard listener and serves until ctx
+// is cancelled. Returns nil on a clean shutdown, an error on bind
+// failure or unexpected stop.
+//
+// If cfg.Dashboard.Enabled is false, Run returns immediately with
+// nil — the operator can disable the dashboard entirely.
+func (s *Server) Run(ctx context.Context) error {
+	if s.cfg == nil || !s.cfg.Dashboard.Enabled {
+		s.logger.Info("dashboard disabled")
+		<-ctx.Done()
+		return nil
+	}
+	addr := s.cfg.Dashboard.Address
+	if addr == "" {
+		return errors.New("dashboard: dashboard.address is empty")
+	}
+
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("dashboard listen %s: %w", addr, err)
+	}
+	s.listenerMu.Lock()
+	s.listener = ln
+	s.listenerMu.Unlock()
+
+	s.httpServer = &http.Server{
+		Handler:           s.mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		ErrorLog:          nil, // suppress stdlib log; we use slog via the handler
+	}
+
+	s.logger.Info("dashboard listener bound", "address", ln.Addr().String())
+
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- s.httpServer.Serve(ln) }()
+
+	select {
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = s.httpServer.Shutdown(shutdownCtx)
+		<-serveErr
+		return nil
+	case err := <-serveErr:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	}
+}
+
+// registerRoutes wires the static / always-on routes onto s.mux.
+// Dynamic routes (login, pages, SSE) get added by later commits.
+func (s *Server) registerRoutes(api http.Handler) {
+	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
+	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
+	s.mux.HandleFunc("GET /", s.handleRoot)
+	if api != nil {
+		s.mux.Handle("/api/v1/", http.StripPrefix("/api/v1", api))
+	}
+}
+
+// handleHealthz returns 200 unconditionally — it is the "process
+// is alive" probe. Use /readyz for the "process is ready to take
+// traffic" probe.
+func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleReadyz returns 200 if the configured ReadyFunc says we are
+// ready, 503 otherwise.
+func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	if err := s.readyFunc(); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"status": "not ready",
+			"error":  err.Error(),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+}
+
+// handleRoot is a placeholder until the dashboard pages land. It
+// returns a tiny "ircat" page so an operator hitting / from a
+// browser sees something other than a 404.
+func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`<!doctype html><html><head><title>ircat</title></head><body><h1>ircat</h1><p>Dashboard pages land in M4 follow-ups.</p></body></html>`))
+}
+
+// writeJSON is the small helper every JSON-returning route uses so
+// the Content-Type and trailing newline are consistent.
+func writeJSON(w http.ResponseWriter, status int, body any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(body)
+}

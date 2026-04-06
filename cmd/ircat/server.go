@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/asabla/ircat/internal/config"
+	"github.com/asabla/ircat/internal/dashboard"
 	"github.com/asabla/ircat/internal/logging"
 	"github.com/asabla/ircat/internal/server"
 	"github.com/asabla/ircat/internal/state"
@@ -88,19 +89,53 @@ func runServer(args []string) error {
 	world := state.NewWorld()
 	srv := server.New(cfg, world, logger, server.WithStore(store))
 
+	dash := dashboard.New(dashboard.Options{
+		Config: cfg,
+		Logger: logger.With("component", "dashboard"),
+		ReadyFunc: func() error {
+			// Ready once the IRC server has bound at least one
+			// listener. Before that the IRC side is still wiring
+			// up and the dashboard returns 503 to load balancers.
+			if len(srv.ListenerAddrs()) == 0 {
+				return errors.New("irc listener not bound yet")
+			}
+			return nil
+		},
+	})
+
 	logger.Info("ircat ready",
 		"listeners", listenerAddresses(cfg),
 		"storage_driver", cfg.Storage.Driver,
+		"dashboard_enabled", cfg.Dashboard.Enabled,
 	)
 
-	// Server.Run blocks until ctx is done; it owns the listeners and
-	// the per-connection drain. Future milestones add the dashboard,
-	// API, federation links, bot supervisor, and event sinks here in
-	// parallel and orchestrate their shutdown alongside the IRC
-	// listener.
-	if err := srv.Run(ctx); err != nil {
-		logger.Error("server stopped with error", "error", err)
-		return err
+	// Run the IRC server and the dashboard in parallel; cancel both
+	// via the same context. The first one to error wins; the other
+	// gets the shared cancel.
+	runCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+
+	errs := make(chan error, 2)
+	go func() {
+		if err := srv.Run(runCtx); err != nil {
+			errs <- fmt.Errorf("irc server: %w", err)
+			return
+		}
+		errs <- nil
+	}()
+	go func() {
+		if err := dash.Run(runCtx); err != nil {
+			errs <- fmt.Errorf("dashboard: %w", err)
+			return
+		}
+		errs <- nil
+	}()
+
+	for i := 0; i < 2; i++ {
+		if err := <-errs; err != nil {
+			cancel(err)
+			logger.Error("subsystem stopped with error", "error", err)
+		}
 	}
 
 	logger.Info("ircat shutting down", "reason", context.Cause(ctx))
