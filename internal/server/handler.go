@@ -33,6 +33,14 @@ func (c *Conn) dispatch(m *protocol.Message) {
 		c.handleNotice(m)
 	case "TOPIC":
 		c.handleTopic(m)
+	case "NAMES":
+		c.handleNames(m)
+	case "LIST":
+		c.handleList(m)
+	case "WHO":
+		c.handleWho(m)
+	case "WHOIS":
+		c.handleWhois(m)
 	case "PING":
 		c.handlePing(m)
 	case "PONG":

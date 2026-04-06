@@ -1,0 +1,226 @@
+package server
+
+import (
+	"strings"
+	"time"
+
+	"github.com/asabla/ircat/internal/protocol"
+	"github.com/asabla/ircat/internal/state"
+)
+
+// handleNames implements NAMES (RFC 2812 §3.2.5).
+//
+//	NAMES [<channel>{,<channel>}]
+//
+// With a channel list, send the NAMES burst for each. Without
+// arguments, walk every visible channel — for now we keep it simple
+// and require an explicit list, returning an empty 366 with "*"
+// as the channel name when no list is supplied (matching the
+// historical behaviour of charybdis-derived ircds).
+func (c *Conn) handleNames(m *protocol.Message) {
+	if c.user == nil || !c.user.Registered {
+		c.send(protocol.NumericReply(c.server.cfg.Server.Name, c.starOrNick(),
+			protocol.ERR_NOTREGISTERED, "You have not registered"))
+		return
+	}
+	srv := c.server.cfg.Server.Name
+	nick := c.user.Nick
+	if len(m.Params) < 1 {
+		c.send(protocol.NumericReply(srv, nick, protocol.RPL_ENDOFNAMES, "*", "End of NAMES list"))
+		return
+	}
+	for _, name := range strings.Split(m.Params[0], ",") {
+		ch := c.server.world.FindChannel(name)
+		if ch == nil {
+			c.send(protocol.NumericReply(srv, nick, protocol.RPL_ENDOFNAMES, name, "End of NAMES list"))
+			continue
+		}
+		c.sendNamesReply(ch)
+	}
+}
+
+// handleList implements LIST (RFC 2812 §3.2.6).
+//
+//	LIST [<channel>{,<channel>}]
+//
+// Returns RPL_LISTSTART, then one RPL_LIST per matching channel,
+// then RPL_LISTEND. With no parameters, lists every channel that is
+// not +s (secret) or +p (private) — unless the asking user is a
+// member, in which case the visibility filter is bypassed.
+func (c *Conn) handleList(m *protocol.Message) {
+	if c.user == nil || !c.user.Registered {
+		c.send(protocol.NumericReply(c.server.cfg.Server.Name, c.starOrNick(),
+			protocol.ERR_NOTREGISTERED, "You have not registered"))
+		return
+	}
+	srv := c.server.cfg.Server.Name
+	nick := c.user.Nick
+
+	c.send(protocol.NumericReply(srv, nick, protocol.RPL_LISTSTART, "Channel", "Users  Name"))
+
+	var targets []*state.Channel
+	if len(m.Params) >= 1 && m.Params[0] != "" {
+		for _, name := range strings.Split(m.Params[0], ",") {
+			if ch := c.server.world.FindChannel(name); ch != nil {
+				targets = append(targets, ch)
+			}
+		}
+	} else {
+		targets = c.server.world.ChannelsSnapshot()
+	}
+
+	for _, ch := range targets {
+		_, _, _, priv, secret, _, _, _ := ch.Modes()
+		if (priv || secret) && !ch.IsMember(c.user.ID) {
+			continue
+		}
+		topic, _, _ := ch.Topic()
+		c.send(protocol.NumericReply(srv, nick, protocol.RPL_LIST,
+			ch.Name(), itoaPositive(ch.MemberCount()), topic))
+	}
+	c.send(protocol.NumericReply(srv, nick, protocol.RPL_LISTEND, "End of LIST"))
+}
+
+// handleWho implements WHO (RFC 2812 §3.6.1).
+//
+//	WHO [<mask> [o]]
+//
+// Returns one RPL_WHOREPLY (352) per matching user, terminated by
+// RPL_ENDOFWHO (315). If <mask> is a channel, the reply is the
+// channel's members. Otherwise we treat the mask as a literal nick
+// or glob pattern (M2 only matches literal nicks; glob support is
+// trivial to add when the use case appears).
+func (c *Conn) handleWho(m *protocol.Message) {
+	if c.user == nil || !c.user.Registered {
+		c.send(protocol.NumericReply(c.server.cfg.Server.Name, c.starOrNick(),
+			protocol.ERR_NOTREGISTERED, "You have not registered"))
+		return
+	}
+	srv := c.server.cfg.Server.Name
+	nick := c.user.Nick
+	mask := "*"
+	if len(m.Params) >= 1 && m.Params[0] != "" {
+		mask = m.Params[0]
+	}
+
+	if isChannelName(mask) {
+		ch := c.server.world.FindChannel(mask)
+		if ch != nil {
+			for id, mem := range ch.MemberIDs() {
+				u := c.server.world.FindByID(id)
+				if u == nil {
+					continue
+				}
+				c.sendWhoReply(ch.Name(), u, mem)
+			}
+		}
+		c.send(protocol.NumericReply(srv, nick, protocol.RPL_ENDOFWHO, mask, "End of WHO list"))
+		return
+	}
+
+	if u := c.server.world.FindByNick(mask); u != nil {
+		c.sendWhoReply("*", u, 0)
+	}
+	c.send(protocol.NumericReply(srv, nick, protocol.RPL_ENDOFWHO, mask, "End of WHO list"))
+}
+
+func (c *Conn) sendWhoReply(channel string, u *state.User, mem state.Membership) {
+	srv := c.server.cfg.Server.Name
+	nick := c.user.Nick
+	flags := "H" // "H" = here (we do not implement AWAY in M2 -> always here)
+	if mem.IsOp() {
+		flags += "@"
+	} else if mem.IsVoice() {
+		flags += "+"
+	}
+	c.send(protocol.NumericReply(srv, nick, protocol.RPL_WHOREPLY,
+		channel,
+		userOrNick(u),
+		hostOrUnknown(u),
+		srv,
+		u.Nick,
+		flags,
+		"0 "+u.Realname))
+}
+
+// handleWhois implements WHOIS (RFC 2812 §3.6.2).
+//
+//	WHOIS [<server>] <nick>{,<nick>}
+//
+// Server-specific routing is M7 work; for M2 we only resolve local
+// nicks. Each nick produces RPL_WHOISUSER + RPL_WHOISSERVER
+// + RPL_WHOISCHANNELS (if applicable) + RPL_WHOISIDLE (placeholder)
+// + RPL_ENDOFWHOIS, with ERR_NOSUCHNICK for missing targets.
+func (c *Conn) handleWhois(m *protocol.Message) {
+	if c.user == nil || !c.user.Registered {
+		c.send(protocol.NumericReply(c.server.cfg.Server.Name, c.starOrNick(),
+			protocol.ERR_NOTREGISTERED, "You have not registered"))
+		return
+	}
+	srv := c.server.cfg.Server.Name
+	nick := c.user.Nick
+	if len(m.Params) < 1 {
+		c.send(protocol.NumericReply(srv, nick, protocol.ERR_NONICKNAMEGIVEN, "No nickname given"))
+		return
+	}
+	// If a server param was given, the nick list is the second param.
+	target := m.Params[0]
+	if len(m.Params) >= 2 {
+		target = m.Params[1]
+	}
+	for _, name := range strings.Split(target, ",") {
+		c.sendWhois(name)
+	}
+}
+
+func (c *Conn) sendWhois(name string) {
+	srv := c.server.cfg.Server.Name
+	nick := c.user.Nick
+	u := c.server.world.FindByNick(name)
+	if u == nil {
+		c.send(protocol.NumericReply(srv, nick, protocol.ERR_NOSUCHNICK, name, "No such nick/channel"))
+		c.send(protocol.NumericReply(srv, nick, protocol.RPL_ENDOFWHOIS, name, "End of WHOIS list"))
+		return
+	}
+	c.send(protocol.NumericReply(srv, nick, protocol.RPL_WHOISUSER,
+		u.Nick, userOrNick(u), hostOrUnknown(u), "*", u.Realname))
+	c.send(protocol.NumericReply(srv, nick, protocol.RPL_WHOISSERVER,
+		u.Nick, srv, c.server.cfg.Server.Description))
+	// Channel membership: build the list with op/voice prefixes.
+	chans := c.server.world.UserChannels(u.ID)
+	if len(chans) > 0 {
+		var b strings.Builder
+		for i, ch := range chans {
+			if i > 0 {
+				b.WriteByte(' ')
+			}
+			b.WriteString(ch.Membership(u.ID).Prefix())
+			b.WriteString(ch.Name())
+		}
+		c.send(protocol.NumericReply(srv, nick, protocol.RPL_WHOISCHANNELS, u.Nick, b.String()))
+	}
+	// Idle time: placeholder until we track per-conn last-message
+	// timestamps in M2 flood control. Reports the time since
+	// connect for now.
+	idle := int(time.Since(u.ConnectAt).Seconds())
+	if idle < 0 {
+		idle = 0
+	}
+	c.send(protocol.NumericReply(srv, nick, protocol.RPL_WHOISIDLE,
+		u.Nick, itoaPositive(idle), itoaPositive(int(u.ConnectAt.Unix())), "seconds idle, signon time"))
+	c.send(protocol.NumericReply(srv, nick, protocol.RPL_ENDOFWHOIS, u.Nick, "End of WHOIS list"))
+}
+
+func userOrNick(u *state.User) string {
+	if u.User != "" {
+		return u.User
+	}
+	return u.Nick
+}
+
+func hostOrUnknown(u *state.User) string {
+	if u.Host != "" {
+		return u.Host
+	}
+	return "unknown"
+}
