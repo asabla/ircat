@@ -114,10 +114,11 @@ func (c *Conn) joinOne(name, key string) {
 
 // checkJoinPolicy returns the mode character that prevented the
 // join, or "" if the join is allowed. Used to translate from "no"
-// to a specific 47x numeric.
+// to a specific 47x numeric. Consumes a pending invite if the
+// channel is +i and the user has one — invites are one-shot.
 func checkJoinPolicy(c *Conn, ch *state.Channel, u *state.User, key string) string {
 	inviteOnly, _, _, _, _, _, chanKey, limit := ch.Modes()
-	if inviteOnly {
+	if inviteOnly && !ch.ConsumeInvite(u.ID) {
 		return "+i"
 	}
 	if chanKey != "" && chanKey != key {
@@ -130,6 +131,69 @@ func checkJoinPolicy(c *Conn, ch *state.Channel, u *state.User, key string) stri
 		return "+b"
 	}
 	return ""
+}
+
+// handleInvite implements INVITE (RFC 2812 §3.2.7).
+//
+//	INVITE <nick> <channel>
+//
+// Records a one-shot invite for nick on channel and delivers an
+// INVITE message to the target. The inviter must be on the channel
+// and (if +i is set) must be a channel operator.
+func (c *Conn) handleInvite(m *protocol.Message) {
+	if c.user == nil || !c.user.Registered {
+		c.send(protocol.NumericReply(c.server.cfg.Server.Name, c.starOrNick(),
+			protocol.ERR_NOTREGISTERED, "You have not registered"))
+		return
+	}
+	if len(m.Params) < 2 {
+		c.sendNeedMoreParams("INVITE")
+		return
+	}
+	srv := c.server.cfg.Server.Name
+	nick := c.user.Nick
+	targetNick := m.Params[0]
+	channelName := m.Params[1]
+
+	target := c.server.world.FindByNick(targetNick)
+	if target == nil {
+		c.send(protocol.NumericReply(srv, nick, protocol.ERR_NOSUCHNICK,
+			targetNick, "No such nick/channel"))
+		return
+	}
+	ch := c.server.world.FindChannel(channelName)
+	// RFC 2812 §3.2.7: invites to a non-existent channel are
+	// allowed; the invitee can then create it. We follow the same
+	// rule.
+	if ch != nil {
+		if !ch.IsMember(c.user.ID) {
+			c.send(protocol.NumericReply(srv, nick, protocol.ERR_NOTONCHANNEL,
+				channelName, "You are not on that channel"))
+			return
+		}
+		if ch.IsMember(target.ID) {
+			c.send(protocol.NumericReply(srv, nick, protocol.ERR_USERONCHANNEL,
+				targetNick, channelName, "is already on channel"))
+			return
+		}
+		inviteOnly, _, _, _, _, _, _, _ := ch.Modes()
+		if inviteOnly && !ch.Membership(c.user.ID).IsOp() {
+			c.send(protocol.NumericReply(srv, nick, protocol.ERR_CHANOPRIVSNEEDED,
+				channelName, "You are not channel operator"))
+			return
+		}
+		ch.AddInvite(target.ID)
+	}
+
+	// RPL_INVITING (341) to the inviter, INVITE message to the target.
+	c.send(protocol.NumericReply(srv, nick, protocol.RPL_INVITING, channelName, target.Nick))
+	if dest := c.server.connFor(target.ID); dest != nil {
+		dest.send(&protocol.Message{
+			Prefix:  c.user.Hostmask(),
+			Command: "INVITE",
+			Params:  []string{target.Nick, channelName},
+		})
+	}
 }
 
 // sendTopicState delivers the topic burst to the joining client.
@@ -255,6 +319,90 @@ func (c *Conn) partOne(name, reason string) {
 
 	if _, _, err := c.server.world.PartChannel(c.user.ID, name); err != nil {
 		c.logger.Warn("PartChannel failed", "error", err, "channel", name)
+	}
+}
+
+// handleKick implements KICK (RFC 2812 §3.2.8).
+//
+//	KICK <channel>{,<channel>} <user>{,<user>} [<comment>]
+//
+// Either one channel + many users, or N channels + N users (one
+// kick per (channel, user) pair). Requires the kicker to be a
+// member and an op of every named channel.
+func (c *Conn) handleKick(m *protocol.Message) {
+	if c.user == nil || !c.user.Registered {
+		c.send(protocol.NumericReply(c.server.cfg.Server.Name, c.starOrNick(),
+			protocol.ERR_NOTREGISTERED, "You have not registered"))
+		return
+	}
+	if len(m.Params) < 2 {
+		c.sendNeedMoreParams("KICK")
+		return
+	}
+	channels := strings.Split(m.Params[0], ",")
+	targets := strings.Split(m.Params[1], ",")
+	reason := c.user.Nick
+	if len(m.Params) >= 3 && m.Params[2] != "" {
+		reason = m.Params[2]
+	}
+
+	// RFC 2812 §3.2.8: either one channel and many targets, or
+	// N channels and N targets. Anything else is an error per the
+	// spec but most servers tolerate "1 chan -> N targets" by
+	// repeating the channel.
+	if len(channels) == 1 {
+		ch := channels[0]
+		for _, t := range targets {
+			c.kickOne(ch, t, reason)
+		}
+		return
+	}
+	if len(channels) == len(targets) {
+		for i := range channels {
+			c.kickOne(channels[i], targets[i], reason)
+		}
+		return
+	}
+	c.sendNeedMoreParams("KICK")
+}
+
+// kickOne removes target from channel after verifying that the
+// caller is an op in the channel and the target is actually a
+// member. Broadcasts KICK to every channel member, including the
+// victim, before the removal so the victim sees their own removal.
+func (c *Conn) kickOne(channelName, targetNick, reason string) {
+	srv := c.server.cfg.Server.Name
+	nick := c.user.Nick
+	ch := c.server.world.FindChannel(channelName)
+	if ch == nil {
+		c.send(protocol.NumericReply(srv, nick, protocol.ERR_NOSUCHCHANNEL,
+			channelName, "No such channel"))
+		return
+	}
+	if !ch.IsMember(c.user.ID) {
+		c.send(protocol.NumericReply(srv, nick, protocol.ERR_NOTONCHANNEL,
+			channelName, "You are not on that channel"))
+		return
+	}
+	if !ch.Membership(c.user.ID).IsOp() {
+		c.send(protocol.NumericReply(srv, nick, protocol.ERR_CHANOPRIVSNEEDED,
+			channelName, "You are not channel operator"))
+		return
+	}
+	target := c.server.world.FindByNick(targetNick)
+	if target == nil || !ch.IsMember(target.ID) {
+		c.send(protocol.NumericReply(srv, nick, protocol.ERR_USERNOTINCHANNEL,
+			targetNick, channelName, "They are not on that channel"))
+		return
+	}
+	kickMsg := &protocol.Message{
+		Prefix:  c.user.Hostmask(),
+		Command: "KICK",
+		Params:  []string{ch.Name(), target.Nick, reason},
+	}
+	c.server.broadcastToChannel(ch, kickMsg, 0, true)
+	if _, _, err := c.server.world.PartChannel(target.ID, ch.Name()); err != nil {
+		c.logger.Warn("kick remove failed", "error", err)
 	}
 }
 

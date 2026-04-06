@@ -50,7 +50,7 @@ Milestones are ordered. Do not start milestone N+1 until N's exit criteria are m
 
 **Goal:** two users can join the same channel and talk.
 
-- Commands: JOIN, PART, PRIVMSG, NOTICE, TOPIC, NAMES, LIST, WHO, WHOIS, NICK (post-registration), QUIT.
+- Commands: JOIN, PART, PRIVMSG, NOTICE, TOPIC, NAMES, LIST, WHO, WHOIS, KICK, INVITE, NICK (post-registration), QUIT.
 - Channel modes: `+n +t +m +i +k +l +b +o +v`.
 - User modes: `+i +w +o`.
 - Flood control on PRIVMSG.

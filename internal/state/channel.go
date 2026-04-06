@@ -62,6 +62,7 @@ type Channel struct {
 	bans       map[string]time.Time // mask -> set time
 	exceptions map[string]time.Time // ban exception masks
 	invexes    map[string]time.Time // invite exception masks
+	invites    map[UserID]struct{}  // pending one-shot invites for +i bypass
 }
 
 // channelModes carries the boolean channel modes. The list-form
@@ -349,6 +350,34 @@ func (c *Channel) MatchesBan(hostmask string, fold func(string) string) bool {
 		}
 	}
 	return false
+}
+
+// AddInvite records that a user is allowed to bypass +i for one
+// JOIN. The invite is consumed by [ConsumeInvite] when the matching
+// JOIN arrives. Returns true if the invite was new.
+func (c *Channel) AddInvite(id UserID) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.invites == nil {
+		c.invites = make(map[UserID]struct{})
+	}
+	if _, ok := c.invites[id]; ok {
+		return false
+	}
+	c.invites[id] = struct{}{}
+	return true
+}
+
+// ConsumeInvite checks whether id has a pending invite and removes
+// it if so. Returns true if an invite was consumed.
+func (c *Channel) ConsumeInvite(id UserID) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.invites[id]; !ok {
+		return false
+	}
+	delete(c.invites, id)
+	return true
 }
 
 // globMatch implements the simple IRC glob algorithm with '*' and

@@ -27,6 +27,10 @@ func (c *Conn) dispatch(m *protocol.Message) {
 		c.handleJoin(m)
 	case "PART":
 		c.handlePart(m)
+	case "KICK":
+		c.handleKick(m)
+	case "INVITE":
+		c.handleInvite(m)
 	case "PRIVMSG":
 		c.handlePrivmsg(m)
 	case "NOTICE":
