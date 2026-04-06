@@ -50,18 +50,18 @@ func (m Membership) Prefix() string {
 type Channel struct {
 	mu sync.RWMutex
 
-	name        string // canonical (display) name, e.g. "#Foo"
-	createdAt   time.Time
-	topic       string
-	topicSetBy  string // hostmask of the user who set the topic
-	topicSetAt  time.Time
-	key         string
-	limit       int
-	modes       channelModes
-	members     map[UserID]Membership
-	bans        map[string]time.Time // mask -> set time
-	exceptions  map[string]time.Time // ban exception masks
-	invexes     map[string]time.Time // invite exception masks
+	name       string // canonical (display) name, e.g. "#Foo"
+	createdAt  time.Time
+	topic      string
+	topicSetBy string // hostmask of the user who set the topic
+	topicSetAt time.Time
+	key        string
+	limit      int
+	modes      channelModes
+	members    map[UserID]Membership
+	bans       map[string]time.Time // mask -> set time
+	exceptions map[string]time.Time // ban exception masks
+	invexes    map[string]time.Time // invite exception masks
 }
 
 // channelModes carries the boolean channel modes. The list-form
