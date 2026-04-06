@@ -32,6 +32,7 @@ docker compose -f docker-compose.yml up -d
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Implementation plan](docs/PLAN.md)
+- [Contributing & commit convention](docs/CONTRIBUTING.md)
 - [IRC protocol notes](docs/PROTOCOL.md)
 - [Federation](docs/FEDERATION.md)
 - [Configuration](docs/CONFIG.md)

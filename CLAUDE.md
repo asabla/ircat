@@ -63,6 +63,66 @@ docker-compose.dev.yml     # development
 4. If behaviour changed: update the relevant doc under `docs/`.
 5. If a new external dependency was added: justify in `docs/ARCHITECTURE.md`.
 
+## Commit message convention
+
+Every commit subject line follows [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+<type>(<optional scope>): <imperative summary, lowercase, no trailing period>
+```
+
+Allowed `<type>` values:
+
+| type       | use for                                                              |
+|------------|----------------------------------------------------------------------|
+| `feat`     | a new user-visible capability                                        |
+| `fix`      | a bug fix                                                            |
+| `docs`     | documentation only                                                   |
+| `test`     | adding or updating tests                                             |
+| `refactor` | code change that is neither a feature nor a fix                      |
+| `perf`     | performance work backed by a benchmark                               |
+| `chore`    | repo plumbing, scaffolding, dependency bumps, anything else          |
+| `build`    | Dockerfiles, compose stacks, build scripts                           |
+| `ci`       | GitHub Actions / pipeline config                                     |
+| `style`    | pure formatting (rare; gofmt usually catches it before commit)       |
+
+`<scope>` is optional but encouraged when one package or layer is the
+obvious subject. Use the package name, not the directory path:
+`feat(server): ...`, `feat(protocol): ...`, `chore(devcontainer): ...`,
+`build(docker): ...`, `fix(dev): ...`.
+
+Subject rules:
+- Imperative mood, lowercase after the colon ("add", not "added" or "Adds").
+- No trailing period.
+- Aim for under 72 characters.
+- One commit, one type. If a change is genuinely both a `feat` and a
+  `fix`, split it. If splitting is impractical, pick the dominant type
+  and call out the secondary work in the body.
+
+Body rules:
+- Explain the *why* before the *what*.
+- Bullet lists are fine when they aid scanning; prose is fine when
+  the change is straightforward.
+- Hard-wrap around 72 columns.
+- Agent-authored commits keep the
+  `Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>`
+  trailer.
+
+Examples (every commit in this repo's history is one of these):
+
+```
+feat(server): tcp listener, registration state machine, ping/pong
+fix(dev): env-overridable host ports, buildvcs off in air, config path via env
+test(e2e): spawn-the-binary registration tests and ircclient helper
+docs: add architecture, plan, protocol, federation design
+chore(devcontainer): set up go 1.26 toolchain with staticcheck, air, sqlite, psql
+build(docker): multi-stage production build and dev hot-reload image
+```
+
+**Do not** revert to bare directory prefixes like `docker:` or
+`internal/foo:` — those are not Conventional Commits types and break
+the convention. The directory belongs in the scope, not as the type.
+
 ## What *not* to do
 
 - Don't add a web framework. `net/http` + `html/template` + htmx is enough.

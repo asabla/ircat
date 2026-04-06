@@ -24,10 +24,11 @@ Full spec lives in [`docs/BOTS.md`](docs/BOTS.md).
 
 This repo is designed to be friendly to coding agents. If you are such an agent, start here:
 
-1. Read [`CLAUDE.md`](CLAUDE.md) — hard rules, conventions, what to avoid.
+1. Read [`CLAUDE.md`](CLAUDE.md) — hard rules, conventions, what to avoid, **commit message format**.
 2. Read [`docs/PLAN.md`](docs/PLAN.md) — current milestone and exit criteria.
 3. Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — module layout and interfaces.
-4. When in doubt about protocol behaviour, consult [`docs/PROTOCOL.md`](docs/PROTOCOL.md) before guessing.
+4. Read [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) — workflow, test/lint commands, commit convention reference.
+5. When in doubt about protocol behaviour, consult [`docs/PROTOCOL.md`](docs/PROTOCOL.md) before guessing.
 
 ### Task shapes that work well
 
