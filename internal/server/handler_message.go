@@ -1,10 +1,13 @@
 package server
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/asabla/ircat/internal/protocol"
 )
+
+var errFlood = errors.New("excess flood")
 
 // handlePrivmsg implements PRIVMSG (RFC 2812 §3.3.1).
 //
@@ -52,6 +55,19 @@ func (c *Conn) deliverMessage(m *protocol.Message, command string, emitErrors bo
 		if emitErrors {
 			c.send(protocol.NumericReply(srv, nick, protocol.ERR_NOTEXTTOSEND,
 				"No text to send"))
+		}
+		return
+	}
+
+	// Flood control: each PRIVMSG/NOTICE consumes one token from the
+	// per-connection bucket. If the bucket is empty, drop the message
+	// silently and increment the violations counter; persistent
+	// flooders are disconnected once the threshold is exceeded.
+	if !c.msgBucket.Take() {
+		c.msgViolations++
+		if c.msgViolations >= c.server.cfg.Server.Limits.MessageViolationsToKick {
+			c.sendError("Excess flood")
+			c.cancel(errFlood)
 		}
 		return
 	}

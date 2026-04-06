@@ -76,6 +76,13 @@ type Conn struct {
 	// than the generic fallback. Atomic-stored under the same lock
 	// as the rest of the lifecycle (the close path is single-shot).
 	quitReason string
+
+	// msgBucket is the per-connection flood-control bucket consumed
+	// by PRIVMSG and NOTICE.
+	msgBucket *tokenBucket
+	// msgViolations counts dropped messages so the server can
+	// disconnect a persistently flooding client.
+	msgViolations int
 }
 
 // pending holds the partial state collected during registration.
@@ -119,6 +126,11 @@ func newConn(srv *Server, nc net.Conn) *Conn {
 		remoteHost: host,
 	}
 	c.lastActivity.Store(srv.now().UnixNano())
+	c.msgBucket = newTokenBucket(
+		srv.cfg.Server.Limits.MessageBurst,
+		srv.cfg.Server.Limits.MessageRefillPerSecond,
+		srv.now,
+	)
 	return c
 }
 

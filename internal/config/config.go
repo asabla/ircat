@@ -76,6 +76,14 @@ type LimitsConfig struct {
 	RecvQMessages       int `json:"recvq_messages"`
 	PingIntervalSeconds int `json:"ping_interval_seconds"`
 	PingTimeoutSeconds  int `json:"ping_timeout_seconds"`
+
+	// Flood control parameters for PRIVMSG / NOTICE. Burst is the
+	// number of messages a client can send back-to-back; refill is
+	// how many tokens are credited per second; ViolationsToKick is
+	// the number of dropped messages tolerated before disconnect.
+	MessageBurst            int `json:"message_burst"`
+	MessageRefillPerSecond  int `json:"message_refill_per_second"`
+	MessageViolationsToKick int `json:"message_violations_to_kick"`
 }
 
 // StorageConfig selects between SQLite and Postgres backends.
@@ -344,6 +352,15 @@ func (c *Config) applyDefaults() {
 	}
 	if l.PingTimeoutSeconds == 0 {
 		l.PingTimeoutSeconds = 240
+	}
+	if l.MessageBurst == 0 {
+		l.MessageBurst = 10
+	}
+	if l.MessageRefillPerSecond == 0 {
+		l.MessageRefillPerSecond = 2
+	}
+	if l.MessageViolationsToKick == 0 {
+		l.MessageViolationsToKick = 5
 	}
 
 	if c.Storage.Driver == "" {
