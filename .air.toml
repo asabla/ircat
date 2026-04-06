@@ -2,8 +2,14 @@ root = "."
 tmp_dir = "tmp"
 
 [build]
-  cmd = "go build -o ./tmp/ircat ./cmd/ircat"
-  bin = "./tmp/ircat --config ${IRCAT_CONFIG}"
+  # -buildvcs=false: the bind-mounted .git is owned by the host UID,
+  # so the in-container Go toolchain refuses to stamp VCS info. The
+  # production image stamps via -ldflags from build args, so disabling
+  # it here only affects the dev hot-reload binary.
+  cmd = "go build -buildvcs=false -o ./tmp/ircat ./cmd/ircat"
+  # The binary reads its config path from $IRCAT_CONFIG, which the
+  # dev compose stack sets. No CLI args needed.
+  bin = "./tmp/ircat"
   include_ext = ["go", "html", "tmpl", "yaml", "yml", "json", "sql"]
   exclude_dir = ["tmp", "vendor", "docs", ".git", ".devcontainer"]
   delay = 500

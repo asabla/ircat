@@ -10,9 +10,12 @@ services:
       dockerfile: docker/dev.Dockerfile
     working_dir: /src
     command: ["air", "-c", ".air.toml"]
+    # Host ports are env-overridable so the stack does not collide with
+    # whatever else the developer happens to have running. Defaults are
+    # the canonical IRC and dashboard ports.
     ports:
-      - "6667:6667"
-      - "8080:8080"
+      - "${IRCAT_DEV_IRC_PORT:-6667}:6667"
+      - "${IRCAT_DEV_DASHBOARD_PORT:-8080}:8080"
     volumes:
       - .:/src
       - gomodcache:/go/pkg/mod
@@ -31,14 +34,14 @@ services:
       POSTGRES_USER: ircat
       POSTGRES_PASSWORD: ircat
     ports:
-      - "5432:5432"
+      - "${IRCAT_DEV_POSTGRES_PORT:-5432}:5432"
     volumes:
       - ircat-dev-pgdata:/var/lib/postgresql/data
 
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${IRCAT_DEV_REDIS_PORT:-6379}:6379"
 
 volumes:
   gomodcache:
