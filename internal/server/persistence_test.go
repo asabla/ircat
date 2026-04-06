@@ -138,6 +138,39 @@ func TestPersistence_TopicAndModeAcrossRestart(t *testing.T) {
 	}
 }
 
+func TestPersistence_ClearedTopicSurvivesRestart(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "ircat.db")
+
+	// Phase 1: set a topic, then clear it.
+	addr, teardown := startTestServerWithStore(t, dbPath)
+	c, r := register(t, addr, "alice")
+	c.Write([]byte("JOIN #t\r\n"))
+	readUntil(t, c, r, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "366"
+	})
+	c.Write([]byte("TOPIC #t :temporary\r\n"))
+	readUntil(t, c, r, time.Now().Add(2*time.Second), func(l string) bool {
+		return strings.Contains(l, " TOPIC #t ") && strings.Contains(l, "temporary")
+	})
+	// Clear the topic with an empty trailing.
+	c.Write([]byte("TOPIC #t :\r\n"))
+	readUntil(t, c, r, time.Now().Add(2*time.Second), func(l string) bool {
+		// The cleared form ends with " TOPIC #t :".
+		return strings.HasSuffix(l, " TOPIC #t :")
+	})
+	c.Close()
+	teardown()
+
+	// Phase 2: restart and verify TOPIC reads back as RPL_NOTOPIC.
+	addr2, teardown2 := startTestServerWithStore(t, dbPath)
+	defer teardown2()
+	c2, r2 := register(t, addr2, "bob")
+	defer c2.Close()
+	c2.Write([]byte("TOPIC #t\r\n"))
+	expectNumeric(t, c2, r2, "331", time.Now().Add(2*time.Second))
+}
+
 func TestPersistence_BansSurviveRestart(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "ircat.db")
