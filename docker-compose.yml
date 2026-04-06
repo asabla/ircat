@@ -38,12 +38,8 @@ services:
       - ./config/production.yaml:/etc/ircat/config.yaml:ro
       - ircat-data:/var/lib/ircat
       - ircat-logs:/var/log/ircat
-    # Until M4 lands the dashboard /healthz endpoint, the healthcheck
-    # is just a "binary still works" probe via the version subcommand.
-    # Swap to: ["CMD", "/app/ircat", "healthcheck", "--address",
-    # "http://localhost:8080/healthz"] once M4 is in.
     healthcheck:
-      test: ["CMD", "/app/ircat", "version"]
+      test: ["CMD", "/app/ircat", "healthcheck", "--address", "http://localhost:8080/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3
