@@ -370,6 +370,89 @@ func TestFederation_RuntimePropagation(t *testing.T) {
 	t.Fatal("alice2 quit did not propagate to node-b world")
 }
 
+// TestFederation_SquitRecoveryDropsRemoteUsers exercises M9
+// task #93: when a federation link drops, every user homed on
+// the dropped peer must be removed from the surviving node's
+// world AND every local channel member that shared a channel
+// with the dropped user must see a synthetic QUIT line so the
+// disappearance is visible at the IRC layer.
+func TestFederation_SquitRecoveryDropsRemoteUsers(t *testing.T) {
+	addrA, srvA, closeA := buildFederationPeer(t, "node-a")
+	defer closeA()
+	addrB, srvB, closeB := buildFederationPeer(t, "node-b")
+	defer closeB()
+
+	closeLink := linkTwoServers(t, srvA, srvB)
+	closeLinkOnce := func() {
+		if closeLink != nil {
+			closeLink()
+			closeLink = nil
+		}
+	}
+	defer closeLinkOnce()
+
+	// Two clients in #squit, one on each side. After both joined
+	// every node sees the other side as a remote channel member.
+	cAlice, rAlice := dialClient(t, addrA)
+	defer cAlice.Close()
+	cAlice.Write([]byte("NICK alice\r\nUSER alice 0 * :Alice\r\n"))
+	expectNumeric(t, cAlice, rAlice, "422", time.Now().Add(2*time.Second))
+
+	cBob, rBob := dialClient(t, addrB)
+	defer cBob.Close()
+	cBob.Write([]byte("NICK bob\r\nUSER bob 0 * :Bob\r\n"))
+	expectNumeric(t, cBob, rBob, "422", time.Now().Add(2*time.Second))
+
+	// Wait for the runtime user announce to propagate.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if srvA.world.FindByNick("bob") != nil && srvB.world.FindByNick("alice") != nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if srvA.world.FindByNick("bob") == nil {
+		t.Fatal("bob never propagated to node A")
+	}
+
+	cAlice.Write([]byte("JOIN #squit\r\n"))
+	readUntil(t, cAlice, rAlice, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "366"
+	})
+	cBob.Write([]byte("JOIN #squit\r\n"))
+	readUntil(t, cBob, rBob, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "366"
+	})
+
+	// alice should observe bob's remote JOIN before we tear down
+	// the link, so the surviving node has bob recorded as a
+	// channel member.
+	readUntil(t, cAlice, rAlice, time.Now().Add(3*time.Second), func(line string) bool {
+		return strings.HasPrefix(line, ":bob!") &&
+			strings.Contains(line, " JOIN ") &&
+			strings.Contains(line, "#squit")
+	})
+
+	// Drop the link. The integration test helper does not call
+	// HandleSquit on its own (it bypasses cmd/ircat's supervisor),
+	// so we invoke it directly to simulate what the supervisor
+	// OnClosed callback does in production.
+	closeLinkOnce()
+	srvA.HandleSquit("node-b", "Test net split")
+
+	// alice on node A must see a synthetic QUIT for bob.
+	readUntil(t, cAlice, rAlice, time.Now().Add(3*time.Second), func(line string) bool {
+		return strings.HasPrefix(line, ":bob!") &&
+			strings.Contains(line, " QUIT ") &&
+			strings.Contains(line, "Test net split")
+	})
+
+	// And bob's record must be gone from A's world.
+	if u := srvA.world.FindByNick("bob"); u != nil {
+		t.Errorf("bob still present on node A after SQUIT: %+v", u)
+	}
+}
+
 // TestFederation_ModeBurstAndRuntime exercises M9 task #91:
 // channel modes are bursted at link-up and runtime MODE changes
 // are re-applied on the receiver. The test:

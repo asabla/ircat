@@ -203,6 +203,11 @@ func (s *fedSupervisor) runLink(conn net.Conn, cfg federation.LinkConfig, outbou
 	}
 	cfg.OnClosed = func(l *federation.Link) {
 		s.srv.UnregisterLink(cfg.PeerName)
+		// SQUIT recovery: remove every remote user whose home
+		// server is the dropped peer, fan synthetic QUITs to
+		// local channel members, and propagate SQUIT to the
+		// rest of the mesh.
+		s.srv.HandleSquit(cfg.PeerName, "Net split")
 		s.logger.Info("federation link unregistered", "peer", cfg.PeerName)
 	}
 	link := federation.New(s.srv, cfg, s.logger)

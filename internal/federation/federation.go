@@ -89,6 +89,11 @@ type Host interface {
 	// entrypoint by distinguishing local vs remote senders, not
 	// by an exclude-mask here.
 	DeliverLocal(msg *protocol.Message)
+	// HandleSquit is called when a SQUIT message is received over
+	// this link. The host should remove every user homed on the
+	// peer that lost the link, fan synthetic QUITs to local
+	// channel members, and forward SQUIT to its other peers.
+	HandleSquit(peerName, reason string)
 }
 
 // LinkConfig is the per-peer configuration needed to bring up a
@@ -297,6 +302,8 @@ func (l *Link) dispatch(msg *protocol.Message) {
 		l.handleRemoteTopic(msg)
 	case "MODE":
 		l.handleRemoteMode(msg)
+	case "SQUIT":
+		l.handleRemoteSquit(msg)
 	case "PING":
 		// Reply inline; PING over S2S carries the remote server
 		// name in the trailing param.
@@ -636,6 +643,25 @@ func (l *Link) handleRemoteMode(msg *protocol.Message) {
 	}
 	applyRemoteChannelMode(world, ch, msg.Params[1:])
 	l.host.DeliverLocal(msg)
+}
+
+// handleRemoteSquit ingests a SQUIT message from this peer.
+// SQUIT can either be about THIS link (the peer telling us it is
+// going down) or about a third node the peer learned was lost
+// from a different link in the mesh. Both cases reduce to "drop
+// every user homed on the named server"; HandleSquit on the host
+// also forwards SQUIT onward to the rest of our peers, so the
+// loss eventually reaches every node.
+func (l *Link) handleRemoteSquit(msg *protocol.Message) {
+	if len(msg.Params) < 1 {
+		return
+	}
+	peer := msg.Params[0]
+	reason := ""
+	if len(msg.Params) >= 2 {
+		reason = msg.Params[1]
+	}
+	l.host.HandleSquit(peer, reason)
 }
 
 // applyRemoteChannelMode walks a parsed MODE param list and

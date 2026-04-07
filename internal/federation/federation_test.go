@@ -20,6 +20,7 @@ type fakeHost struct {
 
 	mu        sync.Mutex
 	delivered []*protocol.Message
+	squits    []string
 }
 
 func newFakeHost(name string) *fakeHost {
@@ -35,6 +36,11 @@ func (h *fakeHost) DeliverLocal(msg *protocol.Message) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.delivered = append(h.delivered, msg)
+}
+func (h *fakeHost) HandleSquit(peerName, reason string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.squits = append(h.squits, peerName)
 }
 func (h *fakeHost) deliveriesFor(command string) []*protocol.Message {
 	h.mu.Lock()

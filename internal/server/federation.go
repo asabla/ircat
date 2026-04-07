@@ -36,6 +36,72 @@ func (s *Server) UnregisterLink(peerName string) {
 	delete(s.fedLinks, peerName)
 }
 
+// HandleSquit performs the SQUIT recovery flow when a federation
+// peer drops: every user whose HomeServer matches peerName is
+// removed from the world, and a synthetic QUIT broadcast goes
+// out to every local member of every channel the dropped user
+// belonged to so local clients see the disappearance with the
+// right hostmasks. The reason is forwarded as the QUIT trailing
+// param so operators can distinguish a planned shutdown from a
+// crash.
+//
+// HandleSquit also forwards :localServer SQUIT peerName :reason
+// to every remaining federation link so the rest of the mesh
+// learns about the loss without needing each node to detect it
+// independently.
+//
+// This is the receiver-of-loss path. It does NOT call
+// UnregisterLink — the supervisor's OnClosed callback is the
+// piece that drops the link from the broadcast registry, and it
+// runs separately. HandleSquit is safe to call even if the link
+// has already been unregistered.
+func (s *Server) HandleSquit(peerName, reason string) {
+	if peerName == "" {
+		return
+	}
+	if reason == "" {
+		reason = "Net split"
+	}
+	// Snapshot the world under the world lock so a concurrent
+	// runtime announce cannot race the cleanup. Walk the snapshot
+	// out of band — the per-channel broadcasts re-acquire the
+	// world locks they need on their own.
+	users := s.world.Snapshot()
+	for _, u := range users {
+		if u.HomeServer != peerName {
+			continue
+		}
+		quitMsg := &protocol.Message{
+			Prefix:  u.Hostmask(),
+			Command: "QUIT",
+			Params:  []string{reason},
+		}
+		// Fan the synthetic QUIT to every local member of every
+		// channel this user belonged to. We use the same
+		// per-user dedup helper as a real QUIT path so a peer
+		// in two shared channels does not receive the message
+		// twice.
+		s.deliverPerUserChannels(quitMsg)
+		// Drop the user from the world. RemoveUser walks the
+		// channel set and unhooks them.
+		s.world.RemoveUser(u.ID)
+	}
+	// Forward SQUIT to every remaining peer.
+	squitMsg := &protocol.Message{
+		Prefix:  s.cfg.Server.Name,
+		Command: "SQUIT",
+		Params:  []string{peerName, reason},
+	}
+	s.fedMu.RLock()
+	defer s.fedMu.RUnlock()
+	for name, link := range s.fedLinks {
+		if name == peerName || link == nil {
+			continue
+		}
+		link.Send(squitMsg)
+	}
+}
+
 // LinkFor returns the active link sender for peer name, or nil.
 func (s *Server) LinkFor(peerName string) fedLinkSender {
 	s.fedMu.RLock()
