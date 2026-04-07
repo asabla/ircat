@@ -3,7 +3,6 @@ package events
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -82,7 +81,6 @@ func TestBus_SlowSinkDoesNotBlockFastSink(t *testing.T) {
 	// after the first event is picked up the inbox fills on the
 	// second, and subsequent events are dropped. The fast sink
 	// must still receive all of them.
-	var drops atomic.Int32
 	for i := 0; i < 10; i++ {
 		bus.Publish(Event{ID: string(rune('a' + i))})
 	}
@@ -100,7 +98,6 @@ func TestBus_SlowSinkDoesNotBlockFastSink(t *testing.T) {
 	// Release the slow sink so Close can drain it.
 	close(slow.blockUntil)
 	_ = bus.Close()
-	_ = drops
 }
 
 func TestBus_ClosedBusSwallowsPublish(t *testing.T) {

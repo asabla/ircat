@@ -21,10 +21,10 @@ import (
 // dependencies.
 type fakeServerInfo struct{}
 
-func (fakeServerInfo) ServerName() string         { return "irc.test" }
-func (fakeServerInfo) NetworkName() string        { return "TestNet" }
-func (fakeServerInfo) Version() string            { return "ircat-test" }
-func (fakeServerInfo) StartedAt() time.Time       { return time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC) }
+func (fakeServerInfo) ServerName() string          { return "irc.test" }
+func (fakeServerInfo) NetworkName() string         { return "TestNet" }
+func (fakeServerInfo) Version() string             { return "ircat-test" }
+func (fakeServerInfo) StartedAt() time.Time        { return time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC) }
 func (fakeServerInfo) ListenerAddresses() []string { return []string{"127.0.0.1:6667"} }
 
 func newPageServer(t *testing.T) (*Server, *sqlite.Store, *state.World) {

@@ -10,14 +10,14 @@ import (
 )
 
 type userRecord struct {
-	Nick       string   `json:"nick"`
-	User       string   `json:"user"`
-	Host       string   `json:"host"`
-	Realname   string   `json:"realname"`
-	Modes      string   `json:"modes"`
-	Hostmask   string   `json:"hostmask"`
-	ConnectAt  string   `json:"connect_at"`
-	Channels   []string `json:"channels"`
+	Nick      string   `json:"nick"`
+	User      string   `json:"user"`
+	Host      string   `json:"host"`
+	Realname  string   `json:"realname"`
+	Modes     string   `json:"modes"`
+	Hostmask  string   `json:"hostmask"`
+	ConnectAt string   `json:"connect_at"`
+	Channels  []string `json:"channels"`
 }
 
 func (a *API) userToRecord(u state.User) userRecord {

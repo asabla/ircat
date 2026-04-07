@@ -22,10 +22,10 @@ type EventPublisher interface {
 // Audit event type names. These are the strings that land in the
 // audit_events.type column. Tests and the dashboard filter on these.
 const (
-	AuditTypeOperUp     = "oper_up"
-	AuditTypeKick       = "kick"
-	AuditTypeMode       = "mode"
-	AuditTypeTopic      = "topic"
+	AuditTypeOperUp      = "oper_up"
+	AuditTypeKick        = "kick"
+	AuditTypeMode        = "mode"
+	AuditTypeTopic       = "topic"
 	AuditTypeAdminAction = "admin_action"
 )
 

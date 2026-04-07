@@ -30,7 +30,7 @@ func newFakeHost(name string) *fakeHost {
 	}
 }
 
-func (h *fakeHost) LocalServerName() string { return h.name }
+func (h *fakeHost) LocalServerName() string  { return h.name }
 func (h *fakeHost) WorldState() *state.World { return h.world }
 func (h *fakeHost) DeliverLocal(msg *protocol.Message) {
 	h.mu.Lock()
@@ -53,14 +53,14 @@ func (h *fakeHost) deliveriesFor(command string) []*protocol.Message {
 // by one lands on the other's dispatch path via a channel. Writer
 // functions are no-ops because the message never touches a socket.
 type linkPair struct {
-	a, b     *Link
-	aReads   chan *protocol.Message
-	bReads   chan *protocol.Message
-	aHost    *fakeHost
-	bHost    *fakeHost
-	cancel   context.CancelFunc
-	doneA    chan error
-	doneB    chan error
+	a, b   *Link
+	aReads chan *protocol.Message
+	bReads chan *protocol.Message
+	aHost  *fakeHost
+	bHost  *fakeHost
+	cancel context.CancelFunc
+	doneA  chan error
+	doneB  chan error
 }
 
 func newLinkPair(t *testing.T) *linkPair {

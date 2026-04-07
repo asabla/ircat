@@ -278,10 +278,10 @@ func parseFlowSequence(body string) ([]any, error) {
 		return []any{}, nil
 	}
 	var (
-		out   []any
-		cur   strings.Builder
-		inDQ  bool
-		inSQ  bool
+		out  []any
+		cur  strings.Builder
+		inDQ bool
+		inSQ bool
 	)
 	flush := func() {
 		tok := strings.TrimSpace(cur.String())

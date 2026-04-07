@@ -101,13 +101,13 @@ type TokenStore interface {
 
 // Bot is one Lua bot definition.
 type Bot struct {
-	ID            string // ULID
-	Name          string // display name, unique per node
-	Source        string // raw Lua source
-	Enabled       bool
-	TickInterval  time.Duration
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID           string // ULID
+	Name         string // display name, unique per node
+	Source       string // raw Lua source
+	Enabled      bool
+	TickInterval time.Duration
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // BotStore is the persistence interface for Lua bot definitions.
@@ -143,16 +143,16 @@ type BotKVStore interface {
 // process restarted: the topic and who set it, the boolean modes,
 // the key and limit, and the ban list.
 type ChannelRecord struct {
-	Name         string
-	Topic        string
-	TopicSetBy   string
-	TopicSetAt   time.Time
-	ModeWord     string // "+nt", "+ntik", etc.
-	Key          string
-	Limit        int
-	Bans         []BanRecord
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	Name       string
+	Topic      string
+	TopicSetBy string
+	TopicSetAt time.Time
+	ModeWord   string // "+nt", "+ntik", etc.
+	Key        string
+	Limit      int
+	Bans       []BanRecord
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // BanRecord is one channel ban entry.
@@ -174,12 +174,12 @@ type PersistentChannelStore interface {
 
 // AuditEvent is one entry in the audit log.
 type AuditEvent struct {
-	ID        string         // ULID
+	ID        string // ULID
 	Timestamp time.Time
-	Type      string         // "oper_up", "kick", "mode", "admin_action", ...
-	Actor     string         // hostmask or operator name
-	Target    string         // affected user or channel, optional
-	DataJSON  string         // JSON-encoded payload, optional
+	Type      string // "oper_up", "kick", "mode", "admin_action", ...
+	Actor     string // hostmask or operator name
+	Target    string // affected user or channel, optional
+	DataJSON  string // JSON-encoded payload, optional
 }
 
 // EventStore is the persistence interface for audit events. The
@@ -192,8 +192,8 @@ type EventStore interface {
 
 // ListEventsOptions controls EventStore.List queries.
 type ListEventsOptions struct {
-	Since      time.Time // zero = no lower bound
-	Type       string    // empty = all types
-	Limit      int       // <=0 = driver default (typically 100)
-	BeforeID   string    // cursor; "" = newest first
+	Since    time.Time // zero = no lower bound
+	Type     string    // empty = all types
+	Limit    int       // <=0 = driver default (typically 100)
+	BeforeID string    // cursor; "" = newest first
 }

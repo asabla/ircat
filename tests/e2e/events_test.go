@@ -25,10 +25,10 @@ import (
 // eventSink is a small httptest server that collects every webhook
 // POST so the e2e test can assert on the body.
 type eventSink struct {
-	mu      sync.Mutex
-	events  []map[string]any
-	hs      *httptest.Server
-	wakeup  chan struct{}
+	mu     sync.Mutex
+	events []map[string]any
+	hs     *httptest.Server
+	wakeup chan struct{}
 }
 
 func newEventSink(t *testing.T) *eventSink {
