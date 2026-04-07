@@ -159,6 +159,13 @@ func NewRuntime(source string, actions Actions, budget Budget) (*Runtime, error)
 		pkgTable.RawSetString("loaders", L.NewTable())
 		pkgTable.RawSetString("searchers", L.NewTable())
 	}
+	// Strip string.dump: combined with any future load() reachability
+	// it is the standard Lua bytecode escape vector. We strip it
+	// even though load() is already nil so a single misconfiguration
+	// upstream cannot reopen the door.
+	if str := L.GetGlobal("string"); str.Type() == lua.LTTable {
+		str.(*lua.LTable).RawSetString("dump", lua.LNil)
+	}
 
 	rt := &Runtime{
 		state:   L,
