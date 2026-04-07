@@ -80,7 +80,7 @@ func buildFederationPeer(t *testing.T, name string) (string, *Server, func()) {
 // linkTwoServers wires two servers together via net.Pipe and
 // returns a cleanup function. The link uses in-process streams
 // with a line framer to drive federation.Link from both sides.
-func linkTwoServers(t *testing.T, a, b *Server) func() {
+func linkTwoServers(t testing.TB, a, b *Server) func() {
 	t.Helper()
 	connA, connB := net.Pipe()
 

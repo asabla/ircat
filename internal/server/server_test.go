@@ -84,7 +84,8 @@ func startTestServer(t *testing.T) (addr string, teardown func()) {
 
 // dialClient opens a connection to addr and returns it along with a
 // reader pre-wrapped in bufio so the test can call ReadLine().
-func dialClient(t *testing.T, addr string) (net.Conn, *bufio.Reader) {
+// Takes testing.TB so both *testing.T and *testing.B can use it.
+func dialClient(t testing.TB, addr string) (net.Conn, *bufio.Reader) {
 	t.Helper()
 	c, err := net.DialTimeout("tcp", addr, time.Second)
 	if err != nil {
@@ -97,7 +98,8 @@ func dialClient(t *testing.T, addr string) (net.Conn, *bufio.Reader) {
 // the requested numeric, then returns it. Uses the underlying conn
 // read deadline so there is no goroutine leak when the deadline
 // fires (which is what the older bufio-only helper used to do).
-func expectNumeric(t *testing.T, c net.Conn, r *bufio.Reader, code string, deadline time.Time) string {
+// Takes testing.TB so both *testing.T and *testing.B can use it.
+func expectNumeric(t testing.TB, c net.Conn, r *bufio.Reader, code string, deadline time.Time) string {
 	t.Helper()
 	for {
 		_ = c.SetReadDeadline(deadline)

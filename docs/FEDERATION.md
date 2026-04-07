@@ -90,6 +90,30 @@ Every user has a `nickTS` (nickname set time). Every channel has a `channelTS` (
 - **Burst compression.** `zip` flag in the handshake is reserved; v1 ignores it.
 - **Services pseudo-server.** Atheme/Anope-style services require SJOIN/UID and TS6. Out of scope; Lua bots cover the use cases we care about.
 
+## Measured latency
+
+Source: `internal/server/federation_bench_test.go`. Rerun with
+`go test -bench=BenchmarkFederation_PrivmsgRoundtrip ./internal/server/`.
+
+| Metric | Value |
+|---|---|
+| Mean PRIVMSG roundtrip | ~38 µs |
+| p50 | ~36 µs |
+| p99 | ~89 µs |
+
+Numbers from a single ext4 host on an Intel Xeon E-2286M
+running both peers in-process bridged via `net.Pipe`. The
+benchmark measures the wall-clock between `cAlice.Write` on
+node A and the matching read on `cBob` on node B, averaged over
+60k samples.
+
+Real TCP loopback adds about 30-100 µs of kernel overhead per
+direction. A two-host LAN deployment will see another
+0.1-0.5 ms of network latency depending on the link. Treat the
+in-process number as the **floor** of what the federation
+broadcast + routing logic costs and add network round-trip on
+top.
+
 ## Testing
 
 - `tests/e2e/federation/` runs a Compose stack with two ircat nodes and a scripted test that:

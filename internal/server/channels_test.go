@@ -26,7 +26,7 @@ func register(t *testing.T, addr, nick string) (net.Conn, *bufio.Reader) {
 // line read (so test failures can show what the server actually
 // sent). Uses the underlying conn's read deadline so there is no
 // goroutine leak.
-func readUntil(t *testing.T, c net.Conn, r *bufio.Reader, deadline time.Time, match func(string) bool) (string, []string) {
+func readUntil(t testing.TB, c net.Conn, r *bufio.Reader, deadline time.Time, match func(string) bool) (string, []string) {
 	t.Helper()
 	var trace []string
 	for {
