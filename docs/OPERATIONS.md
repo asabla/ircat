@@ -148,6 +148,31 @@ conservative for a brand-new ircat install. Operators with
 large heavily-active channels should raise both numbers — the
 benchmark says there is no cost reason not to.
 
+### Storage audit-event throughput
+
+Source: `internal/storage/sqlite/events_bench_test.go` and the
+matching file under `internal/storage/postgres/`. Rerun with
+`go test -bench=BenchmarkEvents ./internal/storage/sqlite/` (the
+Postgres bench only runs when `IRCAT_TEST_POSTGRES_DSN` is set).
+
+| Backend | Serial Append | Parallel Append | Notes |
+|---|---|---|---|
+| SQLite (WAL + synchronous=NORMAL) | 183 µs | 73 µs | default in v1.1 |
+| SQLite (WAL + synchronous=FULL) | 8.4 ms | 9.4 ms | per-commit fsync |
+
+The default v1.1 SQLite DSN uses `synchronous=NORMAL`, which is
+the standard SQLite production pairing for WAL mode. It fsyncs
+the WAL on checkpoint boundaries rather than every commit,
+trading a tiny window of "lost writes on power loss" between
+checkpoints for a 46x improvement on serial Appends. The audit
+log is also pushed through the jsonl + webhook sinks at publish
+time, so the persistent store is not the only durability path.
+
+Postgres numbers depend heavily on the host kernel + storage
+class — run the benchmark against your own database to get a
+local figure. The benchmark Skip's cleanly when
+`IRCAT_TEST_POSTGRES_DSN` is unset.
+
 ## Disaster recovery exercise
 
 Run this drill quarterly. The exit criterion is "the new node serves
