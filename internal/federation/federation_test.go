@@ -2,7 +2,6 @@ package federation
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"sync"
 	"testing"
@@ -256,5 +255,3 @@ func TestSenderFromPrefix(t *testing.T) {
 	}
 }
 
-// silence unused
-var _ = fmt.Sprintf

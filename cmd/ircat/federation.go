@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net"
 	"strconv"
@@ -240,5 +239,3 @@ func (s *fedSupervisor) handleAccepted(conn net.Conn) {
 	}()
 }
 
-// silence unused
-var _ = fmt.Sprintf

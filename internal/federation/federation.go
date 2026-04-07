@@ -26,7 +26,6 @@ package federation
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -607,5 +606,3 @@ func senderFromPrefix(prefix string) string {
 	return prefix
 }
 
-// compile-time assertion that the exported error keeps its type.
-var _ = fmt.Sprintf
