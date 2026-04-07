@@ -5,6 +5,7 @@ import (
 	"context"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -451,6 +452,107 @@ func TestFederation_SquitRecoveryDropsRemoteUsers(t *testing.T) {
 	if u := srvA.world.FindByNick("bob"); u != nil {
 		t.Errorf("bob still present on node A after SQUIT: %+v", u)
 	}
+}
+
+// TestFederation_SubscriptionRoutingDedupesPerPeer exercises M9
+// task #94 by counting the number of times a single PRIVMSG
+// crosses the federation link. With subscription routing the
+// message should reach the link exactly once even though the
+// channel has multiple remote members homed on the same peer.
+//
+// The test uses a recordingLink shim that wraps the real
+// federation.Link and bumps an atomic counter on every Send.
+// Build a channel with two remote members on the same peer,
+// then publish a PRIVMSG and assert the counter went up by one.
+func TestFederation_SubscriptionRoutingDedupesPerPeer(t *testing.T) {
+	addrA, srvA, closeA := buildFederationPeer(t, "node-a")
+	defer closeA()
+
+	// Inject two remote users from the same peer directly into
+	// node A's world and join them to #ded. We do not need a
+	// second real server here — the assertion is purely about
+	// how A's broadcast path routes outbound traffic.
+	for _, nick := range []string{"r1", "r2"} {
+		if _, err := srvA.world.AddUser(&state.User{
+			Nick:       nick,
+			User:       nick,
+			Host:       "remote.host",
+			Realname:   nick,
+			Registered: true,
+			HomeServer: "node-b",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, nick := range []string{"r1", "r2"} {
+		u := srvA.world.FindByNick(nick)
+		if _, _, _, err := srvA.world.JoinChannel(u.ID, "#ded"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Register a counting shim under peer "node-b" so the
+	// broadcast path treats it as the active link to that peer.
+	counter := &countingFedLink{}
+	srvA.RegisterLink("node-b", counter)
+	srvA.SubscribePeerToChannel("node-b", "#ded")
+	defer srvA.UnregisterLink("node-b")
+
+	// Connect a real client and have alice join + send a PRIVMSG.
+	cAlice, rAlice := dialClient(t, addrA)
+	defer cAlice.Close()
+	cAlice.Write([]byte("NICK alice\r\nUSER alice 0 * :Alice\r\n"))
+	expectNumeric(t, cAlice, rAlice, "422", time.Now().Add(2*time.Second))
+	cAlice.Write([]byte("JOIN #ded\r\n"))
+	readUntil(t, cAlice, rAlice, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "366"
+	})
+
+	// JOIN goes to all peers (it's the discovery message). The
+	// PRIVMSG that follows must dedupe to a single send even
+	// though #ded has two remote members homed on the same peer.
+	startSends := counter.count()
+	cAlice.Write([]byte("PRIVMSG #ded :hi remotes\r\n"))
+
+	// Wait for at least one PRIVMSG to land.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if counter.count() > startSends {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	gotPrivmsgs := 0
+	counter.mu.Lock()
+	for _, m := range counter.msgs {
+		if m.Command == "PRIVMSG" {
+			gotPrivmsgs++
+		}
+	}
+	counter.mu.Unlock()
+	if gotPrivmsgs != 1 {
+		t.Errorf("PRIVMSG dedup failed: got %d sends, want 1", gotPrivmsgs)
+	}
+}
+
+// countingFedLink is a fedLinkSender that records every message
+// it would have sent to a peer. Used by the routing tests to
+// assert on dedup behaviour without needing a second real server.
+type countingFedLink struct {
+	mu   sync.Mutex
+	msgs []*protocol.Message
+}
+
+func (l *countingFedLink) Send(msg *protocol.Message) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.msgs = append(l.msgs, msg)
+}
+
+func (l *countingFedLink) count() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.msgs)
 }
 
 // TestFederation_KillRoutesAcrossLink exercises M9 task #95:

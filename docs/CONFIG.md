@@ -103,6 +103,7 @@ federation:
   listen_address: "0.0.0.0:7000"      # bind for inbound peer connections; omit to disable accept
   listen_cert_file: /etc/ircat/fed-cert.pem  # both must be set to enable TLS for inbound peers
   listen_key_file: /etc/ircat/fed-key.pem
+  broadcast_mode: subscription        # subscription | fanout (default subscription)
   links:
     - name: irc.peer.org
       accept: true

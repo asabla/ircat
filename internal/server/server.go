@@ -86,8 +86,17 @@ type Server struct {
 	// fedLinks is the federation link registry, keyed by peer
 	// server name. See internal/server/federation.go for the
 	// API the broadcast path uses.
+	//
+	// fedSubs is the per-peer channel subscription set used by
+	// the subscription broadcast mode. peerName -> channelName ->
+	// true. A peer is subscribed to a channel iff this node has
+	// either bursted the channel state to it, received a runtime
+	// JOIN for the channel from it, or accepted a remote member
+	// from it via DeliverLocal. Subscriptions are dropped on
+	// link close via DropPeerSubscriptions.
 	fedMu    sync.RWMutex
 	fedLinks map[string]fedLinkSender
+	fedSubs  map[string]map[string]bool
 
 	// motd is the message-of-the-day file content split into lines.
 	// Loaded once at startup; nil if no MOTD is configured or the

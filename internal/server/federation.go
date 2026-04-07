@@ -31,11 +31,38 @@ func (s *Server) RegisterLink(peerName string, link fedLinkSender) {
 }
 
 // UnregisterLink drops the link from the registry. Called on link
-// close.
+// close. Also drops every channel subscription the peer had so a
+// reconnect starts with a clean slate.
 func (s *Server) UnregisterLink(peerName string) {
 	s.fedMu.Lock()
 	defer s.fedMu.Unlock()
 	delete(s.fedLinks, peerName)
+	delete(s.fedSubs, peerName)
+}
+
+// SubscribePeerToChannel records that peerName has been told
+// about the named channel and should receive subsequent runtime
+// events for it under the subscription broadcast mode. Idempotent.
+//
+// Called from sendBurst when we tell a peer about a local
+// channel, and from the federation Link's runtime ingestion
+// path when a remote JOIN/MODE/TOPIC/PART tells us the peer
+// already knows about the channel.
+func (s *Server) SubscribePeerToChannel(peerName, channelName string) {
+	if peerName == "" || channelName == "" {
+		return
+	}
+	s.fedMu.Lock()
+	defer s.fedMu.Unlock()
+	if s.fedSubs == nil {
+		s.fedSubs = make(map[string]map[string]bool)
+	}
+	subs, ok := s.fedSubs[peerName]
+	if !ok {
+		subs = make(map[string]bool)
+		s.fedSubs[peerName] = subs
+	}
+	subs[channelName] = true
 }
 
 // DropLocalUser disconnects the named local user with reason.
@@ -251,18 +278,76 @@ func (s *Server) deliverChannelLocalOnly(ch *state.Channel, msg *protocol.Messag
 // broadcastToChannelFederated is the federation-aware wrapper
 // around broadcastToChannel. The base broadcastToChannel handles
 // local delivery; this helper additionally forwards the message
-// to every active federation peer.
+// to the appropriate federation peers based on the configured
+// broadcast mode.
 //
-// For M7 MVP we send to every peer rather than only peers with a
-// member in the channel: dedup-by-channel-member has a chicken-
-// and-egg problem (we cannot forward a JOIN until a remote user
-// has already joined, which never happens). Receiving peers that
-// have no local members for the channel simply drop the message
-// in their DeliverLocal path, so the wire cost is the only loss.
-// A future commit can introduce subscription-based routing.
+// Routing rules in v1.1 (federation.broadcast_mode):
+//
+//   - "subscription" (default): JOIN is fanned out to every peer
+//     because it is the discovery message that establishes a
+//     remote subscription. Every other channel command (PRIVMSG,
+//     NOTICE, PART, KICK, TOPIC, MODE) routes only to peers that
+//     already have at least one member in the channel, dedup'd
+//     by HomeServer so a peer with two members in the channel
+//     receives the message exactly once.
+//   - "fanout": every event goes to every peer regardless. v1.0
+//     behaviour, retained for one minor cycle behind a config
+//     knob so a regression can be flipped without a redeploy.
 func (s *Server) broadcastToChannelFederated(ch *state.Channel, msg *protocol.Message, exceptID state.UserID, includeSelf bool) {
 	s.broadcastToChannel(ch, msg, exceptID, includeSelf)
-	s.forwardToAllLinks(msg)
+
+	if s.fedBroadcastMode() == "fanout" {
+		s.forwardToAllLinks(msg)
+		return
+	}
+	// Subscription mode. JOIN is the establishment message — it
+	// must reach every peer so the channel materializes there
+	// and a future PRIVMSG can route through the new subscription.
+	if msg.Command == "JOIN" {
+		s.forwardToAllLinks(msg)
+		return
+	}
+	s.forwardChannelToSubscribed(ch, msg)
+}
+
+// fedBroadcastMode returns the configured federation broadcast
+// mode, normalized and defaulted to "subscription".
+func (s *Server) fedBroadcastMode() string {
+	mode := s.cfg.Federation.BroadcastMode
+	if mode == "" {
+		return "subscription"
+	}
+	return mode
+}
+
+// forwardChannelToSubscribed sends msg to every peer subscribed
+// to ch.Name(). The subscription set is built from two sources:
+//
+//   - Bursts we sent: when sendBurst delivers channel state to a
+//     peer, the supervisor calls SubscribePeerToChannel so we
+//     remember that the peer knows about the channel even though
+//     they may not yet have any members in it.
+//   - Remote JOINs: when the federation Link processes a remote
+//     JOIN/MODE/TOPIC/PART for a channel, the receiver calls
+//     SubscribePeerToChannel so we remember that the peer cares.
+//
+// Used by the subscription broadcast mode for every channel
+// event except JOIN.
+func (s *Server) forwardChannelToSubscribed(ch *state.Channel, msg *protocol.Message) {
+	channelName := ch.Name()
+	s.fedMu.RLock()
+	defer s.fedMu.RUnlock()
+	if len(s.fedLinks) == 0 {
+		return
+	}
+	for peerName, subs := range s.fedSubs {
+		if !subs[channelName] {
+			continue
+		}
+		if link := s.fedLinks[peerName]; link != nil {
+			link.Send(msg)
+		}
+	}
 }
 
 // announceUserToFederation broadcasts a burst-form NICK line for a

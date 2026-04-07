@@ -213,9 +213,20 @@ type FederationConfig struct {
 	// ListenCertFile / ListenKeyFile turn the inbound federation
 	// listener into a TLS listener. If both are set, every
 	// accept=true peer connects over TLS. Optional.
-	ListenCertFile string     `json:"listen_cert_file"`
-	ListenKeyFile  string     `json:"listen_key_file"`
-	Links          []LinkSpec `json:"links"`
+	ListenCertFile string `json:"listen_cert_file"`
+	ListenKeyFile  string `json:"listen_key_file"`
+	// BroadcastMode picks the channel-event routing strategy.
+	// Valid values:
+	//
+	//   - "subscription" (default): channel events route only to
+	//     peers that have at least one member in the channel.
+	//     JOIN is always fanned out because it is the discovery
+	//     message that establishes a peer's subscription.
+	//   - "fanout": channel events go to every peer regardless
+	//     of subscription. v1.0 behaviour, retained for one
+	//     minor cycle as a regression fallback.
+	BroadcastMode string     `json:"broadcast_mode"`
+	Links         []LinkSpec `json:"links"`
 }
 
 // LinkSpec is one configured federation peer.

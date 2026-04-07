@@ -99,6 +99,11 @@ type Host interface {
 	// that lives on this node. The host MUST NOT re-forward the
 	// kill — handleRemoteKill is the one that fans it out.
 	DropLocalUser(nick, reason string)
+	// SubscribePeerToChannel records that the peer named by
+	// peerName has been told about (or has told us about) a
+	// channel. The subscription broadcast mode uses these
+	// records to route subsequent channel events.
+	SubscribePeerToChannel(peerName, channelName string)
 }
 
 // LinkConfig is the per-peer configuration needed to bring up a
@@ -417,6 +422,11 @@ func (l *Link) sendBurst() {
 			// learned about the channel from its own home node.
 			continue
 		}
+		// Record the subscription on our side: the peer now
+		// knows about the channel and should receive future
+		// runtime events for it under the subscription
+		// broadcast mode.
+		l.host.SubscribePeerToChannel(l.peerName, ch.Name())
 		// Topic burst.
 		topic, setBy, setAt := ch.Topic()
 		if topic != "" {
@@ -535,7 +545,8 @@ func (l *Link) handleRemoteMessage(msg *protocol.Message) {
 
 // handleRemoteJoin ingests a peer JOIN line: "<prefix> JOIN
 // <channel>". Creates the channel (if missing) and adds the
-// user as a member.
+// user as a member. Also records the subscription so subsequent
+// channel events route back to this peer.
 func (l *Link) handleRemoteJoin(msg *protocol.Message) {
 	if len(msg.Params) < 1 {
 		return
@@ -550,6 +561,7 @@ func (l *Link) handleRemoteJoin(msg *protocol.Message) {
 		return
 	}
 	_, _, _, _ = world.JoinChannel(u.ID, msg.Params[0])
+	l.host.SubscribePeerToChannel(l.peerName, msg.Params[0])
 	// Also fan the JOIN out to local members of the channel so
 	// they see the remote user arrive.
 	l.host.DeliverLocal(msg)

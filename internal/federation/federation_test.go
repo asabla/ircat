@@ -22,6 +22,7 @@ type fakeHost struct {
 	delivered []*protocol.Message
 	squits    []string
 	dropped   []string
+	subs      map[string]map[string]bool
 }
 
 func newFakeHost(name string) *fakeHost {
@@ -47,6 +48,17 @@ func (h *fakeHost) DropLocalUser(nick, reason string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.dropped = append(h.dropped, nick)
+}
+func (h *fakeHost) SubscribePeerToChannel(peerName, channelName string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.subs == nil {
+		h.subs = make(map[string]map[string]bool)
+	}
+	if h.subs[peerName] == nil {
+		h.subs[peerName] = make(map[string]bool)
+	}
+	h.subs[peerName][channelName] = true
 }
 func (h *fakeHost) deliveriesFor(command string) []*protocol.Message {
 	h.mu.Lock()
