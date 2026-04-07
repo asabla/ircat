@@ -1,236 +1,240 @@
-# PLAN — ircat v1.1.0
+# PLAN — ircat v1.2.0
 
-The v1.0.0 release shipped a feature-complete IRC server: full
-client surface (RFC 1459/2812), persistent operators and channels,
-htmx dashboard, admin API, sandboxed Lua bots, jsonl + webhook
-event sinks, two-node federation with TLS, and a hardened
-production compose stack. See [`PLAN-v1.0.md`](PLAN-v1.0.md) for
-the historical record of M0 → M8.
+The v1.1.0 release tightened the federation transport, hardened
+the Lua sandbox, replaced "conservative defaults" with measured
+numbers, and shipped the polish + release plumbing. See
+[`PLAN-v1.1.md`](PLAN-v1.1.md) for the historical record of M9
+→ M12, and [`PLAN-v1.0.md`](PLAN-v1.0.md) for M0 → M8.
 
-v1.1.0 picks up the items that were explicitly deferred from v1.0
-plus the polish work that the v1.0 audit surfaced. The cuts are
-deliberately small — v1.1 is a hardening + polish release, not a
-new-feature release. New surfaces (IRCv3 caps beyond CAP END,
-SERVICE pseudo-server, full SQUIT recovery) live in v1.2+.
+v1.2.0 is the **operator experience** release. The headline is
+that the dashboard stops being a row of read-only HTML tables
+and starts being a thing operators actually want to use. The
+secondary theme is closing the items v1.1 explicitly deferred:
+the equal-TS collision case, channel TS collision behaviour,
+ban-list propagation, the soak / Postgres benchmarks at scale,
+and a real per-allocation Lua memory hook if gopher-lua exposes
+one in time.
 
 ## Theme
 
-> "Make the v1.0 surface boring to operate at scale, and close the
-> obvious follow-ups from the v1.0 federation MVP."
+> "Make the operator dashboard a place you actually open. Close
+> the v1.1 deferred list. Don't add new wire protocols."
 
 ## Milestones
 
-### M9 — Federation hardening
+### M13 — Dashboard polish
 
-**Goal:** the federation transport stops being "MVP" and starts
-being production.
+**Goal:** the operator dashboard stops being a row of static
+tables and becomes a live operator console. No SPA framework,
+no build step, no JS bundles — htmx + a tiny amount of vanilla
+JS for the SSE wiring.
 
-Shipped:
-- Channel mode burst on link-up (TOPIC + canonical mode word +
-  per-member +o/+v) and runtime MODE re-application on the
-  receiver via a new `applyRemoteChannelMode` helper that
-  forwards each toggle to the existing `state.Channel` setters.
-- SQUIT recovery on link drop and remote SQUIT propagation:
-  `Server.HandleSquit` walks the world, removes every user
-  homed on the dropped peer, fans synthetic QUITs to local
-  channel members, and forwards SQUIT to remaining links.
-- Subscription-aware channel routing with the v1.0 fanout
-  available behind `federation.broadcast_mode`. Subscriptions
-  are tracked explicitly via `Server.SubscribePeerToChannel`,
-  populated by `sendBurst` (when we tell a peer about a
-  channel) and by `handleRemoteJoin` (when a peer tells us
-  about one). JOIN remains fanned out so it can establish new
-  subscriptions.
-- KILL routing across links: local operator KILL forwards over
-  every link; receivers fan a synthetic QUIT and either
-  disconnect the local conn via the new `Host.DropLocalUser`
-  hook or drop the remote-user record. KILL is one-shot per
-  node so >2-node meshes do not loop.
-- TS-based nick collision resolution per RFC 2813. Burst NICK
-  shape carries TS as a positional param (with backward-
-  compatible v1.0 sniffing); incoming-lower wins, incoming-
-  higher gets KILL'd back to the peer. Channel JOIN burst lines
-  carry channel TS and `AdoptOlderTS` lowers the local anchor.
+- **HTMX inclusion + auto-refresh on overview.** Drop the
+  htmx script under `/dashboard/static/` (one file, ~14 kB
+  vendored) and switch the overview page to poll its content
+  block every 5 seconds. Same handler renders the partial when
+  `HX-Request` is set, so non-JS clients still get the full
+  page.
+- **Live log tail page.** The `internal/logging` ring buffer
+  has been built specifically for this since M0 and is
+  currently unused by any UI. Add a `/dashboard/logs` page
+  that subscribes to `/dashboard/logs/sse` (Server-Sent
+  Events) and streams new entries as they land. Filter by
+  level, search by substring.
+- **Federation panel.** New `/dashboard/federation` page
+  showing every active link from the registry: peer name,
+  state, address, last activity, subscription set size, and a
+  "drop link" button that calls into the supervisor.
+- **Bot panel** with full CRUD via forms instead of API-only.
+  List bots, toggle enabled/disabled, view source, view kv
+  state, restart. Reuses `BotManager` already wired in v1.0.
+- **Channel detail page.** Click a channel name from the list
+  to see members (with op/voice prefixes), modes, current
+  topic, ban list. Forms for: edit topic, toggle mode, kick
+  member, ban member, set ban-mask exception.
+- **User detail page.** Click a nick from the list to see
+  every channel they're in, last activity, ident/host,
+  hostmask. Forms for: kick, kill (operator-only), set
+  per-user mode.
+- **Operator + token forms.** Today operators are created via
+  POST /api/v1/operators with curl. Add a form on the
+  operators page for create + delete. Same for API tokens on
+  a new `/dashboard/tokens` page (currently no UI at all).
+- **Metric card grid + sparklines.** Pull from the same
+  `MetricsSource` interface `/metrics` uses, render the
+  numbers as cards on the overview, and draw a sparkline of
+  the last 60 samples for `messages_in_total` /
+  `messages_out_total` / `users` / `channels`. Sparklines are
+  inline SVG, no charting library.
+- **CSS polish.** Replace the 88-line classless stylesheet
+  with a sidebar nav + card layout + status pill components.
+  Still no fonts, no JS framework, still readable in lynx.
+- **Search/filter** on the user and channel tables — a tiny
+  client-side filter input that hides rows whose text content
+  does not contain the query. No backend round-trip.
+- **CSRF on all mutating forms.** Today only the kick action
+  has a CSRF token; the rest of the new forms in this
+  milestone need the same protection.
 
-Deferred to v1.2:
-- Equal-TS nick collision (RFC says kill both — current code
-  keeps the existing record on equal TS, which is conservative
-  but rare at nanosecond resolution).
-- Channel TS collision *behaviour* — v1.1 propagates the TS but
-  does not yet drop op state on a peer's older claim. The next
-  cycle wires AdoptOlderTS into the membership reset path.
-- Ban list (+b) propagation across links.
-
-**Exit:** every shipped item above is in main with at least one
-integration test exercising it through two real Server
-instances. ✅
-
----
-
-### M10 — Lua sandbox tightening
-
-**Goal:** stop relying on the wallclock + container memory cap as
-the sandbox's only guard rails.
-
-Shipped:
-- **Per-call instruction budget via the existing wallclock.**
-  Audit discovered that gopher-lua's VM dispatch loop already
-  checks `L.ctx.Done()` between every Lua bytecode instruction,
-  so the wallclock budget already enforces at instruction
-  granularity — there is no separate hook API to attach. The
-  `Budget.Instructions` field maps to a wallclock proxy at a
-  conservative 10M-instructions/second rate via
-  `Runtime.effectiveDeadline`, taking the lower of the two as
-  the actual ceiling. Five new tests cover the four runaway
-  vectors (tight loop, pcall-shielded loop, recursion, doubling
-  string concat) and the instruction-proxy mapping.
-- **Per-bot registry cap as a partial memory ceiling.**
-  `Budget.RegistrySlots` wires through to gopher-lua's
-  `RegistryMaxSize`, capping the data stack at a configurable
-  number of LValue slots (default 65536 ≈ 1 MiB). When a
-  script grows past the cap gopher-lua raises a Lua error
-  which the runtime turns into a clean handler exit. Partial
-  rather than a true allocator hook (gopher-lua doesn't expose
-  one), so a script can still allocate large strings or
-  userdata outside the registry — the compose stack's 1 GiB
-  process cap is the outer envelope.
-- **`string.format` hardening.** The default gopher-lua
-  `string.format` is replaced with `safeStringFormat` which
-  refuses widths and precisions above 1024, refuses calls with
-  more than 16 args, and clamps the rendered output to 8192
-  bytes. Five tests cover each rejection path plus the happy
-  path. Closes the
-  `string.format("%999999999s", "x")` allocation vector.
-- **Fuzz target.** `FuzzSandboxNeverPanics` drives random Lua
-  source through compile + dispatch and asserts no panic, no
-  budget overrun. Verified end-to-end with a 10s real fuzz run
-  (369k executions, 215 new corpus entries, zero failures).
-  Doubles as a regression test in CI via the seed corpus.
-
-Deferred to v1.2:
-- True per-allocation memory hook (waiting on a gopher-lua
-  release that exposes one).
-- Soak fuzz beyond 60s as part of the M11 nightly job.
+**Exit:** an operator can drop into the dashboard, see the
+current state of the network at a glance, click into a noisy
+user, kill them, and watch the audit + log tail confirm the
+action — all without touching curl. The container ships with
+htmx vendored under `/dashboard/static/htmx.min.js`.
 
 ---
 
-### M11 — Operational validation
+### M14 — Federation correctness loose ends
 
-**Goal:** stop guessing about the operating envelope. Replace
-"conservative defaults" with measured numbers.
+**Goal:** close the items v1.1 documented as deferred under
+"Federation correctness". None of these are headline features;
+they exist to make the federation transport correct under
+adversarial timing.
 
-Shipped:
-- **Flood-control benchmark suite.** `internal/server/floodcontrol_bench_test.go`
-  has three benchmark families: uncontended floor (~55 ns/op),
-  N-senders-on-shared-bucket worst case (caps at ~200 ns at
-  N=1000), and per-connection production model (~4 ns/op at
-  N≥10 thanks to parallel scaling). Numbers and operator
-  guidance in `docs/OPERATIONS.md`.
-- **Storage backend benchmarks.** `internal/storage/sqlite/events_bench_test.go`
-  and the matching Postgres file. The audit found that the
-  default SQLite DSN was using WAL with implicit
-  `synchronous=FULL`, which fsyncs every commit at ~8.4 ms.
-  Switched the default to `synchronous=NORMAL` (the upstream-
-  recommended WAL pairing), bringing serial Append down to
-  ~183 µs and parallel Append to ~73 µs — a 46x speedup with
-  no API change. Numbers in `docs/OPERATIONS.md`.
-- **Federation latency benchmark.** `internal/server/federation_bench_test.go`
-  brings up two real Server instances bridged via `net.Pipe`
-  and measures the wall-clock between `cAlice.Write` and the
-  matching read on `cBob`. Reports per-message latency plus
-  p50 / p99 metrics. Reference numbers (~38 µs mean / 36 µs
-  p50 / 89 µs p99) in `docs/FEDERATION.md`.
-- **Soak test harness.** `tests/soak/` Go binary using the
-  existing `ircclient` helper. Per-conn sender + drain
-  reader; reports sent / received / drops / rate; exits
-  non-zero when the drop rate exceeds the configurable
-  threshold (default 1%). Smoke test with `go run ./tests/soak`
-  takes < 10s on a dev box; the v1.1 reference soak (10k conns
-  / 1k channels / 24h) is documented in `docs/OPERATIONS.md`.
+- **Equal-TS nick collision (RFC 2813 §5.2).** v1.1 keeps the
+  existing record on equal TS, which is conservative but rare
+  at nanosecond resolution. The RFC says kill both. Implement
+  the kill-both branch and add a regression test that drives
+  matching TS values into both sides of a link.
+- **Channel TS collision behaviour.** v1.1 propagates the
+  channel TS via `AdoptOlderTS` but does not yet drop op
+  state on a peer's older claim. Wire `AdoptOlderTS` into the
+  membership reset path so the older anchor wins consistently
+  on every node.
+- **Ban list (+b) propagation.** v1.1 drops `+b` toggles in
+  `applyRemoteChannelMode`. Add a per-channel ban map to the
+  burst (one `:server BAN #chan mask ts setby` line per ban)
+  and re-apply on the receiver via the existing
+  `state.Channel.AddBan`.
+- **SQUIT loop guard.** When `Server.HandleSquit` forwards
+  SQUIT to remaining peers it does not yet stamp a hop
+  counter, so a future >3-node mesh could re-introduce a
+  flood. Add a tiny "seen" set keyed on `(peer, reason)` that
+  expires after 5 seconds, sufficient to break a fan-out
+  loop.
 
-The required helper refactor moved `dialClient`, `expectNumeric`,
-`readUntil`, and `linkTwoServers` from `*testing.T` to
-`testing.TB` so the federation latency benchmark could share
-them with the integration tests. Production code is unchanged.
-
-Deferred to v1.2:
-- A 24h reference soak run on a dedicated box and a CI nightly
-  job that gates merges on its result. The harness exists; the
-  schedule is the missing piece.
-- A storage benchmark against a real Postgres on tuned hardware
-  (the existing bench Skips cleanly without `IRCAT_TEST_POSTGRES_DSN`).
+**Exit:** the same three-node integration test the v1.1 plan
+called for, now actually present in `internal/server/`. Drives
+collisions, channel TS resets, ban propagation, and a SQUIT
+storm; all four scenarios converge to the same state on every
+node within 500 ms.
 
 ---
 
-### M12 — Polish & release plumbing
+### M15 — Operational validation at scale
 
-**Goal:** clean up everything that v1.0 left scuffed.
+**Goal:** turn the v1.1 soak / benchmark *capability* into
+soak / benchmark *results*.
 
-Shipped:
-- **Dashboard in-process TLS termination.** Wires the existing
-  `dashboard.tls.{cert_file,key_file}` fields so the operator
-  can opt out of the reverse-proxy layer. Fail-closed on a
-  misconfigured cert path. Both the proxy and in-process modes
-  remain supported.
-- **SIGHUP reload + `POST /api/v1/config/reload`.**
-  `internal/logging` gains `NewWithLevel` returning a
-  `*slog.LevelVar` so the cmd path can flip the level at
-  runtime. The reload entry point lives in `cmd/ircat/reload.go`
-  and rewires `logging.level`, statically configured operators,
-  and the MOTD file. The api package gains a small `Reloader`
-  interface that the cmd path satisfies, plus a bearer-token
-  POST handler that runs through the same code path SIGHUP
-  triggers. A misconfigured reload leaves the previous state
-  intact and surfaces the parse error in both the response body
-  and the audit log.
-- **Migration guide.** `docs/UPGRADE-v1.0-to-v1.1.md` walks
-  through every change a v1.0 operator will see, organised by
-  what changes automatically vs what they can opt into. The
-  headline message: in-place upgrade, no config changes
-  required, no migrations.
-- **Release plumbing.** `.goreleaser.yaml` drives the cross-
-  platform build (linux + darwin, amd64 + arm64), the multi-
-  arch container image push to ghcr.io, syft SBOM generation,
-  and cosign keyless signing of both the checksums.txt blob
-  and the container manifest. `scripts/install.sh` is a
-  POSIX-sh bootstrap that resolves the latest tag from the
-  GitHub API, verifies the SHA-256 against checksums.txt, and
-  installs the binary; optional cosign signature verification
-  via `IRCAT_VERIFY=1`. `.github/workflows/release.yml` runs
-  goreleaser on every `v*` tag with the qemu/buildx/cosign
-  action chain and uses GitHub OIDC for keyless signing so no
-  key material lives in the repo. A follow-up install-smoke
-  job runs the just-published install.sh inside an alpine
-  container so a broken release script surfaces immediately.
+- **Nightly soak job.** Schedule the existing
+  `tests/soak` harness against a real ircat instance via a
+  GitHub Actions cron. Targets:
+  - 5 000 concurrent connections, 500 channels, 1 hour, 0.1 %
+    drop rate ceiling. (Smaller than the v1.1 reference
+    target, large enough to find regressions.)
+  - The job uploads the per-run summary as a workflow
+    artefact and posts a comment on the latest commit if
+    drops exceed the ceiling.
+- **24h reference soak.** Manual trigger of the harness
+  against the reference Hetzner box for the v1.1 reference
+  target (10k conns, 1k channels, 24 h). Document the result
+  and the host config in `docs/OPERATIONS.md`. This is the
+  one v1.1 was missing — the harness was there, the run was
+  not.
+- **Postgres benchmark on tuned hardware.** Same idea — the
+  benchmark Skips cleanly without `IRCAT_TEST_POSTGRES_DSN`,
+  so v1.1 had no published Postgres numbers. Run it against a
+  real RDS-class box and put the result in
+  `docs/OPERATIONS.md` next to the SQLite numbers.
+- **Federation latency on real loopback.** Re-run
+  `BenchmarkFederation_PrivmsgRoundtrip` against actual TCP
+  loopback (and ideally a 1 ms / 10 ms / 100 ms LAN
+  emulation via `tc qdisc`). v1.1's number is from
+  `net.Pipe`; document the realistic ones in
+  `docs/FEDERATION.md`.
 
-**Exit:** `git tag v1.1.0` cuts a release whose pipeline
-produces signed cross-platform archives, a multi-arch container
-image on ghcr.io, syft SBOMs, and a cosign keyless signature
-over checksums.txt and the container manifest. ✅
+**Exit:** `docs/OPERATIONS.md` has measured numbers from real
+hardware for every benchmark, and the nightly job has been
+green for at least one full week before tagging.
+
+---
+
+### M16 — Lua sandbox follow-ups
+
+**Goal:** finish what M10 deferred when gopher-lua did not
+expose the right hooks.
+
+- **True per-allocation memory cap.** If gopher-lua has added
+  an allocator hook by the time v1.2 enters dev (track the
+  upstream project quarterly), wire `Budget.RegistryBytes`
+  through to it. If not, document why the registry slot cap
+  is the closest we can get and pin the gopher-lua version we
+  rely on.
+- **Per-call instruction count via Sethook.** Same gating —
+  if gopher-lua exposes `Sethook` with a count mask in time,
+  add a real instruction counter that decrements on the hook
+  and trips through the existing context-cancel exit path.
+  The wallclock proxy stays as the outer envelope.
+- **Sandbox fuzz job in CI.** Run
+  `FuzzSandboxNeverPanics` for 5 minutes on every PR via a
+  separate GitHub Actions matrix entry. Today the seed corpus
+  runs as a regression test but real fuzzing only happens
+  manually.
+
+**Exit:** the SECURITY.md "what the sandbox does and does not
+cover" section loses the partial-cap caveats, OR the doc
+explicitly pins the gopher-lua version we have validated and
+the v1.3 plan inherits the open items.
+
+---
+
+### M17 — Release polish
+
+**Goal:** v1.2 ships with v1.1 → v1.2 migration guidance and
+the v1.2 release pipeline produces the same shape of artefacts
+as v1.1.
+
+- **Migration guide v1.1 → v1.2.** Mostly empty unless M14 or
+  M16 introduces a behaviour change that needs operator
+  attention. The dashboard polish in M13 is additive — no
+  upgrade action needed.
+- **Release notes generator.** Today the v1.0.0 and v1.1.0
+  release notes are hand-written annotated tag messages.
+  Switch to the goreleaser changelog generator + a small
+  prelude template so the next major does not need a
+  hand-typed wall of text.
+
+**Exit:** `git tag v1.2.0` produces a release with the same
+GitHub Actions pipeline as v1.1.0, plus the dashboard images
+visible at `https://github.com/asabla/ircat/releases/tag/v1.2.0`.
 
 ---
 
 ## Cross-cutting
 
-- Every commit still follows Conventional Commits — see
-  `CLAUDE.md` for the type table.
-- Every new feature still ships with at least one test, and
-  every cross-API surface still ships with an e2e test.
-- `docs/PROTOCOL.md` continues to absorb RFC ambiguities as
-  they come up.
-- `docs/CONFIG.md` is updated in the same commit as any new
-  config field.
+- Conventional Commits, same as every prior milestone.
+- Every new dashboard page ships with at least one HTTP-level
+  test that drives the form / handler end-to-end. The TLS test
+  pattern from v1.1 is the template.
+- `docs/PROTOCOL.md`, `docs/CONFIG.md`, `docs/DASHBOARD.md` get
+  updated in the same commit as the change.
+- The `gocyclo` / `staticcheck` CI gates stay in place — no
+  drop in code quality is acceptable for the dashboard work.
 
-## Out of scope for v1.1
+## Out of scope for v1.2
 
-These were considered and explicitly cut. They live in a future
-v1.2+ plan.
+These were considered and explicitly cut. They live in a
+future v1.3+ plan.
 
+- A real chat surface in the dashboard (operators can use a
+  regular IRC client; the dashboard is for moderation, not
+  participation).
 - IRCv3 capabilities beyond `CAP END` (`message-tags`,
   `account-tag`, `chghost`, ...).
 - SERVICE pseudo-server.
 - Multi-DC federation routing tables.
-- Webhook v2 event payload schema (the v1 jsonl payload stays
-  compatible for the whole 1.x line).
-- Operator account federation (operator records are still
-  per-node).
+- Webhook v2 event payload schema.
+- Operator account federation across nodes.
+- An npm/yarn build for the dashboard. The "no build step,
+  htmx + vanilla JS, vendored as a single file" rule from
+  CLAUDE.md still applies.
