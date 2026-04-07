@@ -157,15 +157,45 @@ Deferred to M8 / post-1.0:
 
 ## M8 — Production hardening
 
-- TLS on all listeners.
-- Flood control tuning + benchmarks.
-- Soak test (10k connections, 1k channels, 24h) on a reference machine; document the result.
-- Security review of the Lua sandbox.
-- Prometheus metrics for: connection count, message rate, link state, bot CPU, DB latency.
-- Finalize `docker-compose.yml` (the production one) with healthchecks, resource limits, log rotation.
-- Backup/restore docs for SQLite and Postgres.
+Shipped:
+- TLS on IRC client listeners (cert_file/key_file in
+  `listeners[]`, TLS 1.2 floor) with a registration roundtrip
+  test.
+- TLS on federation links in both directions, with optional
+  SHA-256 leaf-cert fingerprint pinning so operators can run a
+  self-signed PKI without distributing a CA bundle. Two
+  integration tests cover the happy path and a fingerprint
+  mismatch rejection.
+- Prometheus `/metrics` endpoint on the dashboard listener
+  (text format, hand-rolled, no client_golang dependency).
+  Exposes user/channel/federation/bot gauges plus inbound/
+  outbound message counters and uptime.
+- Production `docker-compose.yml` hardened with `cap_drop ALL`,
+  `no-new-privileges`, `read_only` root, `/tmp` tmpfs, log
+  rotation on every service, and CPU/memory caps on Postgres.
+  Federation listener guidance documented in the file header.
+- Lua sandbox audit (`docs/SECURITY.md`) covering the trust
+  boundaries and the sandbox close-out work. `string.dump`
+  stripped explicitly. Enumerated regression test in
+  `internal/bots/sandbox_test.go` so any future change to
+  OpenLibs that reintroduces a dangerous symbol fails loudly.
+- `docs/OPERATIONS.md` covering the metrics surface, hot
+  backup recipes for both SQLite and Postgres, restore + DR
+  drill, and an incident response cheat sheet keyed off
+  specific metrics.
 
-**Exit:** v1.0.0 tagged. Release notes cover upgrade path from… well, nothing, but the docs are in place.
+Deferred to post-1.0:
+- Per-call instruction budget for Lua bots (waiting on a stable
+  gopher-lua hook API; wallclock budget covers tight loops).
+- Soak test at 10k connections / 1k channels / 24h — needs a
+  dedicated reference machine.
+- Flood control benchmark suite — current limits are
+  conservative defaults rather than measured.
+- Memory budget for individual Lua bots (currently relies on
+  the container memory cap to bound a runaway).
+
+**Exit:** every M8 deliverable above is in main with tests; the
+remaining items are tracked but do not block tagging v1.0.0.
 
 ---
 
