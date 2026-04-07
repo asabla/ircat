@@ -185,6 +185,39 @@ func NewRuntime(source string, actions Actions, budget Budget) (*Runtime, error)
 	return rt, nil
 }
 
+// effectiveDeadline returns the wall-clock duration the next
+// handler call is allowed to run. It is the lower of:
+//
+//   - r.budget.Wallclock — the explicit operator-set ceiling.
+//   - r.budget.Instructions / instructionsPerSecond — the
+//     wallclock proxy for the operator's instruction budget,
+//     converted at a conservative 10M-instructions-per-second
+//     rate. The conversion is intentionally pessimistic so an
+//     instruction budget never under-budgets a real script;
+//     operators who want a tighter wallclock should set
+//     Wallclock directly.
+//
+// instructionsPerSecond is a coarse approximation of gopher-lua's
+// observed steady-state on a modern x86 box. It is fine for the
+// "stop a tight loop" use case; the precise value does not matter
+// because both budgets exit through the same context-cancellation
+// path and the test suite measures wallclock convergence, not
+// instruction counts.
+func (r *Runtime) effectiveDeadline() time.Duration {
+	const instructionsPerSecond = 10_000_000
+	wall := r.budget.Wallclock
+	if r.budget.Instructions > 0 {
+		fromInstr := time.Duration(r.budget.Instructions) * time.Second / instructionsPerSecond
+		if fromInstr > 0 && fromInstr < wall {
+			wall = fromInstr
+		}
+	}
+	if wall <= 0 {
+		wall = DefaultBudget().Wallclock
+	}
+	return wall
+}
+
 // Close releases the underlying Lua state. Safe to call multiple
 // times.
 func (r *Runtime) Close() {
@@ -235,19 +268,29 @@ func (r *Runtime) callHandler(ctx context.Context, name string, event *Event) er
 		return nil
 	}
 
-	// Wall-clock deadline: hang gopher-lua's context onto the state
-	// so any blocking call (e.g. a Lua-level coroutine) observes
-	// cancellation.
-	callCtx, cancel := context.WithTimeout(ctx, r.budget.Wallclock)
+	// Wall-clock deadline + per-instruction interruption.
+	//
+	// gopher-lua's VM dispatch loop checks `L.ctx.Done()` between
+	// every Lua bytecode instruction (see vm.go in the upstream
+	// package — the select around the jumpTable dispatch). That
+	// means a context cancelled by ANY mechanism — wallclock
+	// timeout, parent cancel, manual abort — terminates the
+	// running script at the very next instruction, even inside a
+	// tight pcall-wrapped infinite loop or a recursive runaway.
+	//
+	// For v1.1 we therefore treat the wallclock budget as the
+	// per-instruction safety net. The `Budget.Instructions` field
+	// is preserved on the struct so callers can express their
+	// intent ("I want this script to run at most N instructions")
+	// but it is currently translated to a wallclock proxy below
+	// rather than a true instruction count, because gopher-lua
+	// does not expose a debug-hook API for counter-based
+	// interruption. The `M10 deferred` line in PLAN.md tracks the
+	// upstream conversation.
+	callCtx, cancel := context.WithTimeout(ctx, r.effectiveDeadline())
 	defer cancel()
 	r.state.SetContext(callCtx)
 	defer r.state.RemoveContext()
-
-	// Instruction budget enforcement is version-dependent on
-	// gopher-lua; we rely on the wall-clock deadline set above as
-	// the primary safety net and document the trade-off in the
-	// package comment. A follow-up can tighten this once we pick a
-	// gopher-lua major with a stable hook API.
 
 	args := []lua.LValue{r.state.GetGlobal("ctx")}
 	if event != nil {
