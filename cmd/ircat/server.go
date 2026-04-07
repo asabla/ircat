@@ -132,6 +132,7 @@ func runServer(args []string) error {
 			ServerInfo: srv,
 			Actuator:   srv,
 		},
+		Metrics: srv,
 		ReadyFunc: func() error {
 			// Ready once the IRC server has bound at least one
 			// listener. Before that the IRC side is still wiring

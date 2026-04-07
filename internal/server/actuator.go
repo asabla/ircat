@@ -82,6 +82,41 @@ func (s *Server) Version() string { return "ircat-0.0.1" }
 // StartedAt returns the server creation timestamp.
 func (s *Server) StartedAt() time.Time { return s.createdAt }
 
+// UserCount returns the number of registered users currently
+// tracked by the world (excluding pending registrations).
+// Implements internal/dashboard.MetricsSource.
+func (s *Server) UserCount() int { return len(s.world.Snapshot()) }
+
+// ChannelCount returns the number of channels currently tracked
+// by the world. Implements internal/dashboard.MetricsSource.
+func (s *Server) ChannelCount() int { return len(s.world.ChannelsSnapshot()) }
+
+// FederationLinkCount returns the number of currently registered
+// federation links. Implements internal/dashboard.MetricsSource.
+func (s *Server) FederationLinkCount() int {
+	s.fedMu.RLock()
+	defer s.fedMu.RUnlock()
+	return len(s.fedLinks)
+}
+
+// BotCount returns the number of registered bot users. Implements
+// internal/dashboard.MetricsSource.
+func (s *Server) BotCount() int {
+	s.connsMu.RLock()
+	defer s.connsMu.RUnlock()
+	return len(s.bots)
+}
+
+// MessagesIn returns the cumulative count of inbound IRC messages
+// successfully parsed since the server started. Implements
+// internal/dashboard.MetricsSource.
+func (s *Server) MessagesIn() uint64 { return s.messagesIn.Load() }
+
+// MessagesOut returns the cumulative count of outbound IRC
+// messages successfully written since the server started.
+// Implements internal/dashboard.MetricsSource.
+func (s *Server) MessagesOut() uint64 { return s.messagesOut.Load() }
+
 // silence unused-import warnings on platforms where the test build
 // removes the protocol import path. The package itself uses
 // protocol elsewhere.

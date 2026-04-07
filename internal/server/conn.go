@@ -259,6 +259,7 @@ func (c *Conn) readLoop() {
 			// occasionally emit empty lines or stray bytes.
 			continue
 		}
+		c.server.messagesIn.Add(1)
 		c.dispatch(msg)
 	}
 }
@@ -320,6 +321,7 @@ func (c *Conn) writeMessage(msg *protocol.Message) bool {
 		c.logger.Debug("write error", "error", err)
 		return false
 	}
+	c.server.messagesOut.Add(1)
 	return true
 }
 

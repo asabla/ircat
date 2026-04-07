@@ -97,6 +97,13 @@ type Server struct {
 	// shuttingDown is set to 1 once Run begins its drain. New accepts
 	// observe it and refuse cleanly instead of racing the close.
 	shuttingDown atomic.Bool
+
+	// messagesIn / messagesOut are global counters incremented by
+	// every connection's read/write loop. They drive the
+	// /metrics endpoint. Atomic so the dashboard scrape can read
+	// them without taking any of the server's per-conn locks.
+	messagesIn  atomic.Uint64
+	messagesOut atomic.Uint64
 }
 
 // BotDeliverer is the small interface the bot supervisor registers

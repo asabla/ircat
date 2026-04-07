@@ -37,6 +37,11 @@ type Options struct {
 	// attempt.
 	PageDeps *PageDeps
 
+	// Metrics is the read-only counter/gauge source for the
+	// /metrics endpoint. Optional — when nil, /metrics returns a
+	// stub explaining that metrics are unavailable.
+	Metrics MetricsSource
+
 	// ReadyFunc reports readiness. The /readyz endpoint returns
 	// 200 when this returns nil and 503 when it returns an error.
 	// Used by container orchestration to delay traffic until the
@@ -61,6 +66,7 @@ type Server struct {
 	pages    *PageDeps
 	sessions *sessionStore
 	tmpl     *templates
+	metrics  MetricsSource
 }
 
 // New constructs a Server. It does not bind any sockets.
@@ -70,10 +76,11 @@ func New(opts Options) *Server {
 		logger = slog.Default()
 	}
 	s := &Server{
-		cfg:    opts.Config,
-		logger: logger,
-		mux:    http.NewServeMux(),
-		pages:  opts.PageDeps,
+		cfg:     opts.Config,
+		logger:  logger,
+		mux:     http.NewServeMux(),
+		pages:   opts.PageDeps,
+		metrics: opts.Metrics,
 		readyFunc: func() error {
 			if opts.ReadyFunc != nil {
 				return opts.ReadyFunc()
@@ -181,6 +188,7 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) registerRoutes(api http.Handler) {
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
+	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
 	s.mux.HandleFunc("GET /{$}", s.handleRoot)
 
 	// Static assets (CSS).
