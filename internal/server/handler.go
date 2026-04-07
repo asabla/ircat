@@ -33,6 +33,8 @@ func (c *Conn) dispatch(m *protocol.Message) {
 		c.handleInvite(m)
 	case "OPER":
 		c.handleOper(m)
+	case "KILL":
+		c.handleKill(m)
 	case "PRIVMSG":
 		c.handlePrivmsg(m)
 	case "NOTICE":

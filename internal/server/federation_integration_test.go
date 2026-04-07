@@ -453,6 +453,85 @@ func TestFederation_SquitRecoveryDropsRemoteUsers(t *testing.T) {
 	}
 }
 
+// TestFederation_KillRoutesAcrossLink exercises M9 task #95:
+// an operator KILL on one node propagates to every peer so the
+// killed user disappears across the entire mesh, with a synthetic
+// QUIT broadcast on the way out.
+func TestFederation_KillRoutesAcrossLink(t *testing.T) {
+	addrA, srvA, closeA := buildFederationPeer(t, "node-a")
+	defer closeA()
+	addrB, srvB, closeB := buildFederationPeer(t, "node-b")
+	defer closeB()
+
+	closeLink := linkTwoServers(t, srvA, srvB)
+	defer closeLink()
+
+	cAlice, rAlice := dialClient(t, addrA)
+	defer cAlice.Close()
+	cAlice.Write([]byte("NICK alice\r\nUSER alice 0 * :Alice\r\n"))
+	expectNumeric(t, cAlice, rAlice, "422", time.Now().Add(2*time.Second))
+
+	cBob, rBob := dialClient(t, addrB)
+	defer cBob.Close()
+	cBob.Write([]byte("NICK bob\r\nUSER bob 0 * :Bob\r\n"))
+	expectNumeric(t, cBob, rBob, "422", time.Now().Add(2*time.Second))
+
+	// Wait for cross-node user visibility before granting +o.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if srvA.world.FindByNick("bob") != nil && srvB.world.FindByNick("alice") != nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if srvA.world.FindByNick("bob") == nil {
+		t.Fatal("bob never propagated to node A")
+	}
+
+	// Grant alice +o by editing the user record directly. This
+	// short-circuits the OPER command (which needs a store-backed
+	// operator entry) and is the documented way to test KILL in
+	// the federation harness.
+	aliceLocal := srvA.world.FindByNick("alice")
+	aliceLocal.Modes += "o"
+
+	// alice KILLs bob.
+	cAlice.Write([]byte("KILL bob :rule violation\r\n"))
+
+	// bob's connection on node B should drop. We expect either
+	// an ERROR line or EOF on the read side; both are acceptable.
+	deadline = time.Now().Add(3 * time.Second)
+	cBob.SetReadDeadline(deadline)
+	disconnected := false
+	for !disconnected && time.Now().Before(deadline) {
+		_, err := rBob.ReadString('\n')
+		if err != nil {
+			disconnected = true
+			break
+		}
+	}
+	if !disconnected {
+		t.Fatal("bob did not get disconnected by remote KILL")
+	}
+
+	// And bob should be gone from B's world.
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if srvB.world.FindByNick("bob") == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if u := srvB.world.FindByNick("bob"); u != nil {
+		t.Errorf("bob still present on node B after remote KILL: %+v", u)
+	}
+	// And from A's world too (the local handler dropped the
+	// remote-user record on the way out).
+	if u := srvA.world.FindByNick("bob"); u != nil {
+		t.Errorf("bob still present on node A after KILL: %+v", u)
+	}
+}
+
 // TestFederation_ModeBurstAndRuntime exercises M9 task #91:
 // channel modes are bursted at link-up and runtime MODE changes
 // are re-applied on the receiver. The test:

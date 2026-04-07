@@ -94,6 +94,11 @@ type Host interface {
 	// peer that lost the link, fan synthetic QUITs to local
 	// channel members, and forward SQUIT to its other peers.
 	HandleSquit(peerName, reason string)
+	// DropLocalUser disconnects the named local user with the
+	// supplied reason. Called when a remote KILL targets a user
+	// that lives on this node. The host MUST NOT re-forward the
+	// kill — handleRemoteKill is the one that fans it out.
+	DropLocalUser(nick, reason string)
 }
 
 // LinkConfig is the per-peer configuration needed to bring up a
@@ -304,6 +309,8 @@ func (l *Link) dispatch(msg *protocol.Message) {
 		l.handleRemoteMode(msg)
 	case "SQUIT":
 		l.handleRemoteSquit(msg)
+	case "KILL":
+		l.handleRemoteKill(msg)
 	case "PING":
 		// Reply inline; PING over S2S carries the remote server
 		// name in the trailing param.
@@ -643,6 +650,50 @@ func (l *Link) handleRemoteMode(msg *protocol.Message) {
 	}
 	applyRemoteChannelMode(world, ch, msg.Params[1:])
 	l.host.DeliverLocal(msg)
+}
+
+// handleRemoteKill ingests a KILL forwarded from a peer. The
+// receiver looks the target up in its world; if the target is
+// local it disconnects them via the host's KillLocal hook, and
+// if the target is a remote user the receiver fans a synthetic
+// QUIT to local channel members and drops the user record.
+//
+// KILL is one-shot per node — the originating server already
+// forwarded the message to every peer, so the receiver does NOT
+// re-forward. That avoids loops in a >2-node mesh without
+// needing a hop counter.
+func (l *Link) handleRemoteKill(msg *protocol.Message) {
+	if len(msg.Params) < 2 {
+		return
+	}
+	world := l.host.WorldState()
+	if world == nil {
+		return
+	}
+	targetNick := msg.Params[0]
+	reason := msg.Params[1]
+	target := world.FindByNick(targetNick)
+	if target == nil {
+		return
+	}
+	// Build a synthetic QUIT for the local channel fan-out.
+	// Prefix carries the victim's hostmask, body carries the
+	// "Killed (op (reason))" form so clients see the same line
+	// they would have for a local kill.
+	quitMsg := &protocol.Message{
+		Prefix:  target.Hostmask(),
+		Command: "QUIT",
+		Params:  []string{"Killed (" + senderFromPrefix(msg.Prefix) + " (" + reason + "))"},
+	}
+	l.host.DeliverLocal(quitMsg)
+	if target.IsRemote() {
+		world.RemoveUser(target.ID)
+		return
+	}
+	// Local target — DeliverLocal already fanned the QUIT, but
+	// we still need to disconnect the live conn. The host's
+	// DropLocalUser hook does that for us.
+	l.host.DropLocalUser(target.Nick, reason)
 }
 
 // handleRemoteSquit ingests a SQUIT message from this peer.

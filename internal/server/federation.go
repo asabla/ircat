@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+
 	"github.com/asabla/ircat/internal/protocol"
 	"github.com/asabla/ircat/internal/state"
 )
@@ -34,6 +36,19 @@ func (s *Server) UnregisterLink(peerName string) {
 	s.fedMu.Lock()
 	defer s.fedMu.Unlock()
 	delete(s.fedLinks, peerName)
+}
+
+// DropLocalUser disconnects the named local user with reason.
+// Implements internal/federation.Host. Called by the federation
+// Link when a remote KILL targets a user that happens to live on
+// this node. Reuses the existing KickUser pathway so the user
+// receives the same ERROR + QUIT broadcast they would get from a
+// local oper KILL.
+func (s *Server) DropLocalUser(nick, reason string) {
+	if reason == "" {
+		reason = "Killed"
+	}
+	_ = s.KickUser(context.Background(), nick, reason)
 }
 
 // HandleSquit performs the SQUIT recovery flow when a federation
