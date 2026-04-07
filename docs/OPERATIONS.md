@@ -112,6 +112,42 @@ SQUIT needed.
 | `ircat_federation_links` drops to 0 | peer down or auth mismatch | dial logs, peer's listener logs |
 | `ircat_users` stuck at 0 after restart | DB inaccessible / migration failed | postgres health, sqlite WAL permissions |
 
+## Measured envelope
+
+Numbers below come from the v1.1 benchmark suites and were
+collected on an Intel Xeon E-2286M (8C/16T, 2.4 GHz) under Linux
+6.8 with `-race` disabled. Re-run on your own hardware before
+relying on absolute values.
+
+### Flood control
+
+Source: `internal/server/floodcontrol_bench_test.go`. Rerun with
+`go test -bench=BenchmarkTokenBucket ./internal/server/`.
+
+| Scenario | ns/op | Notes |
+|---|---|---|
+| Single sender, uncontended | 55 | The floor cost of a `Take()` |
+| 1 sender on a shared bucket | 56 | mutex acquire dominates |
+| 10 senders on a shared bucket | 98 | low cache contention |
+| 100 senders on a shared bucket | 146 | |
+| 1000 senders on a shared bucket | 197 | mutex still scales |
+| 1 connection, own bucket | 55 | |
+| 10 connections, own bucket | 6.7 | parallel scaling kicks in |
+| 100 connections, own bucket | 4.7 | |
+| 1000 connections, own bucket | 4.3 | per-connection model is the right one |
+
+The single-bucket-shared-by-N-senders column is a worst-case
+bound — production uses one bucket per connection so the
+"per-connection" column is what an operator actually sees. At
+4.3 ns/op the rate limiter is firmly out of the hot path even at
+1000 concurrent connections.
+
+The default `message_burst: 100` and `message_refill_per_second:
+10` ship in `default-config.yaml` and are deliberately
+conservative for a brand-new ircat install. Operators with
+large heavily-active channels should raise both numbers — the
+benchmark says there is no cost reason not to.
+
 ## Disaster recovery exercise
 
 Run this drill quarterly. The exit criterion is "the new node serves
