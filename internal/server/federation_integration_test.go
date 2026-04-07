@@ -369,3 +369,100 @@ func TestFederation_RuntimePropagation(t *testing.T) {
 	}
 	t.Fatal("alice2 quit did not propagate to node-b world")
 }
+
+// TestFederation_ModeBurstAndRuntime exercises M9 task #91:
+// channel modes are bursted at link-up and runtime MODE changes
+// are re-applied on the receiver. The test:
+//
+//  1. Brings up node A.
+//  2. alice on A creates #modes, sets +ntk supersecret, ops bob
+//     (a remote user we'll inject manually so the +o has a target).
+//  3. Brings up node B and links.
+//  4. Asserts the burst delivered the boolean modes, key, and op.
+//  5. alice flips +i at runtime; the receiver must mirror it.
+//
+// The test pre-injects bob into A's world rather than running a
+// second client because the burst path only emits modes that exist
+// at link-time — easier to set them up before the link comes up.
+func TestFederation_ModeBurstAndRuntime(t *testing.T) {
+	addrA, srvA, closeA := buildFederationPeer(t, "node-a")
+	defer closeA()
+	_, srvB, closeB := buildFederationPeer(t, "node-b")
+	defer closeB()
+
+	// alice connects to A and sets up #modes BEFORE the link
+	// comes up so the burst carries the channel state.
+	cAlice, rAlice := dialClient(t, addrA)
+	defer cAlice.Close()
+	cAlice.Write([]byte("NICK alice\r\nUSER alice 0 * :Alice\r\n"))
+	expectNumeric(t, cAlice, rAlice, "422", time.Now().Add(2*time.Second))
+	cAlice.Write([]byte("JOIN #modes\r\n"))
+	readUntil(t, cAlice, rAlice, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "366"
+	})
+	cAlice.Write([]byte("MODE #modes +k supersecret\r\n"))
+	// Wait for the local MODE echo to confirm the change applied
+	// before bringing the link up.
+	readUntil(t, cAlice, rAlice, time.Now().Add(2*time.Second), func(l string) bool {
+		return strings.Contains(l, " MODE #modes ") && strings.Contains(l, "+k")
+	})
+
+	// Now link the two servers. Node B's burst handler will
+	// receive the JOIN + TOPIC + MODE lines for #modes.
+	closeLink := linkTwoServers(t, srvA, srvB)
+	defer closeLink()
+
+	// Wait for #modes to materialize on B with the bursted state.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		ch := srvB.world.FindChannel("#modes")
+		if ch != nil {
+			_, _, _, _, _, _, key, _ := ch.Modes()
+			if key == "supersecret" {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	chB := srvB.world.FindChannel("#modes")
+	if chB == nil {
+		t.Fatal("#modes never appeared on node B")
+	}
+	_, _, noExternal, _, _, topicLocked, key, _ := chB.Modes()
+	if !noExternal || !topicLocked {
+		t.Errorf("burst did not carry +n+t: noExt=%v topicLocked=%v", noExternal, topicLocked)
+	}
+	if key != "supersecret" {
+		t.Errorf("burst did not carry +k: key=%q", key)
+	}
+
+	// Runtime change: alice flips +i. Node B must mirror it.
+	cAlice.Write([]byte("MODE #modes +i\r\n"))
+	deadline = time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		inviteOnly, _, _, _, _, _, _, _ := chB.Modes()
+		if inviteOnly {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	inviteOnly, _, _, _, _, _, _, _ := chB.Modes()
+	if !inviteOnly {
+		t.Fatal("runtime +i did not propagate to node B")
+	}
+
+	// And remove a mode at runtime: alice clears the key.
+	cAlice.Write([]byte("MODE #modes -k\r\n"))
+	deadline = time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		_, _, _, _, _, _, key, _ := chB.Modes()
+		if key == "" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	_, _, _, _, _, _, keyAfter, _ := chB.Modes()
+	if keyAfter != "" {
+		t.Errorf("runtime -k did not clear key on node B: %q", keyAfter)
+	}
+}

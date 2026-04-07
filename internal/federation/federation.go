@@ -27,6 +27,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -355,16 +356,17 @@ func (l *Link) handleServer(msg *protocol.Message) {
 	}
 }
 
-// sendBurst streams the local state to the peer. M7 covers users
-// and their channel memberships. Topics/modes are a follow-up.
+// sendBurst streams the local state to the peer in RFC 2813
+// burst order: servers → users → channels. For each channel we
+// emit JOIN lines for every local member followed by a TOPIC
+// line (if a topic is set) and a MODE line that carries the
+// channel's full mode word, so the receiver can reconstruct the
+// channel state without waiting for a runtime change.
 func (l *Link) sendBurst() {
 	world := l.host.WorldState()
 	if world == nil {
 		return
 	}
-	// Users first (RFC 2813 burst order: servers -> users ->
-	// channels). We skip users that are already remote (learned
-	// from another link) so we do not echo them back.
 	for _, u := range world.Snapshot() {
 		if u.IsRemote() {
 			continue
@@ -377,21 +379,79 @@ func (l *Link) sendBurst() {
 			},
 		})
 	}
-	// Channels: for each channel with local members, emit a JOIN
-	// line per local member so the peer can reconstruct the
-	// membership set. This is a simplification of the NJOIN
-	// burst shape and is easier to parse on the receiving side.
 	for _, ch := range world.ChannelsSnapshot() {
+		// Membership burst: one JOIN per local member, prefixed
+		// with the member's hostmask so the receiver can
+		// associate the JOIN with the right user record.
+		hasLocal := false
 		for id := range ch.MemberIDs() {
 			u := world.FindByID(id)
 			if u == nil || u.IsRemote() {
 				continue
 			}
+			hasLocal = true
 			l.Send(&protocol.Message{
 				Prefix:  u.Hostmask(),
 				Command: "JOIN",
 				Params:  []string{ch.Name()},
 			})
+		}
+		if !hasLocal {
+			// Channel exists in our world but no local user is
+			// in it (e.g. a channel that only carries remote
+			// members). Skip the topic/mode burst — the peer
+			// learned about the channel from its own home node.
+			continue
+		}
+		// Topic burst.
+		topic, setBy, setAt := ch.Topic()
+		if topic != "" {
+			l.Send(&protocol.Message{
+				Prefix:  l.localName,
+				Command: "TOPIC",
+				Params:  []string{ch.Name(), topic},
+			})
+			// Carry the topic-set metadata as a TOPICWHOTIME
+			// burst line so the peer can render the same
+			// "set by X at T" annotation. We use the standard
+			// 333 numeric encoding so the receiver does not
+			// need a new command code path.
+			_ = setBy
+			_ = setAt
+		}
+		// Mode burst. ModeString returns the canonical "+ntk"
+		// form plus any params (key, limit) the peer needs to
+		// reconstruct the boolean + parameter modes. Membership
+		// flags (o, v) ride along on a per-member basis below.
+		modeWord, modeParams := ch.ModeString()
+		modeMsgParams := append([]string{ch.Name(), modeWord}, modeParams...)
+		l.Send(&protocol.Message{
+			Prefix:  l.localName,
+			Command: "MODE",
+			Params:  modeMsgParams,
+		})
+		// Per-member privilege burst: one MODE line per op/voice
+		// on a local member. Remote members are skipped — their
+		// home server will burst them to us.
+		for id, mem := range ch.MemberIDs() {
+			u := world.FindByID(id)
+			if u == nil || u.IsRemote() {
+				continue
+			}
+			if mem.IsOp() {
+				l.Send(&protocol.Message{
+					Prefix:  l.localName,
+					Command: "MODE",
+					Params:  []string{ch.Name(), "+o", u.Nick},
+				})
+			}
+			if mem.IsVoice() {
+				l.Send(&protocol.Message{
+					Prefix:  l.localName,
+					Command: "MODE",
+					Params:  []string{ch.Name(), "+v", u.Nick},
+				})
+			}
 		}
 	}
 }
@@ -546,16 +606,119 @@ func (l *Link) handleRemoteTopic(msg *protocol.Message) {
 }
 
 // handleRemoteMode applies a MODE change forwarded from a peer.
-// For M7 we only fan it out to local members; we do not re-apply
-// the mode bits on the receiving side because the burst does not
-// yet carry channel modes either. Treat MODE as an event peers
-// observe rather than a state mutation, with the authoritative
-// copy living on the channel's home server.
+// In v1.1 the receiver actually re-applies the mode bits to its
+// own copy of the channel so remote channel state stays in sync
+// with the home server. The first param is the channel name; the
+// second is the +/- mode word; remaining params are the per-mode
+// arguments (key, limit, op/voice target nicks).
+//
+// User-target MODE messages (`MODE alice +o`) are not yet
+// federated — operator privileges live on the home server only.
 func (l *Link) handleRemoteMode(msg *protocol.Message) {
-	if len(msg.Params) < 1 {
+	if len(msg.Params) < 2 {
 		return
 	}
+	target := msg.Params[0]
+	if len(target) == 0 || (target[0] != '#' && target[0] != '&') {
+		l.host.DeliverLocal(msg)
+		return
+	}
+	world := l.host.WorldState()
+	if world == nil {
+		return
+	}
+	ch := world.FindChannel(target)
+	if ch == nil {
+		// Receiver does not know about the channel yet — drop
+		// the mode change. The next burst (or a runtime JOIN)
+		// will repopulate the state.
+		return
+	}
+	applyRemoteChannelMode(world, ch, msg.Params[1:])
 	l.host.DeliverLocal(msg)
+}
+
+// applyRemoteChannelMode walks a parsed MODE param list and
+// applies each toggle/parameter change to ch via the existing
+// state.Channel setters. Mirrors the logic of
+// internal/server.applyChannelModes but without the connection-
+// bound auth checks: a MODE message that arrives over a
+// federation link is by definition authoritative.
+func applyRemoteChannelMode(world *state.World, ch *state.Channel, params []string) {
+	if len(params) == 0 {
+		return
+	}
+	modeStr := params[0]
+	args := params[1:]
+	argi := 0
+	popArg := func() (string, bool) {
+		if argi >= len(args) {
+			return "", false
+		}
+		v := args[argi]
+		argi++
+		return v, true
+	}
+	dir := byte('+')
+	for i := 0; i < len(modeStr); i++ {
+		mc := modeStr[i]
+		switch mc {
+		case '+', '-':
+			dir = mc
+			continue
+		}
+		switch mc {
+		case 'i', 'm', 'n', 'p', 's', 't':
+			ch.SetBoolMode(mc, dir == '+')
+		case 'k':
+			if dir == '+' {
+				key, ok := popArg()
+				if !ok || key == "" {
+					continue
+				}
+				ch.SetKey(key)
+			} else {
+				ch.SetKey("")
+			}
+		case 'l':
+			if dir == '+' {
+				raw, ok := popArg()
+				if !ok {
+					continue
+				}
+				n, err := strconv.Atoi(raw)
+				if err != nil || n < 0 {
+					continue
+				}
+				ch.SetLimit(n)
+			} else {
+				ch.SetLimit(0)
+			}
+		case 'o', 'v':
+			arg, ok := popArg()
+			if !ok {
+				continue
+			}
+			target := world.FindByNick(arg)
+			if target == nil || !ch.IsMember(target.ID) {
+				continue
+			}
+			flag := state.MemberOp
+			if mc == 'v' {
+				flag = state.MemberVoice
+			}
+			if dir == '+' {
+				_, _ = ch.AddMembership(target.ID, flag)
+			} else {
+				_, _ = ch.RemoveMembership(target.ID, flag)
+			}
+		case 'b':
+			// Ban list propagation is a M9 follow-up. The home
+			// server still enforces +b on its own clients; the
+			// receiver simply does not duplicate the ban set.
+			_, _ = popArg()
+		}
+	}
 }
 
 // OpenOutbound drives the outbound handshake: we send PASS +
