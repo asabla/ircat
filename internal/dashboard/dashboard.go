@@ -10,6 +10,7 @@ package dashboard
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -146,6 +147,31 @@ func (s *Server) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("dashboard listen %s: %w", addr, err)
 	}
+
+	// Optional in-process TLS termination. The operator may
+	// instead front the dashboard with a reverse proxy and leave
+	// dashboard.tls.enabled false; both deployment modes are
+	// supported. When enabled we wrap the underlying TCP
+	// listener in a tls.Listener so the standard http.Server
+	// path stays untouched.
+	tlsCfg := s.cfg.Dashboard.TLS
+	if tlsCfg.Enabled {
+		if tlsCfg.CertFile == "" || tlsCfg.KeyFile == "" {
+			_ = ln.Close()
+			return errors.New("dashboard: tls.enabled but cert_file/key_file are empty")
+		}
+		cert, err := tls.LoadX509KeyPair(tlsCfg.CertFile, tlsCfg.KeyFile)
+		if err != nil {
+			_ = ln.Close()
+			return fmt.Errorf("dashboard tls keypair: %w", err)
+		}
+		ln = tls.NewListener(ln, &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS12,
+		})
+		s.logger.Info("dashboard tls enabled")
+	}
+
 	s.listenerMu.Lock()
 	s.listener = ln
 	s.listenerMu.Unlock()
@@ -157,7 +183,7 @@ func (s *Server) Run(ctx context.Context) error {
 		ErrorLog:          nil, // suppress stdlib log; we use slog via the handler
 	}
 
-	s.logger.Info("dashboard listener bound", "address", ln.Addr().String())
+	s.logger.Info("dashboard listener bound", "address", ln.Addr().String(), "tls", tlsCfg.Enabled)
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- s.httpServer.Serve(ln) }()
