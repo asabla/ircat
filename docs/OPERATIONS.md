@@ -173,6 +173,42 @@ class — run the benchmark against your own database to get a
 local figure. The benchmark Skip's cleanly when
 `IRCAT_TEST_POSTGRES_DSN` is unset.
 
+### Soak harness
+
+`tests/soak/` is a small Go binary that opens N concurrent IRC
+connections, joins each to M channels, and runs a sustained
+PRIVMSG load against a real ircat instance for the configured
+duration. Use it for quick load smoke tests during development
+and as the basis for the v1.1 nightly soak job.
+
+```sh
+# Smoke test (≈5 seconds, no harm to run on a dev box):
+go run ./tests/soak \
+  -addr 127.0.0.1:6667 \
+  -conns 100 \
+  -channels 10 \
+  -msgs-per-sec 500 \
+  -duration 5s
+
+# Reference v1.1 soak (run against the production-style stack
+# with raised file-descriptor limits):
+go run ./tests/soak \
+  -addr 127.0.0.1:6667 \
+  -conns 10000 \
+  -channels 1000 \
+  -msgs-per-sec 5000 \
+  -duration 24h \
+  -max-drop-rate 0.001
+```
+
+The harness reports `sent / received / drops / rate` and exits
+non-zero when the drop rate exceeds `-max-drop-rate` (default
+1 %). Server-side memory observation is the operator's job —
+scrape `ircat_messages_in_total` and process RSS via
+`/metrics`, or run `top -p $(pidof ircat)` in a side window.
+The harness intentionally does not measure the server's RSS
+itself because it runs in a separate process.
+
 ## Disaster recovery exercise
 
 Run this drill quarterly. The exit criterion is "the new node serves
