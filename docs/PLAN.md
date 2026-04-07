@@ -166,26 +166,47 @@ Deferred to v1.2:
 
 **Goal:** clean up everything that v1.0 left scuffed.
 
-- **TLS termination on the dashboard listener.** The recommended
-  v1.0 deployment fronts the dashboard with a reverse proxy. Make
-  in-tree TLS work too, so the operator can opt out of the proxy
-  layer. Reuse the existing `dashboard.tls.{cert_file,key_file}`
-  fields that already round-trip through the config loader.
-- **Reload-on-SIGHUP.** v1.0 documents which config sections are
-  hot-reloadable but only the MOTD is actually wired. Wire
-  `logging.level`, `operators` (statically configured ones), and
-  the bot list. Everything else still requires a restart.
-- **`/api/v1/config/reload` admin endpoint.** Same surface as
-  SIGHUP but addressable from the API.
-- **Release plumbing.** GoReleaser config, container image
-  signing (cosign), SBOM generation, an `installer.sh` that
-  fetches the latest tagged binary and a sample compose file.
-- **Migration guide v1.0 → v1.1.** Empty section unless M9 ends
-  up needing a TS-field migration on the persistent state — in
-  which case the guide explains the cold-restart upgrade path.
+Shipped:
+- **Dashboard in-process TLS termination.** Wires the existing
+  `dashboard.tls.{cert_file,key_file}` fields so the operator
+  can opt out of the reverse-proxy layer. Fail-closed on a
+  misconfigured cert path. Both the proxy and in-process modes
+  remain supported.
+- **SIGHUP reload + `POST /api/v1/config/reload`.**
+  `internal/logging` gains `NewWithLevel` returning a
+  `*slog.LevelVar` so the cmd path can flip the level at
+  runtime. The reload entry point lives in `cmd/ircat/reload.go`
+  and rewires `logging.level`, statically configured operators,
+  and the MOTD file. The api package gains a small `Reloader`
+  interface that the cmd path satisfies, plus a bearer-token
+  POST handler that runs through the same code path SIGHUP
+  triggers. A misconfigured reload leaves the previous state
+  intact and surfaces the parse error in both the response body
+  and the audit log.
+- **Migration guide.** `docs/UPGRADE-v1.0-to-v1.1.md` walks
+  through every change a v1.0 operator will see, organised by
+  what changes automatically vs what they can opt into. The
+  headline message: in-place upgrade, no config changes
+  required, no migrations.
+- **Release plumbing.** `.goreleaser.yaml` drives the cross-
+  platform build (linux + darwin, amd64 + arm64), the multi-
+  arch container image push to ghcr.io, syft SBOM generation,
+  and cosign keyless signing of both the checksums.txt blob
+  and the container manifest. `scripts/install.sh` is a
+  POSIX-sh bootstrap that resolves the latest tag from the
+  GitHub API, verifies the SHA-256 against checksums.txt, and
+  installs the binary; optional cosign signature verification
+  via `IRCAT_VERIFY=1`. `.github/workflows/release.yml` runs
+  goreleaser on every `v*` tag with the qemu/buildx/cosign
+  action chain and uses GitHub OIDC for keyless signing so no
+  key material lives in the repo. A follow-up install-smoke
+  job runs the just-published install.sh inside an alpine
+  container so a broken release script surfaces immediately.
 
-**Exit:** `git tag v1.1.0` cuts a signed release whose changelog
-covers M9 → M12 in operator-readable language.
+**Exit:** `git tag v1.1.0` cuts a release whose pipeline
+produces signed cross-platform archives, a multi-arch container
+image on ghcr.io, syft SBOMs, and a cosign keyless signature
+over checksums.txt and the container manifest. ✅
 
 ---
 
