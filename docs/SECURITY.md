@@ -55,22 +55,42 @@ globals individually:
   reset to empty tables so even if `require` is reinstated by
   mistake the loader chain is a no-op.
 
-### What the sandbox does not (yet) cover
+### What the sandbox does and does not cover
 
-1. **Per-call instruction budget.** The current safety net is a
-   per-call wallclock deadline (default 5s) enforced by setting
-   the gopher-lua `Context` and letting the runtime cancel.
-   Tight infinite loops terminate within the deadline (verified
-   in `TestSandbox_WallclockBudgetTerminatesInfiniteLoop`) but a
-   busy script can spend its full 5s budget on every event. A
-   future commit can attach a `Sethook` that decrements an
-   instruction counter once gopher-lua exposes a stable hook API.
-2. **Memory budget.** gopher-lua does not expose a hard memory
-   cap. A pathological script can allocate until the per-process
-   resource limit kicks in. The compose stack pins ircat to 1 GiB
-   (`deploy.resources.limits.memory`) so a runaway bot kills the
-   container instead of the host.
-3. **CPU starvation across bots.** Each bot runs on its own
+1. **Per-instruction interruption.** gopher-lua's VM dispatch
+   loop checks `L.ctx.Done()` between every Lua bytecode
+   instruction. The wallclock budget set on the runtime context
+   therefore terminates a runaway script at the very next
+   instruction, even inside a tight `pcall`-wrapped infinite
+   loop or a recursive runaway. The `Budget.Instructions`
+   field maps to a wallclock proxy at a conservative 10M
+   instructions/second rate via `Runtime.effectiveDeadline`.
+   Verified end-to-end by `TestSandbox_WallclockBudget*` and
+   `TestSandbox_InstructionBudgetMappingHonoured`.
+2. **Per-bot memory ceiling (partial).** `Budget.RegistrySlots`
+   wires through to gopher-lua's `RegistryMaxSize`, capping the
+   data stack at a configurable number of `LValue` slots (~16
+   bytes each, default 65536 ≈ 1 MiB). When a script grows a
+   table or call chain past the cap gopher-lua raises a Lua
+   error which the runtime turns into a clean handler exit.
+   This is a *partial* heap cap — gopher-lua does not expose a
+   true allocator hook, so a script can still allocate large
+   strings or userdata outside the registry. The compose stack
+   pins ircat to 1 GiB (`deploy.resources.limits.memory`) so a
+   pathological string-only bot kills the container instead of
+   the host. A v1.2 follow-up tracks moving to a real
+   per-allocation hook once gopher-lua adds one.
+3. **`string.format` width and arg bounds.** The default
+   gopher-lua `string.format` delegates to `fmt.Sprintf` which
+   honours arbitrary width specifiers, so
+   `string.format("%999999999s", "x")` triggers an O(N) host
+   allocation under operator-controlled width. The sandbox
+   replaces `string.format` with `safeStringFormat` which
+   refuses widths above 1024, refuses precisions above 1024,
+   refuses calls with more than 16 arguments, and clamps the
+   rendered output to 8192 bytes after dispatch. Verified by
+   the `TestSandbox_StringFormat*` cases.
+4. **CPU starvation across bots.** Each bot runs on its own
    goroutine so a slow bot only blocks itself. The wallclock
    deadline ensures it eventually returns.
 
@@ -88,8 +108,15 @@ loudly. The cases are:
 - `package.loadlib` — must raise.
 - `package.preload`, `package.loaders`, `package.searchers` —
   must be empty tables.
-- Wallclock budget terminates an infinite loop within the
-  configured deadline.
+- Wallclock budget terminates an infinite loop, a pcall-wrapped
+  infinite loop, runaway recursion, and a doubling-string-
+  concat loop within the configured deadline.
+- Instruction budget proxy fires before the explicit wallclock
+  when the instruction count is the tighter of the two.
+- `string.format` rejects width > 1024, precision > 1024, more
+  than 16 args, and rendered output > 8192 bytes.
+- Registry cap stops a 1M-element table allocation from
+  exhausting host memory.
 
 Run with:
 

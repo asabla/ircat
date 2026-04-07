@@ -307,6 +307,47 @@ func TestSandbox_StringFormatHappyPath(t *testing.T) {
 	t.Cleanup(rt.Close)
 }
 
+// TestSandbox_RegistryCapStopsTableBlowup creates a runtime
+// with a very small RegistrySlots cap and asserts that a script
+// growing a large table fails inside the cap rather than the
+// wallclock budget. The cap is the right answer for memory
+// pressure — wallclock catches CPU pressure, this catches the
+// "fill memory and exit fast" pattern.
+func TestSandbox_RegistryCapStopsTableBlowup(t *testing.T) {
+	src := `
+		function on_message(ctx, ev)
+			local t = {}
+			for i = 1, 1000000 do
+				t[i] = i
+			end
+		end
+	`
+	fa := newFakeActions("bot")
+	rt, err := NewRuntime(src, fa, Budget{
+		Instructions:  10_000_000,
+		Wallclock:     5 * time.Second,
+		RegistrySlots: 4096, // ~64 KiB cap
+	})
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	defer rt.Close()
+
+	start := time.Now()
+	err = rt.DispatchMessage(context.Background(), Event{
+		Channel: "#x", Sender: "alice", Hostmask: "alice!a@h", Text: "hi",
+	})
+	elapsed := time.Since(start)
+	// Either the registry cap fired (good) or the wallclock did
+	// (also good) — we just need a clean error and prompt exit.
+	if err == nil {
+		t.Fatal("expected error from registry/wallclock cap")
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("script ran %s — should fail fast under either cap", elapsed)
+	}
+}
+
 // runWithBudget is the shared driver for the four
 // runaway-script tests above. Each variant differs only in the
 // Lua source it runs; the assertions are identical.

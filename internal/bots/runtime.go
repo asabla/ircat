@@ -55,14 +55,22 @@ type Budget struct {
 	Instructions int
 	// Wallclock is the per-event wall-clock deadline.
 	Wallclock time.Duration
+	// RegistrySlots caps the gopher-lua data stack at
+	// construction time. Each slot is one LValue (~16 bytes on
+	// 64-bit), so 65536 slots ≈ 1 MiB of VM-side state. Zero
+	// falls back to DefaultBudget. The cap is a partial
+	// substitute for a true heap ceiling — see docs/SECURITY.md
+	// for the trade-offs and v1.2 follow-ups.
+	RegistrySlots int
 }
 
 // DefaultBudget returns the conservative defaults used when a bot
 // does not supply its own.
 func DefaultBudget() Budget {
 	return Budget{
-		Instructions: 1_000_000,
-		Wallclock:    5 * time.Second,
+		Instructions:  1_000_000,
+		Wallclock:     5 * time.Second,
+		RegistrySlots: 65_536, // ≈1 MiB of VM stack
 	}
 }
 
@@ -110,16 +118,33 @@ func NewRuntime(source string, actions Actions, budget Budget) (*Runtime, error)
 	if actions == nil {
 		return nil, errors.New("bots: actions required")
 	}
-	if budget.Instructions == 0 || budget.Wallclock == 0 {
-		def := DefaultBudget()
-		if budget.Instructions == 0 {
-			budget.Instructions = def.Instructions
-		}
-		if budget.Wallclock == 0 {
-			budget.Wallclock = def.Wallclock
-		}
+	def := DefaultBudget()
+	if budget.Instructions == 0 {
+		budget.Instructions = def.Instructions
 	}
-	L := lua.NewState(lua.Options{SkipOpenLibs: true})
+	if budget.Wallclock == 0 {
+		budget.Wallclock = def.Wallclock
+	}
+	if budget.RegistrySlots == 0 {
+		budget.RegistrySlots = def.RegistrySlots
+	}
+	// Cap the gopher-lua data stack so a script that grows a
+	// pathological table or call chain hits a hard ceiling
+	// before exhausting host memory. RegistrySize is the initial
+	// allocation; RegistryMaxSize is the absolute upper bound;
+	// gopher-lua refuses to grow past the max and raises an
+	// error inside the script, which our wallclock cancellation
+	// path then turns into a clean handler exit.
+	initialSlots := 1024
+	if initialSlots > budget.RegistrySlots {
+		initialSlots = budget.RegistrySlots
+	}
+	L := lua.NewState(lua.Options{
+		SkipOpenLibs:     true,
+		RegistrySize:     initialSlots,
+		RegistryMaxSize:  budget.RegistrySlots,
+		RegistryGrowStep: 1024,
+	})
 	// Open only the libraries that are safe in a sandbox. We
 	// deliberately skip io, os, debug, package (the raw loader) and
 	// the require loader.
