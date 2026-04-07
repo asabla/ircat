@@ -30,6 +30,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/asabla/ircat/internal/protocol"
 	"github.com/asabla/ircat/internal/state"
@@ -290,6 +291,12 @@ func (l *Link) dispatch(msg *protocol.Message) {
 		l.handleRemoteJoin(msg)
 	case "PART":
 		l.handleRemotePart(msg)
+	case "KICK":
+		l.handleRemoteKick(msg)
+	case "TOPIC":
+		l.handleRemoteTopic(msg)
+	case "MODE":
+		l.handleRemoteMode(msg)
 	case "PING":
 		// Reply inline; PING over S2S carries the remote server
 		// name in the trailing param.
@@ -399,12 +406,16 @@ func (l *Link) handleRemoteNick(msg *protocol.Message) {
 		return
 	}
 	if len(msg.Params) == 1 && msg.Prefix != "" {
-		// Nickname change for an existing remote user.
+		// Nickname change for an existing remote user. Deliver
+		// to local channel members BEFORE the rename so the
+		// per-user fan-out can still resolve the old nick to the
+		// user record.
 		oldNick := senderFromPrefix(msg.Prefix)
 		u := world.FindByNick(oldNick)
 		if u == nil || !u.IsRemote() {
 			return
 		}
+		l.host.DeliverLocal(msg)
 		_ = world.RenameUser(u.ID, msg.Params[0])
 		return
 	}
@@ -437,6 +448,9 @@ func (l *Link) handleRemoteQuit(msg *protocol.Message) {
 	if u == nil || !u.IsRemote() {
 		return
 	}
+	// Deliver before removing so deliverPerUserChannels can still
+	// resolve the user and walk the channels they belonged to.
+	l.host.DeliverLocal(msg)
 	world.RemoveUser(u.ID)
 }
 
@@ -485,6 +499,64 @@ func (l *Link) handleRemotePart(msg *protocol.Message) {
 	}
 	l.host.DeliverLocal(msg)
 	_, _, _ = world.PartChannel(u.ID, msg.Params[0])
+}
+
+// handleRemoteKick ingests a peer KICK and removes the victim
+// from the channel locally. The victim is identified by nickname
+// and may live on either side of the link — the only operation
+// the receiver performs on the world is the membership drop.
+func (l *Link) handleRemoteKick(msg *protocol.Message) {
+	if len(msg.Params) < 2 {
+		return
+	}
+	world := l.host.WorldState()
+	if world == nil {
+		return
+	}
+	channelName := msg.Params[0]
+	victimNick := msg.Params[1]
+	victim := world.FindByNick(victimNick)
+	if victim == nil {
+		return
+	}
+	// Deliver before removing so the victim (if local) and every
+	// other channel member sees the KICK before the membership
+	// state changes.
+	l.host.DeliverLocal(msg)
+	_, _, _ = world.PartChannel(victim.ID, channelName)
+}
+
+// handleRemoteTopic applies a TOPIC change forwarded from a peer.
+// The receiver mirrors the new topic into its own channel record
+// and fans the message out to local members so they see the same
+// announcement they would have received from a local TOPIC.
+func (l *Link) handleRemoteTopic(msg *protocol.Message) {
+	if len(msg.Params) < 2 {
+		return
+	}
+	world := l.host.WorldState()
+	if world == nil {
+		return
+	}
+	ch := world.FindChannel(msg.Params[0])
+	if ch == nil {
+		return
+	}
+	ch.SetTopic(msg.Params[1], msg.Prefix, time.Now())
+	l.host.DeliverLocal(msg)
+}
+
+// handleRemoteMode applies a MODE change forwarded from a peer.
+// For M7 we only fan it out to local members; we do not re-apply
+// the mode bits on the receiving side because the burst does not
+// yet carry channel modes either. Treat MODE as an event peers
+// observe rather than a state mutation, with the authoritative
+// copy living on the channel's home server.
+func (l *Link) handleRemoteMode(msg *protocol.Message) {
+	if len(msg.Params) < 1 {
+		return
+	}
+	l.host.DeliverLocal(msg)
 }
 
 // OpenOutbound drives the outbound handshake: we send PASS +

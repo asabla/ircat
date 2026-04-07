@@ -90,7 +90,7 @@ func (s *Server) DeliverLocal(msg *protocol.Message) {
 		if c := s.connFor(u.ID); c != nil {
 			c.send(msg)
 		}
-	case "JOIN", "PART":
+	case "JOIN", "PART", "KICK", "TOPIC", "MODE":
 		if len(msg.Params) < 1 {
 			return
 		}
@@ -169,29 +169,50 @@ func (s *Server) deliverChannelLocalOnly(ch *state.Channel, msg *protocol.Messag
 
 // broadcastToChannelFederated is the federation-aware wrapper
 // around broadcastToChannel. The base broadcastToChannel handles
-// local delivery; this helper additionally forwards to every
-// distinct remote server that hosts a member of the channel,
-// sending the message over each link exactly once so loops are
-// impossible even when multiple remote users share a home server.
+// local delivery; this helper additionally forwards the message
+// to every active federation peer.
+//
+// For M7 MVP we send to every peer rather than only peers with a
+// member in the channel: dedup-by-channel-member has a chicken-
+// and-egg problem (we cannot forward a JOIN until a remote user
+// has already joined, which never happens). Receiving peers that
+// have no local members for the channel simply drop the message
+// in their DeliverLocal path, so the wire cost is the only loss.
+// A future commit can introduce subscription-based routing.
 func (s *Server) broadcastToChannelFederated(ch *state.Channel, msg *protocol.Message, exceptID state.UserID, includeSelf bool) {
 	s.broadcastToChannel(ch, msg, exceptID, includeSelf)
+	s.forwardToAllLinks(msg)
+}
 
-	s.fedMu.RLock()
-	defer s.fedMu.RUnlock()
-	if len(s.fedLinks) == 0 {
+// announceUserToFederation broadcasts a burst-form NICK line for a
+// newly-registered local user so every peer can add them to their
+// world. The seven-param shape matches what sendBurst emits at
+// link-up time, so the receiving Link.handleRemoteNick path
+// reuses the same code that ingests bursted users.
+func (s *Server) announceUserToFederation(u *state.User) {
+	if u == nil {
 		return
 	}
-	seen := make(map[string]bool, len(s.fedLinks))
-	for id := range ch.MemberIDs() {
-		u := s.world.FindByID(id)
-		if u == nil || !u.IsRemote() {
-			continue
-		}
-		if seen[u.HomeServer] {
-			continue
-		}
-		seen[u.HomeServer] = true
-		if link := s.fedLinks[u.HomeServer]; link != nil {
+	modes := u.Modes
+	msg := &protocol.Message{
+		Prefix:  s.cfg.Server.Name,
+		Command: "NICK",
+		Params: []string{
+			u.Nick, "1", u.User, u.Host, s.cfg.Server.Name, "+" + modes, u.Realname,
+		},
+	}
+	s.forwardToAllLinks(msg)
+}
+
+// forwardToAllLinks sends msg to every active federation link.
+// Used for events that have no single channel target — NICK
+// changes and QUIT — because every peer's world holds a copy of
+// the affected user (the burst sent the full local user set).
+func (s *Server) forwardToAllLinks(msg *protocol.Message) {
+	s.fedMu.RLock()
+	defer s.fedMu.RUnlock()
+	for _, link := range s.fedLinks {
+		if link != nil {
 			link.Send(msg)
 		}
 	}

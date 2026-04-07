@@ -96,7 +96,7 @@ func (c *Conn) handleChannelMode(name string, params []string) {
 		Command: "MODE",
 		Params:  out,
 	}
-	c.server.broadcastToChannel(ch, msg, 0, true)
+	c.server.broadcastToChannelFederated(ch, msg, 0, true)
 }
 
 // applied accumulates a successful run of mode changes so the

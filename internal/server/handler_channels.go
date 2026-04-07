@@ -103,7 +103,7 @@ func (c *Conn) joinOne(name, key string) {
 		Command: "JOIN",
 		Params:  []string{ch.Name()},
 	}
-	c.server.broadcastToChannel(ch, joinMsg, 0, true)
+	c.server.broadcastToChannelFederated(ch, joinMsg, 0, true)
 
 	// Topic burst (only to the joiner).
 	c.sendTopicState(ch)
@@ -315,7 +315,7 @@ func (c *Conn) partOne(name, reason string) {
 		partMsg.Params = []string{ch.Name(), reason}
 	}
 	// Broadcast to every member, including the parting user.
-	c.server.broadcastToChannel(ch, partMsg, 0, true)
+	c.server.broadcastToChannelFederated(ch, partMsg, 0, true)
 
 	if _, _, err := c.server.world.PartChannel(c.user.ID, name); err != nil {
 		c.logger.Warn("PartChannel failed", "error", err, "channel", name)
@@ -408,7 +408,7 @@ func (c *Conn) kickOne(channelName, targetNick, reason string) {
 		"victim": target.Nick,
 		"reason": reason,
 	})
-	c.server.broadcastToChannel(ch, kickMsg, 0, true)
+	c.server.broadcastToChannelFederated(ch, kickMsg, 0, true)
 	if _, _, err := c.server.world.PartChannel(target.ID, ch.Name()); err != nil {
 		c.logger.Warn("kick remove failed", "error", err)
 	}
@@ -482,7 +482,7 @@ func (c *Conn) handleTopic(m *protocol.Message) {
 		Command: "TOPIC",
 		Params:  []string{ch.Name(), text},
 	}
-	c.server.broadcastToChannel(ch, topicMsg, 0, true)
+	c.server.broadcastToChannelFederated(ch, topicMsg, 0, true)
 }
 
 // validChannelName enforces the loose RFC 2812 channel name grammar:

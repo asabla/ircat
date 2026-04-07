@@ -155,6 +155,9 @@ func (c *Conn) handleNick(m *protocol.Message) {
 		// Always echo to the renamer themselves last so they see
 		// the confirmation after any peers process it.
 		c.send(nickMsg)
+		// Forward the NICK change to every federation peer so
+		// remote nodes can rename their copy of the user.
+		c.server.forwardToAllLinks(nickMsg)
 		return
 	}
 

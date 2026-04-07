@@ -219,6 +219,10 @@ func (c *Conn) broadcastQuit(reason string) {
 		// the world will drop it.
 		_, _, _ = c.server.world.PartChannel(c.user.ID, ch.Name())
 	}
+	// Forward the QUIT to every federation peer so remote nodes
+	// can drop their copy of the user. Done after the local fan-
+	// out so a slow link cannot delay our local cleanup.
+	c.server.forwardToAllLinks(quitMsg)
 }
 
 // readLoop reads CRLF-delimited lines, parses them, and dispatches

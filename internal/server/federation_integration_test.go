@@ -208,43 +208,24 @@ func TestFederation_TwoNodesPrivmsgAcrossLink(t *testing.T) {
 	cBob.Write([]byte("NICK bob\r\nUSER bob 0 * :Bob\r\n"))
 	expectNumeric(t, cBob, rBob, "422", time.Now().Add(2*time.Second))
 
-	// Node A should see "bob" as a remote user after the burst
-	// (which reran when alice registered? actually the burst
-	// happens at link-up, so alice and bob are NOT in the burst).
-	//
-	// For M7 MVP the burst is static (at handshake time). Users
-	// that connect AFTER the burst have to be propagated by
-	// runtime NICK messages. The M7 scope does not cover that
-	// yet, so the test pre-registers alice/bob via the world
-	// directly on BOTH sides to simulate a post-burst propagation.
-
-	// Inject alice into B's world as a remote user.
-	if _, err := srvB.world.AddUser(&state.User{
-		Nick:       "alice",
-		User:       "alice",
-		Host:       "127.0.0.1",
-		Realname:   "Alice",
-		Registered: true,
-		HomeServer: "node-a",
-	}); err != nil {
-		t.Fatalf("inject alice remotely: %v", err)
+	// alice and bob are propagated to the opposite node via the
+	// runtime NICK announce that fires on registration completion.
+	// Wait for both sides to see each other before issuing the
+	// channel JOINs.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if srvA.world.FindByNick("bob") != nil && srvB.world.FindByNick("alice") != nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	// Inject bob into A's world as a remote user.
-	if _, err := srvA.world.AddUser(&state.User{
-		Nick:       "bob",
-		User:       "bob",
-		Host:       "127.0.0.1",
-		Realname:   "Bob",
-		Registered: true,
-		HomeServer: "node-b",
-	}); err != nil {
-		t.Fatalf("inject bob remotely: %v", err)
+	if srvA.world.FindByNick("bob") == nil || srvB.world.FindByNick("alice") == nil {
+		t.Fatal("user runtime announce did not propagate over federation")
 	}
 
-	// Both join #fed. On node A, alice joins and bob is a remote
-	// member. On node B, bob joins and alice is a remote member.
-	// Run JOIN via the IRC client on both sides for the local
-	// halves; membership for the remote halves is set up manually.
+	// Both join #fed via the IRC client; the JOIN propagates over
+	// federation so each side picks up the other as a channel
+	// member without any manual injection.
 	cAlice.Write([]byte("JOIN #fed\r\n"))
 	readUntil(t, cAlice, rAlice, time.Now().Add(2*time.Second), func(l string) bool {
 		return extractNumeric(l) == "366"
@@ -253,24 +234,6 @@ func TestFederation_TwoNodesPrivmsgAcrossLink(t *testing.T) {
 	readUntil(t, cBob, rBob, time.Now().Add(2*time.Second), func(l string) bool {
 		return extractNumeric(l) == "366"
 	})
-
-	// Add remote members directly to the channel maps so the
-	// broadcast path sees them as present. This simulates what
-	// the federation burst / JOIN propagation would do.
-	chB := srvB.world.FindChannel("#fed")
-	bobRemoteA := srvA.world.FindByNick("bob")
-	aliceRemoteB := srvB.world.FindByNick("alice")
-	chA := srvA.world.FindChannel("#fed")
-	if chA == nil || chB == nil || bobRemoteA == nil || aliceRemoteB == nil {
-		t.Fatalf("missing setup: chA=%v chB=%v bobRemoteA=%v aliceRemoteB=%v",
-			chA, chB, bobRemoteA, aliceRemoteB)
-	}
-	if _, _, _, err := srvA.world.JoinChannel(bobRemoteA.ID, "#fed"); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, _, err := srvB.world.JoinChannel(aliceRemoteB.ID, "#fed"); err != nil {
-		t.Fatal(err)
-	}
 
 	// Alice sends PRIVMSG #fed :hello. Bob on node B should
 	// receive it via federation.
@@ -288,4 +251,121 @@ func TestFederation_TwoNodesPrivmsgAcrossLink(t *testing.T) {
 			strings.Contains(line, " PRIVMSG #fed ") &&
 			strings.HasSuffix(line, ":hi from B")
 	})
+}
+
+// TestFederation_RuntimePropagation drives JOIN, NICK, and QUIT
+// across two real federated servers. Unlike the static-burst test
+// above, this one does not pre-inject remote users into either
+// world — it relies on the runtime propagation hooks (M7 task #80)
+// to forward each event over the link, so a missing hook fails
+// the test by stalling on the readUntil for the receiving side.
+func TestFederation_RuntimePropagation(t *testing.T) {
+	addrA, srvA, closeA := buildFederationPeer(t, "node-a")
+	defer closeA()
+	addrB, srvB, closeB := buildFederationPeer(t, "node-b")
+	defer closeB()
+
+	closeLink := linkTwoServers(t, srvA, srvB)
+	defer closeLink()
+
+	// Both clients connect AFTER the link is up so the burst is
+	// empty. Every cross-node visibility from here on has to come
+	// from runtime propagation.
+	cAlice, rAlice := dialClient(t, addrA)
+	defer cAlice.Close()
+	cAlice.Write([]byte("NICK alice\r\nUSER alice 0 * :Alice\r\n"))
+	expectNumeric(t, cAlice, rAlice, "422", time.Now().Add(2*time.Second))
+
+	cBob, rBob := dialClient(t, addrB)
+	defer cBob.Close()
+	cBob.Write([]byte("NICK bob\r\nUSER bob 0 * :Bob\r\n"))
+	expectNumeric(t, cBob, rBob, "422", time.Now().Add(2*time.Second))
+
+	// alice's NICK registration must propagate to node-b's world
+	// as a remote user with HomeServer=node-a (and vice versa).
+	waitForRemote := func(t *testing.T, srv *Server, nick, home string) {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			u := srv.world.FindByNick(nick)
+			if u != nil && u.IsRemote() && u.HomeServer == home {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatalf("%s never appeared on %s as remote home=%s", nick, srv.cfg.Server.Name, home)
+	}
+	waitForRemote(t, srvB, "alice", "node-a")
+	waitForRemote(t, srvA, "bob", "node-b")
+
+	// alice joins #runtime first; then bob joins. Bob's JOIN
+	// should be visible to alice via federation propagation.
+	cAlice.Write([]byte("JOIN #runtime\r\n"))
+	readUntil(t, cAlice, rAlice, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "366"
+	})
+
+	cBob.Write([]byte("JOIN #runtime\r\n"))
+	readUntil(t, cBob, rBob, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "366"
+	})
+
+	// alice should observe bob's remote JOIN as a JOIN line on
+	// her socket.
+	readUntil(t, cAlice, rAlice, time.Now().Add(3*time.Second), func(line string) bool {
+		return strings.HasPrefix(line, ":bob!") &&
+			strings.Contains(line, " JOIN ") &&
+			strings.Contains(line, "#runtime")
+	})
+
+	// Cross-channel PRIVMSG without manual injection.
+	cAlice.Write([]byte("PRIVMSG #runtime :hi runtime\r\n"))
+	readUntil(t, cBob, rBob, time.Now().Add(3*time.Second), func(line string) bool {
+		return strings.HasPrefix(line, ":alice!") &&
+			strings.Contains(line, " PRIVMSG #runtime ") &&
+			strings.HasSuffix(line, ":hi runtime")
+	})
+
+	// alice changes her nick. bob should see the NICK line.
+	cAlice.Write([]byte("NICK alice2\r\n"))
+	readUntil(t, cBob, rBob, time.Now().Add(3*time.Second), func(line string) bool {
+		return strings.HasPrefix(line, ":alice!") &&
+			strings.Contains(line, " NICK ") &&
+			strings.HasSuffix(line, "alice2")
+	})
+
+	// Verify B's world reflects the rename.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if srvB.world.FindByNick("alice2") != nil && srvB.world.FindByNick("alice") == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if srvB.world.FindByNick("alice2") == nil {
+		t.Fatal("alice rename did not propagate to node-b")
+	}
+	if srvB.world.FindByNick("alice") != nil {
+		t.Fatal("old nick still present on node-b after rename")
+	}
+
+	// alice2 parts. bob should see PART.
+	cAlice.Write([]byte("PART #runtime :see ya\r\n"))
+	readUntil(t, cBob, rBob, time.Now().Add(3*time.Second), func(line string) bool {
+		return strings.HasPrefix(line, ":alice2!") &&
+			strings.Contains(line, " PART ") &&
+			strings.Contains(line, "#runtime")
+	})
+
+	// alice2 quits. bob receives no QUIT in #runtime (alice2 left
+	// already), but the world drop must still happen.
+	cAlice.Write([]byte("QUIT :bye\r\n"))
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if srvB.world.FindByNick("alice2") == nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("alice2 quit did not propagate to node-b world")
 }

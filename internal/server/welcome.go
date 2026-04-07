@@ -67,6 +67,7 @@ func (c *Conn) tryCompleteRegistration() {
 	c.user = user
 	c.server.registerConn(c)
 	c.logger.Info("registered", "nick", user.Nick, "user", user.User)
+	c.server.announceUserToFederation(user)
 	c.sendWelcomeBurst()
 }
 
