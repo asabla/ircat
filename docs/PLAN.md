@@ -25,45 +25,45 @@ SERVICE pseudo-server, full SQUIT recovery) live in v1.2+.
 **Goal:** the federation transport stops being "MVP" and starts
 being production.
 
-- **Channel mode burst + ongoing MODE re-application on the
-  receiver.** v1.0 forwards MODE lines but does not re-apply the
-  bits, so a remote peer's view of `+t`/`+i`/`+k` drifts from the
-  home server. Add a mode burst to `sendBurst` and have
-  `handleRemoteMode` apply the changes via the existing
-  `applyMode` machinery.
-- **TS-based collision resolution.** Today the second user with a
-  duplicate nick or the second peer to claim a channel just wins
-  by accident. Add a per-record TS field, propagate it in burst
-  and live messages, and use the lower TS as the tiebreaker per
-  RFC 2813.
-- **SQUIT recovery beyond "drop the link and forget".** When a
-  peer goes away, the local node should:
-  1. Send `:server SQUIT peer :reason` to every remaining link.
-  2. Walk the world and remove every user whose `HomeServer`
-     matches the dropped peer.
-  3. Emit per-user QUIT broadcasts to every shared channel so
-     local clients see the disappearance with the right
-     hostmasks.
-  Add a `Server.HandleSquit(peerName, reason)` entry point and
-  call it from the `OnClosed` callback path.
-- **Subscription-aware federation routing.** v1.0 fans every
-  channel event to every peer. Switch to a per-channel
-  subscription set built from the burst + JOIN/PART events so
-  each event hits only peers that actually have a member in the
-  channel. Keep the v1.0 fan-everything code path behind a
-  `federation.broadcast_mode: fanout|subscription` config knob
-  for one minor cycle so a regression can be flipped off
-  without a redeploy.
-- **KILL routing across links.** Operator KILL on node A
-  currently disconnects only the local user. Forward `:nick KILL
-  target :reason` over every link and have the receiver call
-  `Server.KickUser` for the local conn or drop the remote-user
-  record otherwise.
+Shipped:
+- Channel mode burst on link-up (TOPIC + canonical mode word +
+  per-member +o/+v) and runtime MODE re-application on the
+  receiver via a new `applyRemoteChannelMode` helper that
+  forwards each toggle to the existing `state.Channel` setters.
+- SQUIT recovery on link drop and remote SQUIT propagation:
+  `Server.HandleSquit` walks the world, removes every user
+  homed on the dropped peer, fans synthetic QUITs to local
+  channel members, and forwards SQUIT to remaining links.
+- Subscription-aware channel routing with the v1.0 fanout
+  available behind `federation.broadcast_mode`. Subscriptions
+  are tracked explicitly via `Server.SubscribePeerToChannel`,
+  populated by `sendBurst` (when we tell a peer about a
+  channel) and by `handleRemoteJoin` (when a peer tells us
+  about one). JOIN remains fanned out so it can establish new
+  subscriptions.
+- KILL routing across links: local operator KILL forwards over
+  every link; receivers fan a synthetic QUIT and either
+  disconnect the local conn via the new `Host.DropLocalUser`
+  hook or drop the remote-user record. KILL is one-shot per
+  node so >2-node meshes do not loop.
+- TS-based nick collision resolution per RFC 2813. Burst NICK
+  shape carries TS as a positional param (with backward-
+  compatible v1.0 sniffing); incoming-lower wins, incoming-
+  higher gets KILL'd back to the peer. Channel JOIN burst lines
+  carry channel TS and `AdoptOlderTS` lowers the local anchor.
 
-**Exit:** a three-node federation test where node A kills a user
-on node C via node B; the user disappears on every node within
-500ms; closing node C drops every C-homed user from A and B with
-proper QUIT broadcasts.
+Deferred to v1.2:
+- Equal-TS nick collision (RFC says kill both — current code
+  keeps the existing record on equal TS, which is conservative
+  but rare at nanosecond resolution).
+- Channel TS collision *behaviour* — v1.1 propagates the TS but
+  does not yet drop op state on a peer's older claim. The next
+  cycle wires AdoptOlderTS into the membership reset path.
+- Ban list (+b) propagation across links.
+
+**Exit:** every shipped item above is in main with at least one
+integration test exercising it through two real Server
+instances. ✅
 
 ---
 
