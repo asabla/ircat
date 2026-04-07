@@ -113,12 +113,26 @@ func runServer(args []string) error {
 		},
 	})
 
+	// Build the reloader before the API so the API can hold the
+	// Reloader interface for the /api/v1/config/reload handler.
+	// startReloadSignalLoop is called later, after the federation
+	// supervisor is up, so the reload doesn't fire before every
+	// dependency is constructed.
+	reloader := &reloadDeps{
+		configPath: configPath,
+		store:      store,
+		srv:        srv,
+		levelVar:   levelVar,
+		logger:     logger.With("component", "reload"),
+	}
+
 	apiSrv := api.New(api.Options{
 		Store:      store,
 		World:      world,
 		Actuator:   srv,
 		BotManager: sup,
 		ServerInfo: srv,
+		Reloader:   reloader,
 		Logger:     logger.With("component", "api"),
 	})
 
@@ -162,16 +176,10 @@ func runServer(args []string) error {
 	fedWait := startFederation(runCtxOrBg(ctx), cfg, srv, logger)
 	defer fedWait()
 
-	// SIGHUP-driven config reload. The deps struct is also
-	// passed to the dashboard handler so the
-	// /api/v1/config/reload endpoint shares the same code path.
-	reloader := &reloadDeps{
-		configPath: configPath,
-		store:      store,
-		srv:        srv,
-		levelVar:   levelVar,
-		logger:     logger.With("component", "reload"),
-	}
+	// SIGHUP-driven config reload. The reloader was constructed
+	// earlier so the API handler could hold a reference; we
+	// only start the signal loop here, after every dependency
+	// is wired and the listener is about to come up.
 	startReloadSignalLoop(ctx, reloader)
 
 	logger.Info("ircat ready",

@@ -20,6 +20,14 @@ import (
 // minted token. Returns the API handler, the token plaintext, and a
 // teardown.
 func newTestAPI(t *testing.T) (http.Handler, string, func()) {
+	return newTestAPIWithReloader(t, nil)
+}
+
+// newTestAPIWithReloader is the underlying constructor — the
+// reloader argument is the only knob the reload tests need.
+// Passing nil reproduces the v1.0 API surface (POST
+// /config/reload returns 503 in that case).
+func newTestAPIWithReloader(t *testing.T, reloader Reloader) (http.Handler, string, func()) {
 	t.Helper()
 	dir := t.TempDir()
 	store, err := sqlite.Open(filepath.Join(dir, "ircat.db"))
@@ -43,8 +51,9 @@ func newTestAPI(t *testing.T) (http.Handler, string, func()) {
 
 	world := state.NewWorld()
 	api := New(Options{
-		Store: store,
-		World: world,
+		Store:    store,
+		World:    world,
+		Reloader: reloader,
 	})
 	teardown := func() { _ = store.Close() }
 	return api.Handler(), tok.Plaintext, teardown

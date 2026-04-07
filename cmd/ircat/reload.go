@@ -36,6 +36,12 @@ type reloadDeps struct {
 	mu sync.Mutex
 }
 
+// Reload satisfies internal/api.Reloader. It is a thin alias
+// over reloadConfig with the same locking and same fail-soft
+// semantics, exposed under the Reloader name so the api
+// package can hold the dependency without an import cycle.
+func (r *reloadDeps) Reload(ctx context.Context) error { return r.reloadConfig(ctx) }
+
 // reloadConfig re-reads the config file from disk and applies
 // the hot-reloadable sections to the running process. The
 // reloadable surface in v1.1 is:

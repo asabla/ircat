@@ -42,6 +42,7 @@ type API struct {
 	logger     *slog.Logger
 	actuator   Actuator
 	botManager BotManager
+	reloader   Reloader
 	now        func() time.Time
 	allowList  []string // optional CORS allow-list (M4 polish: defer)
 
@@ -82,6 +83,14 @@ type ServerInfoSource interface {
 // is unknown. The api package translates it to a 404 JSON envelope.
 var ErrNotFound = errors.New("api: not found")
 
+// Reloader is the small surface the API uses to trigger a
+// SIGHUP-equivalent config reload from a bearer-token POST.
+// Implemented by *cmd/ircat.reloadDeps. Optional — when nil
+// the reload endpoint returns 503.
+type Reloader interface {
+	Reload(ctx context.Context) error
+}
+
 // Options configures [New].
 type Options struct {
 	Store      storage.Store
@@ -89,6 +98,7 @@ type Options struct {
 	Actuator   Actuator
 	BotManager BotManager
 	ServerInfo ServerInfoSource
+	Reloader   Reloader
 	Logger     *slog.Logger
 }
 
@@ -104,6 +114,7 @@ func New(opts Options) *API {
 		actuator:   opts.Actuator,
 		botManager: opts.BotManager,
 		serverInfo: opts.ServerInfo,
+		reloader:   opts.Reloader,
 		logger:     logger,
 		now:        time.Now,
 	}
@@ -132,7 +143,26 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /bots", a.requireToken(a.handleCreateBot))
 	mux.HandleFunc("PUT /bots/{id}", a.requireToken(a.handleUpdateBot))
 	mux.HandleFunc("DELETE /bots/{id}", a.requireToken(a.handleDeleteBot))
+	mux.HandleFunc("POST /config/reload", a.requireToken(a.handleConfigReload))
 	return mux
+}
+
+// handleConfigReload triggers the same hot-reload code path
+// SIGHUP runs through. The body is empty; the response is a
+// JSON envelope with status: "reloaded" on success or an error
+// envelope on failure. Returns 503 if no Reloader was wired
+// (e.g. tests that construct the API in isolation).
+func (a *API) handleConfigReload(w http.ResponseWriter, r *http.Request) {
+	if a.reloader == nil {
+		writeError(w, http.StatusServiceUnavailable, "no_reloader", "reload not configured on this node")
+		return
+	}
+	if err := a.reloader.Reload(r.Context()); err != nil {
+		a.logger.Warn("config reload failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "reload_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "reloaded"})
 }
 
 // ----- middleware ------------------------------------------------
