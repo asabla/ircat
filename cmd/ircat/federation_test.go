@@ -2,7 +2,18 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/hex"
+	"encoding/pem"
+	"math/big"
 	"net"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -12,6 +23,47 @@ import (
 	"github.com/asabla/ircat/internal/server"
 	"github.com/asabla/ircat/internal/state"
 )
+
+// makeSelfSignedCert writes a self-signed cert/key pair to dir
+// and returns their paths plus the cert's SHA-256 fingerprint as
+// a lowercase hex string. The cert names "127.0.0.1" so the
+// federation dialer (which uses Host="127.0.0.1") can use it as
+// the TLS ServerName.
+func makeSelfSignedCert(t *testing.T, dir string) (cert, key, fingerprint string) {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: "ircat-fed-test"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert = filepath.Join(dir, "cert.pem")
+	key = filepath.Join(dir, "key.pem")
+	if err := os.WriteFile(cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(key, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(der)
+	fingerprint = hex.EncodeToString(sum[:])
+	return cert, key, fingerprint
+}
 
 // startCmdServer brings up a server.Server bound to a kernel-
 // assigned port. It mirrors the helper in internal/server tests
@@ -238,4 +290,160 @@ func TestStartFederation_ReconnectsAfterPeerRestart(t *testing.T) {
 	defer stopB()
 	waitForLink(srvA, "node-b", true)
 	waitForLink(srvB, "node-a", true)
+}
+
+// TestStartFederation_TLSWithFingerprintPin brings up two
+// federated servers where B serves a TLS-wrapped federation
+// listener with a self-signed cert and A dials over TLS using a
+// fingerprint pin (no CA bundle). Both ends must register the
+// link, proving the dial-side VerifyPeerCertificate hook and the
+// listener-side tls.NewListener wiring are wired correctly.
+func TestStartFederation_TLSWithFingerprintPin(t *testing.T) {
+	_, srvA, closeA := startCmdServer(t, "node-a")
+	defer closeA()
+	_, srvB, closeB := startCmdServer(t, "node-b")
+	defer closeB()
+
+	dir := t.TempDir()
+	cert, key, fingerprint := makeSelfSignedCert(t, dir)
+
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, portStr, _ := net.SplitHostPort(probe.Addr().String())
+	port, _ := strconv.Atoi(portStr)
+	listenAddr := net.JoinHostPort(host, portStr)
+	_ = probe.Close()
+
+	logger, _, _ := logging.New(logging.Options{Format: "text", Level: "info"})
+
+	cfgB := &config.Config{
+		Federation: config.FederationConfig{
+			Enabled:        true,
+			MyServerName:   "node-b",
+			ListenAddress:  listenAddr,
+			ListenCertFile: cert,
+			ListenKeyFile:  key,
+			Links: []config.LinkSpec{{
+				Name:        "node-a",
+				Accept:      true,
+				PasswordIn:  "shared",
+				PasswordOut: "shared",
+			}},
+		},
+	}
+	cfgA := &config.Config{
+		Federation: config.FederationConfig{
+			Enabled:      true,
+			MyServerName: "node-a",
+			Links: []config.LinkSpec{{
+				Name:           "node-b",
+				Connect:        true,
+				Host:           host,
+				Port:           port,
+				PasswordIn:     "shared",
+				PasswordOut:    "shared",
+				TLS:            true,
+				TLSFingerprint: "sha256:" + fingerprint,
+			}},
+		},
+	}
+
+	ctxB, cancelB := context.WithCancel(context.Background())
+	waitB := startFederation(ctxB, cfgB, srvB, logger)
+	defer func() { cancelB(); waitB() }()
+
+	time.Sleep(50 * time.Millisecond)
+
+	ctxA, cancelA := context.WithCancel(context.Background())
+	waitA := startFederation(ctxA, cfgA, srvA, logger)
+	defer func() { cancelA(); waitA() }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if srvA.LinkFor("node-b") != nil && srvB.LinkFor("node-a") != nil {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("federation TLS link never came up: A->B=%v B->A=%v",
+		srvA.LinkFor("node-b") != nil, srvB.LinkFor("node-a") != nil)
+}
+
+// TestStartFederation_TLSFingerprintMismatchRejects ensures that a
+// wrong fingerprint pin causes the dialer's verify callback to
+// reject the peer cert and the link never registers.
+func TestStartFederation_TLSFingerprintMismatchRejects(t *testing.T) {
+	_, srvA, closeA := startCmdServer(t, "node-a")
+	defer closeA()
+	_, srvB, closeB := startCmdServer(t, "node-b")
+	defer closeB()
+
+	dir := t.TempDir()
+	cert, key, _ := makeSelfSignedCert(t, dir)
+	// Deliberately wrong fingerprint (all zeros).
+	wrong := "sha256:" + hex.EncodeToString(make([]byte, 32))
+
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, portStr, _ := net.SplitHostPort(probe.Addr().String())
+	port, _ := strconv.Atoi(portStr)
+	listenAddr := net.JoinHostPort(host, portStr)
+	_ = probe.Close()
+
+	logger, _, _ := logging.New(logging.Options{Format: "text", Level: "error"})
+
+	cfgB := &config.Config{
+		Federation: config.FederationConfig{
+			Enabled:        true,
+			MyServerName:   "node-b",
+			ListenAddress:  listenAddr,
+			ListenCertFile: cert,
+			ListenKeyFile:  key,
+			Links: []config.LinkSpec{{
+				Name:        "node-a",
+				Accept:      true,
+				PasswordIn:  "shared",
+				PasswordOut: "shared",
+			}},
+		},
+	}
+	cfgA := &config.Config{
+		Federation: config.FederationConfig{
+			Enabled:      true,
+			MyServerName: "node-a",
+			Links: []config.LinkSpec{{
+				Name:           "node-b",
+				Connect:        true,
+				Host:           host,
+				Port:           port,
+				PasswordIn:     "shared",
+				PasswordOut:    "shared",
+				TLS:            true,
+				TLSFingerprint: wrong,
+			}},
+		},
+	}
+
+	ctxB, cancelB := context.WithCancel(context.Background())
+	waitB := startFederation(ctxB, cfgB, srvB, logger)
+	defer func() { cancelB(); waitB() }()
+	time.Sleep(50 * time.Millisecond)
+
+	ctxA, cancelA := context.WithCancel(context.Background())
+	waitA := startFederation(ctxA, cfgA, srvA, logger)
+	defer func() { cancelA(); waitA() }()
+
+	// Give the dialer plenty of time to attempt and fail; the
+	// link must never register.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if srvA.LinkFor("node-b") != nil {
+			t.Fatal("link came up despite fingerprint mismatch")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }

@@ -2,10 +2,16 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,7 +49,7 @@ func startFederation(ctx context.Context, cfg *config.Config, srv *server.Server
 		}
 	}
 	if addr := cfg.Federation.ListenAddress; addr != "" {
-		if err := sup.startListener(addr); err != nil {
+		if err := sup.startListener(addr, cfg.Federation.ListenCertFile, cfg.Federation.ListenKeyFile); err != nil {
 			logger.Error("federation listener bind failed", "addr", addr, "error", err)
 		}
 	}
@@ -88,8 +94,7 @@ func (s *fedSupervisor) dialOutbound(spec config.LinkSpec) {
 			if s.ctx.Err() != nil {
 				return
 			}
-			dialer := net.Dialer{Timeout: 10 * time.Second}
-			conn, err := dialer.DialContext(s.ctx, "tcp", addr)
+			conn, err := s.dialPeer(spec, addr)
 			if err != nil {
 				s.logger.Warn("federation dial failed",
 					"peer", spec.Name, "addr", addr, "error", err,
@@ -114,6 +119,61 @@ func (s *fedSupervisor) dialOutbound(spec config.LinkSpec) {
 			}
 		}
 	}()
+}
+
+// dialPeer handles plain TCP and TLS dials with optional
+// fingerprint pinning. When spec.TLSFingerprint is set we use a
+// custom VerifyPeerCertificate that compares the leaf cert's
+// SHA-256 fingerprint against the configured value, which lets
+// operators run a self-signed PKI without distributing a CA bundle.
+func (s *fedSupervisor) dialPeer(spec config.LinkSpec, addr string) (net.Conn, error) {
+	dialer := net.Dialer{Timeout: 10 * time.Second}
+	if !spec.TLS {
+		return dialer.DialContext(s.ctx, "tcp", addr)
+	}
+	tlsCfg := &tls.Config{
+		ServerName: spec.Host,
+		MinVersion: tls.VersionTLS12,
+	}
+	if spec.TLSFingerprint != "" {
+		want, err := normalizeFingerprint(spec.TLSFingerprint)
+		if err != nil {
+			return nil, fmt.Errorf("federation: %w", err)
+		}
+		tlsCfg.InsecureSkipVerify = true
+		tlsCfg.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+			if len(rawCerts) == 0 {
+				return errors.New("federation: peer presented no certificate")
+			}
+			got := sha256.Sum256(rawCerts[0])
+			if hex.EncodeToString(got[:]) != want {
+				return fmt.Errorf("federation: peer fingerprint mismatch")
+			}
+			return nil
+		}
+	}
+	td := &tls.Dialer{
+		NetDialer: &dialer,
+		Config:    tlsCfg,
+	}
+	return td.DialContext(s.ctx, "tcp", addr)
+}
+
+// normalizeFingerprint accepts the common "sha256:..." form as
+// well as a bare hex string. Colons inside the hex are stripped
+// so an operator can paste output from
+// `openssl x509 -fingerprint -sha256 -noout` directly.
+func normalizeFingerprint(s string) (string, error) {
+	s = strings.TrimSpace(strings.ToLower(s))
+	s = strings.TrimPrefix(s, "sha256:")
+	s = strings.ReplaceAll(s, ":", "")
+	if len(s) != 64 {
+		return "", fmt.Errorf("invalid sha256 fingerprint length %d", len(s))
+	}
+	if _, err := hex.DecodeString(s); err != nil {
+		return "", fmt.Errorf("invalid hex fingerprint: %w", err)
+	}
+	return s, nil
 }
 
 // sleepOrCancel waits for d or for ctx to be cancelled. Returns
@@ -176,11 +236,27 @@ func (s *fedSupervisor) runLink(conn net.Conn, cfg federation.LinkConfig, outbou
 // accept=true; the first matching spec drives the inbound
 // handshake. Connections that do not match any spec are dropped
 // after a single log line.
-func (s *fedSupervisor) startListener(addr string) error {
+//
+// When certFile and keyFile are both non-empty, the listener
+// wraps the underlying TCP listener in tls.NewListener and serves
+// every accepted peer over TLS.
+func (s *fedSupervisor) startListener(addr, certFile, keyFile string) error {
 	var lc net.ListenConfig
 	listener, err := lc.Listen(s.ctx, "tcp", addr)
 	if err != nil {
 		return err
+	}
+	if certFile != "" && keyFile != "" {
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			_ = listener.Close()
+			return fmt.Errorf("federation tls keypair: %w", err)
+		}
+		listener = tls.NewListener(listener, &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS12,
+		})
+		s.logger.Info("federation listener tls enabled")
 	}
 	s.logger.Info("federation listener bound", "addr", listener.Addr().String())
 	s.wg.Add(1)

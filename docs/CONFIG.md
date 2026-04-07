@@ -100,7 +100,9 @@ bots:
 federation:
   enabled: false
   my_server_name: irc.example.org
-  listen_address: "0.0.0.0:7000"  # bind for inbound peer connections; omit to disable accept
+  listen_address: "0.0.0.0:7000"      # bind for inbound peer connections; omit to disable accept
+  listen_cert_file: /etc/ircat/fed-cert.pem  # both must be set to enable TLS for inbound peers
+  listen_key_file: /etc/ircat/fed-key.pem
   links:
     - name: irc.peer.org
       accept: true
@@ -109,8 +111,8 @@ federation:
       port: 6667
       password_in_env: IRCAT_LINK_PEER_IN
       password_out_env: IRCAT_LINK_PEER_OUT
-      tls: true
-      tls_fingerprint: "sha256:..."
+      tls: true                          # dial peer over TLS
+      tls_fingerprint: "sha256:abcdef..." # pin the peer's leaf cert SHA-256 (skip CA validation)
 
 logging:
   level: info                  # debug | info | warn | error

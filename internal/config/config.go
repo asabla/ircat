@@ -207,10 +207,15 @@ type BotsConfig struct {
 
 // FederationConfig declares server-to-server links.
 type FederationConfig struct {
-	Enabled       bool       `json:"enabled"`
-	MyServerName  string     `json:"my_server_name"`
-	ListenAddress string     `json:"listen_address"`
-	Links         []LinkSpec `json:"links"`
+	Enabled       bool   `json:"enabled"`
+	MyServerName  string `json:"my_server_name"`
+	ListenAddress string `json:"listen_address"`
+	// ListenCertFile / ListenKeyFile turn the inbound federation
+	// listener into a TLS listener. If both are set, every
+	// accept=true peer connects over TLS. Optional.
+	ListenCertFile string     `json:"listen_cert_file"`
+	ListenKeyFile  string     `json:"listen_key_file"`
+	Links          []LinkSpec `json:"links"`
 }
 
 // LinkSpec is one configured federation peer.
