@@ -207,9 +207,10 @@ type BotsConfig struct {
 
 // FederationConfig declares server-to-server links.
 type FederationConfig struct {
-	Enabled      bool       `json:"enabled"`
-	MyServerName string     `json:"my_server_name"`
-	Links        []LinkSpec `json:"links"`
+	Enabled       bool       `json:"enabled"`
+	MyServerName  string     `json:"my_server_name"`
+	ListenAddress string     `json:"listen_address"`
+	Links         []LinkSpec `json:"links"`
 }
 
 // LinkSpec is one configured federation peer.

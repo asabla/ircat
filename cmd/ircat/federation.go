@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -16,18 +17,17 @@ import (
 
 // startFederation wires up the configured federation links: for
 // each link with connect=true we dial and drive the outbound
-// handshake; for each with accept=true we bind a listener and
-// handle peer-initiated connections.
+// handshake; if cfg.Federation.ListenAddress is non-empty we also
+// bind a listener and accept inbound peer connections, matching
+// each accepted conn against the LinkSpec entries with accept=true.
 //
 // The supervisor goroutine is tied to ctx; when ctx is cancelled
 // every open link drains and shuts down.
 //
-// For M7 MVP this is plain TCP only — no TLS, no reconnect. A
-// dropped link just stays dropped until the operator restarts the
-// server. That is explicitly called out as a follow-up in
-// docs/PLAN.md.
+// Plain TCP only for now — TLS and reconnect on dropped links
+// are tracked separately in docs/PLAN.md.
 func startFederation(ctx context.Context, cfg *config.Config, srv *server.Server, logger *slog.Logger) func() {
-	if cfg.Federation.Enabled == false || len(cfg.Federation.Links) == 0 {
+	if cfg.Federation.Enabled == false {
 		return func() {}
 	}
 	logger = logger.With("component", "federation")
@@ -35,6 +35,7 @@ func startFederation(ctx context.Context, cfg *config.Config, srv *server.Server
 		ctx:    ctx,
 		srv:    srv,
 		logger: logger,
+		links:  cfg.Federation.Links,
 	}
 	for _, link := range cfg.Federation.Links {
 		link := link
@@ -42,9 +43,11 @@ func startFederation(ctx context.Context, cfg *config.Config, srv *server.Server
 			sup.dialOutbound(link)
 		}
 	}
-	// The accept path is a placeholder: v1 dials outbound only.
-	// A future commit binds a listener via a dedicated
-	// cfg.Federation.ListenAddress field.
+	if addr := cfg.Federation.ListenAddress; addr != "" {
+		if err := sup.startListener(addr); err != nil {
+			logger.Error("federation listener bind failed", "addr", addr, "error", err)
+		}
+	}
 	return func() {
 		sup.wg.Wait()
 	}
@@ -56,6 +59,7 @@ type fedSupervisor struct {
 	ctx    context.Context
 	srv    *server.Server
 	logger *slog.Logger
+	links  []config.LinkSpec
 
 	wg sync.WaitGroup
 }
@@ -121,6 +125,75 @@ func (s *fedSupervisor) runLink(conn net.Conn, cfg federation.LinkConfig, outbou
 		return
 	}
 	s.logger.Info("federation link closed", "peer", cfg.PeerName)
+}
+
+// startListener binds the configured federation listen address
+// and accepts inbound peer connections until ctx is cancelled.
+// Each accepted conn is matched against the LinkSpec entries with
+// accept=true; the first matching spec drives the inbound
+// handshake. Connections that do not match any spec are dropped
+// after a single log line.
+func (s *fedSupervisor) startListener(addr string) error {
+	var lc net.ListenConfig
+	listener, err := lc.Listen(s.ctx, "tcp", addr)
+	if err != nil {
+		return err
+	}
+	s.logger.Info("federation listener bound", "addr", listener.Addr().String())
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		<-s.ctx.Done()
+		_ = listener.Close()
+	}()
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				if errors.Is(err, net.ErrClosed) || s.ctx.Err() != nil {
+					return
+				}
+				s.logger.Warn("federation accept", "error", err)
+				continue
+			}
+			s.handleAccepted(conn)
+		}
+	}()
+	return nil
+}
+
+// handleAccepted picks the first LinkSpec that has accept=true.
+// In M7 we do not yet implement peer-name negotiation before the
+// SERVER line lands — the supervisor commits to the first
+// matching spec optimistically. A future commit reads PASS+SERVER
+// before binding to a spec.
+func (s *fedSupervisor) handleAccepted(conn net.Conn) {
+	var spec *config.LinkSpec
+	for i := range s.links {
+		if s.links[i].Accept {
+			spec = &s.links[i]
+			break
+		}
+	}
+	if spec == nil {
+		s.logger.Warn("federation inbound: no accept spec configured", "remote", conn.RemoteAddr())
+		_ = conn.Close()
+		return
+	}
+	cfg := federation.LinkConfig{
+		PeerName:    spec.Name,
+		PasswordIn:  spec.PasswordIn,
+		PasswordOut: spec.PasswordOut,
+		Version:     "ircat-0.0.1",
+		Description: s.srv.LocalServerName() + " <- " + spec.Name,
+	}
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.runLink(conn, cfg, false)
+	}()
 }
 
 // silence unused
