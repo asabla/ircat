@@ -127,16 +127,31 @@ Milestones are ordered. Do not start milestone N+1 until N's exit criteria are m
 
 **Goal:** two ircat servers link and behave as one network.
 
+Shipped:
 - `internal/federation`:
-  - PASS + SERVER handshake.
-  - State burst (servers → users → channels → modes).
-  - Routing table keyed on nick.
-  - SQUIT handling and netsplit recovery.
-  - TS-based collision resolution.
-- Commands: SERVER, SQUIT, SERVICE (stub), NJOIN, KILL (remote), USERHOST over link.
-- E2E: two servers in Compose, a client on each, they see each other in a shared channel.
+  - PASS + SERVER handshake (outbound dial + inbound accept).
+  - State burst (users + channel memberships).
+  - Runtime propagation: NICK (registration + rename), QUIT, JOIN,
+    PART, KICK, TOPIC, MODE, PRIVMSG, NOTICE.
+  - Per-link OnActive/OnClosed callbacks so the broadcast hot path
+    only sees fully-handshaked links.
+- `cmd/ircat`:
+  - Outbound dial supervisor with exponential-backoff reconnect
+    (1s floor, 60s ceiling, reset on a clean run).
+  - Inbound listener bound to `federation.listen_address`.
+- Integration tests in `internal/server` and `cmd/ircat` that
+  exercise both the static burst and runtime propagation paths
+  end-to-end through real `*server.Server` instances.
 
-**Exit:** `docker compose -f tests/e2e/federation/compose.yml up` produces a working 2-node mesh; tests assert on cross-server PRIVMSG delivery.
+Deferred to M8 / post-1.0:
+- TLS on the federation transport (config field is in place).
+- Channel-mode burst + ongoing MODE propagation re-application on
+  the receiver (currently MODE is forwarded but not re-applied).
+- TS-based nick/channel collision resolution.
+- SQUIT recovery beyond "drop the link and forget remote users".
+- Subscription-aware routing (currently every channel event is
+  fanned out to every peer).
+- KILL routing, SERVICE pseudo-server, WHOIS over link.
 
 ---
 

@@ -100,6 +100,7 @@ bots:
 federation:
   enabled: false
   my_server_name: irc.example.org
+  listen_address: "0.0.0.0:7000"  # bind for inbound peer connections; omit to disable accept
   links:
     - name: irc.peer.org
       accept: true
