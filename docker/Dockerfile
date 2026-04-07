@@ -27,7 +27,7 @@ WORKDIR /app
 COPY --from=build /out/ircat /app/ircat
 COPY docker/default-config.yaml /etc/ircat/config.yaml
 
-EXPOSE 6667 6697 8080
+EXPOSE 6667 6697 7000 8080
 USER nonroot:nonroot
 ENTRYPOINT ["/app/ircat"]
 CMD ["--config", "/etc/ircat/config.yaml"]

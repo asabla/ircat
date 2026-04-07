@@ -8,6 +8,14 @@
 #
 # Override via docker-compose.override.yml or environment variables.
 # Secrets are read from a local .env file; do not commit it.
+#
+# The dashboard listener (default 8080) hosts both the operator UI
+# and the unauthenticated /metrics endpoint. Do not expose 8080 to
+# the public internet directly — front it with a reverse proxy and
+# IP-allowlist /metrics.
+#
+# Federation: set IRCAT_FED_PORT in .env to expose the inbound peer
+# listener (default 7000). Leave unset to keep federation private.
 
 services:
   ircat:
@@ -28,6 +36,12 @@ services:
       - "${IRCAT_IRC_PORT:-6667}:6667"
       - "${IRCAT_IRC_TLS_PORT:-6697}:6697"
       - "${IRCAT_DASHBOARD_PORT:-8080}:8080"
+      # To publish the federation listener (default port 7000),
+      # add an override file with:
+      #   services:
+      #     ircat:
+      #       ports:
+      #         - "${IRCAT_FED_PORT:-7000}:7000"
     environment:
       IRCAT_INITIAL_ADMIN_PASSWORD: ${IRCAT_INITIAL_ADMIN_PASSWORD:?set in .env}
       IRCAT_WEBHOOK_SECRET: ${IRCAT_WEBHOOK_SECRET:-}
@@ -44,6 +58,17 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    # Hardening: drop every Linux capability we do not need, refuse
+    # privilege escalation, and run with a read-only root filesystem.
+    # The two volume mounts (data + logs) are the only writable
+    # paths inside the container.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
     deploy:
       resources:
         limits:
@@ -69,6 +94,16 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
 volumes:
   ircat-data:
