@@ -5,6 +5,8 @@
 *.exe
 *.test
 *.out
+/ircat
+/soak
 
 # Go
 /vendor/
