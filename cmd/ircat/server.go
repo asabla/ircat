@@ -58,7 +58,7 @@ func runServer(args []string) error {
 		return fmt.Errorf("load config %q: %w", configPath, err)
 	}
 
-	logger, _, err := logging.New(logging.Options{
+	logger, _, levelVar, err := logging.NewWithLevel(logging.Options{
 		Level:             cfg.Logging.Level,
 		Format:            cfg.Logging.Format,
 		RingBufferEntries: cfg.Logging.RingBufferEntries,
@@ -161,6 +161,18 @@ func runServer(args []string) error {
 	// shutdown.
 	fedWait := startFederation(runCtxOrBg(ctx), cfg, srv, logger)
 	defer fedWait()
+
+	// SIGHUP-driven config reload. The deps struct is also
+	// passed to the dashboard handler so the
+	// /api/v1/config/reload endpoint shares the same code path.
+	reloader := &reloadDeps{
+		configPath: configPath,
+		store:      store,
+		srv:        srv,
+		levelVar:   levelVar,
+		logger:     logger.With("component", "reload"),
+	}
+	startReloadSignalLoop(ctx, reloader)
 
 	logger.Info("ircat ready",
 		"listeners", listenerAddresses(cfg),

@@ -15,7 +15,11 @@ import (
 type teeHandler struct {
 	primary slog.Handler
 	ring    *RingBuffer
-	level   slog.Level
+	// level is the dynamic threshold consulted on every Enabled
+	// call. *slog.LevelVar is the standard way to make slog level
+	// changes hot-applicable; mutating it via Set() takes effect
+	// on the very next record without rebuilding the chain.
+	level *slog.LevelVar
 	// attrs and groups carry With/WithGroup state so it can be applied
 	// to records before they reach the ring buffer. The primary handler
 	// already tracks its own copy via primary.WithAttrs/WithGroup.
@@ -24,7 +28,7 @@ type teeHandler struct {
 }
 
 func (h *teeHandler) Enabled(_ context.Context, lvl slog.Level) bool {
-	return lvl >= h.level
+	return lvl >= h.level.Level()
 }
 
 func (h *teeHandler) Handle(ctx context.Context, rec slog.Record) error {

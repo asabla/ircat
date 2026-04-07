@@ -127,16 +127,51 @@ func (s *Server) buildISupport() [][]string {
 func (c *Conn) sendMOTD() {
 	srv := c.server.cfg.Server.Name
 	nick := c.user.Nick
-	if len(c.server.motd) == 0 {
+	lines := c.server.MOTDLines()
+	if len(lines) == 0 {
 		c.send(protocol.NumericReply(srv, nick, protocol.ERR_NOMOTD, "MOTD File is missing"))
 		return
 	}
 	c.send(protocol.NumericReply(srv, nick, protocol.RPL_MOTDSTART,
 		fmt.Sprintf("- %s Message of the day -", srv)))
-	for _, line := range c.server.motd {
+	for _, line := range lines {
 		c.send(protocol.NumericReply(srv, nick, protocol.RPL_MOTD, "- "+line))
 	}
 	c.send(protocol.NumericReply(srv, nick, protocol.RPL_ENDOFMOTD, "End of MOTD command"))
+}
+
+// MOTDLines returns a snapshot of the current MOTD content
+// under the read lock so the welcome path does not race a
+// concurrent ReloadMOTD. Exported so the reload tests in
+// cmd/ircat can assert on the value.
+func (s *Server) MOTDLines() []string {
+	s.motdMu.RLock()
+	defer s.motdMu.RUnlock()
+	return s.motd
+}
+
+// ReloadMOTD re-reads the configured motd_file and replaces the
+// in-memory copy. Called by the SIGHUP / config-reload path in
+// cmd/ircat. Safe to call from any goroutine.
+func (s *Server) ReloadMOTD() {
+	s.motdMu.RLock()
+	path := s.cfg.Server.MOTDFile
+	s.motdMu.RUnlock()
+	lines := loadMOTD(path, s.logger)
+	s.motdMu.Lock()
+	s.motd = lines
+	s.motdMu.Unlock()
+}
+
+// UpdateMOTDFile updates the configured motd_file path on the
+// server's config copy. Used by the reload path so a new path
+// from a fresh config snapshot takes effect on the next
+// ReloadMOTD call. Locks under motdMu since the welcome path
+// reads from the same struct.
+func (s *Server) UpdateMOTDFile(path string) {
+	s.motdMu.Lock()
+	defer s.motdMu.Unlock()
+	s.cfg.Server.MOTDFile = path
 }
 
 // loadMOTD reads the configured MOTD file at startup. A missing file

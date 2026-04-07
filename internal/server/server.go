@@ -99,9 +99,13 @@ type Server struct {
 	fedSubs  map[string]map[string]bool
 
 	// motd is the message-of-the-day file content split into lines.
-	// Loaded once at startup; nil if no MOTD is configured or the
-	// file is missing (we send ERR_NOMOTD in that case).
-	motd []string
+	// Loaded at startup and re-read on ReloadMOTD; nil if no MOTD
+	// is configured or the file is missing (we send ERR_NOMOTD in
+	// that case). Guarded by motdMu so the SIGHUP reload path can
+	// swap it from a non-conn goroutine without racing the
+	// welcome burst that reads it.
+	motdMu sync.RWMutex
+	motd   []string
 
 	// shuttingDown is set to 1 once Run begins its drain. New accepts
 	// observe it and refuse cleanly instead of racing the close.

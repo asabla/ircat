@@ -42,11 +42,26 @@ const DefaultRingEntries = 10_000
 //
 // The returned logger writes to Options.Output (stdout by default) and
 // simultaneously appends every record to the returned ring buffer.
+//
+// New is a thin wrapper over NewWithLevel that discards the level
+// controller. Most callers do not need to change levels at runtime;
+// cmd/ircat uses NewWithLevel so it can flip the level on SIGHUP.
 func New(opts Options) (*slog.Logger, *RingBuffer, error) {
+	logger, ring, _, err := NewWithLevel(opts)
+	return logger, ring, err
+}
+
+// NewWithLevel is the same as New but also returns a *slog.LevelVar
+// the caller can mutate at runtime to change the effective log
+// level without rebuilding the handler chain. Used by cmd/ircat for
+// SIGHUP / config reload.
+func NewWithLevel(opts Options) (*slog.Logger, *RingBuffer, *slog.LevelVar, error) {
 	level, err := parseLevel(opts.Level)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
+	levelVar := new(slog.LevelVar)
+	levelVar.Set(level)
 
 	out := opts.Output
 	if out == nil {
@@ -55,7 +70,7 @@ func New(opts Options) (*slog.Logger, *RingBuffer, error) {
 
 	ring := NewRingBuffer(opts.RingBufferEntries)
 
-	handlerOpts := &slog.HandlerOptions{Level: level}
+	handlerOpts := &slog.HandlerOptions{Level: levelVar}
 
 	var primary slog.Handler
 	switch strings.ToLower(strings.TrimSpace(opts.Format)) {
@@ -64,12 +79,17 @@ func New(opts Options) (*slog.Logger, *RingBuffer, error) {
 	case "text":
 		primary = slog.NewTextHandler(out, handlerOpts)
 	default:
-		return nil, nil, fmt.Errorf("logging: unknown format %q (want json or text)", opts.Format)
+		return nil, nil, nil, fmt.Errorf("logging: unknown format %q (want json or text)", opts.Format)
 	}
 
-	handler := &teeHandler{primary: primary, ring: ring, level: level}
-	return slog.New(handler), ring, nil
+	handler := &teeHandler{primary: primary, ring: ring, level: levelVar}
+	return slog.New(handler), ring, levelVar, nil
 }
+
+// ParseLevel exposes the package-private parseLevel for callers
+// that want to validate a config-supplied level string before
+// applying it via *slog.LevelVar.Set.
+func ParseLevel(s string) (slog.Level, error) { return parseLevel(s) }
 
 // parseLevel maps a string to an [slog.Level]. Empty defaults to info.
 func parseLevel(s string) (slog.Level, error) {
