@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -451,6 +452,207 @@ func TestFederation_SquitRecoveryDropsRemoteUsers(t *testing.T) {
 	// And bob's record must be gone from A's world.
 	if u := srvA.world.FindByNick("bob"); u != nil {
 		t.Errorf("bob still present on node A after SQUIT: %+v", u)
+	}
+}
+
+// TestFederation_NickCollisionLowerTSWins exercises M9 task #92:
+// when two peers both register a user with the same nick before
+// they exchange bursts, the federation receiver should use the
+// lower TS as the tiebreaker. The user with the lower TS keeps
+// the nick; the loser gets killed.
+//
+// The test pre-populates two worlds with conflicting users
+// (different TS), then sends a burst NICK from peer B into
+// peer A's link. A's existing alice has a HIGHER TS than the
+// incoming alice, so A must drop its local copy and accept the
+// incoming one with the lower TS.
+func TestFederation_NickCollisionLowerTSWins(t *testing.T) {
+	addrA, srvA, closeA := buildFederationPeer(t, "node-a")
+	defer closeA()
+
+	// Connect a real local alice to A. Her TS is set at
+	// registration completion.
+	cAlice, rAlice := dialClient(t, addrA)
+	defer cAlice.Close()
+	cAlice.Write([]byte("NICK alice\r\nUSER alice 0 * :Alice\r\n"))
+	expectNumeric(t, cAlice, rAlice, "422", time.Now().Add(2*time.Second))
+	aliceLocal := srvA.world.FindByNick("alice")
+	if aliceLocal == nil {
+		t.Fatal("alice not registered locally")
+	}
+	localTS := aliceLocal.TS
+
+	// Build a fake remote alice with a STRICTLY OLDER TS so the
+	// collision resolver picks the incoming side.
+	olderTS := localTS - 1_000_000
+
+	// Drive the burst NICK directly through the link's dispatch
+	// path via a federation.Link wired to a counting writer.
+	// We need a real Link constructed against srvA so the
+	// receiver uses srvA.HandleSquit / DropLocalUser etc.
+	logger, _, _ := logging.New(logging.Options{Format: "text", Level: "info"})
+	cfg := federation.LinkConfig{
+		PeerName:    "node-b",
+		PasswordIn:  "shared",
+		PasswordOut: "shared",
+		Description: "ts collision test",
+	}
+	link := federation.New(srvA, cfg, logger)
+	srvA.RegisterLink("node-b", link)
+	defer srvA.UnregisterLink("node-b")
+
+	// Drive the link by feeding messages directly into its Run
+	// goroutine. We use net.Pipe so the link's read goroutine
+	// has a reader to consume from.
+	connSrv, connTest := net.Pipe()
+	reader := federation.WrapConnRead(connSrv)
+	writer := federation.WrapConnWrite(connSrv)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- link.Run(ctx, reader, writer) }()
+	defer func() {
+		cancel()
+		_ = connSrv.Close()
+		_ = connTest.Close()
+		<-done
+	}()
+
+	// Force the link into Active state by completing the
+	// handshake. We are the test driver so we send the peer
+	// PASS+SERVER lines into connTest.
+	if _, err := connTest.Write([]byte("PASS shared 0210 IRC| ircat-test\r\nSERVER node-b 1 1 :node-b\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if link.State() == federation.LinkActive {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if link.State() != federation.LinkActive {
+		t.Fatalf("link did not reach Active: %s", link.State())
+	}
+
+	// Burst NICK with the older TS. v1.1 burst layout puts TS
+	// at position 7 and the realname trailing at position 8.
+	burstWithTS := ":node-b NICK alice 1 alice 10.0.0.1 node-b + " +
+		strconv.FormatInt(olderTS, 10) + " :Alice from B\r\n"
+	if _, err := connTest.Write([]byte(burstWithTS)); err != nil {
+		t.Fatal(err)
+	}
+
+	// alice's local conn should be killed because she lost the
+	// TS race. Wait for the disconnect signal.
+	cAlice.SetReadDeadline(time.Now().Add(3 * time.Second))
+	disconnected := false
+	for !disconnected {
+		_, err := rAlice.ReadString('\n')
+		if err != nil {
+			disconnected = true
+			break
+		}
+	}
+	if !disconnected {
+		t.Fatal("local alice was not killed despite losing the TS race")
+	}
+
+	// And the world record should now be the incoming alice
+	// with the older TS.
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		u := srvA.world.FindByNick("alice")
+		if u != nil && u.IsRemote() && u.TS == olderTS {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	got := srvA.world.FindByNick("alice")
+	t.Fatalf("expected incoming alice (TS=%d) to win; got %+v", olderTS, got)
+}
+
+// TestFederation_NickCollisionHigherTSDropped is the inverse:
+// when the incoming TS is HIGHER than the existing record, the
+// receiver must drop the incoming one and emit a KILL back to
+// the peer so the loser disappears on its side too.
+func TestFederation_NickCollisionHigherTSDropped(t *testing.T) {
+	addrA, srvA, closeA := buildFederationPeer(t, "node-a")
+	defer closeA()
+
+	cAlice, rAlice := dialClient(t, addrA)
+	defer cAlice.Close()
+	cAlice.Write([]byte("NICK alice\r\nUSER alice 0 * :Alice\r\n"))
+	expectNumeric(t, cAlice, rAlice, "422", time.Now().Add(2*time.Second))
+	aliceLocal := srvA.world.FindByNick("alice")
+	if aliceLocal == nil {
+		t.Fatal("alice not registered locally")
+	}
+	newerTS := aliceLocal.TS + 1_000_000
+
+	// Inject a counting fed link so we can observe the KILL
+	// reply that the receiver should emit.
+	counter := &countingFedLink{}
+	srvA.RegisterLink("node-b", counter)
+	defer srvA.UnregisterLink("node-b")
+
+	logger, _, _ := logging.New(logging.Options{Format: "text", Level: "info"})
+	link := federation.New(srvA, federation.LinkConfig{
+		PeerName: "node-b", PasswordIn: "shared", PasswordOut: "shared",
+		Description: "ts collision test",
+	}, logger)
+
+	connSrv, connTest := net.Pipe()
+	reader := federation.WrapConnRead(connSrv)
+	writer := federation.WrapConnWrite(connSrv)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- link.Run(ctx, reader, writer) }()
+	defer func() {
+		cancel()
+		_ = connSrv.Close()
+		_ = connTest.Close()
+		<-done
+	}()
+	if _, err := connTest.Write([]byte("PASS shared 0210 IRC| ircat-test\r\nSERVER node-b 1 1 :node-b\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if link.State() == federation.LinkActive {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	burstWithTS := ":node-b NICK alice 1 alice 10.0.0.1 node-b + " +
+		strconv.FormatInt(newerTS, 10) + " :Alice from B\r\n"
+	if _, err := connTest.Write([]byte(burstWithTS)); err != nil {
+		t.Fatal(err)
+	}
+
+	// We expect the receiver to emit a KILL alice to clean up
+	// the loser on the peer side. The KILL goes through the
+	// real link's writer (connSrv → connTest), so we read it
+	// back from connTest.
+	rTest := bufio.NewReader(connTest)
+	connTest.SetReadDeadline(time.Now().Add(3 * time.Second))
+	gotKill := false
+	for !gotKill {
+		line, err := rTest.ReadString('\n')
+		if err != nil {
+			break
+		}
+		if strings.Contains(line, " KILL alice ") {
+			gotKill = true
+		}
+	}
+	if !gotKill {
+		t.Fatal("receiver did not emit KILL for loser nick")
+	}
+
+	// Local alice should still be registered (she won the TS).
+	if u := srvA.world.FindByNick("alice"); u == nil || u.IsRemote() {
+		t.Fatalf("local alice should still own the nick; got %+v", u)
 	}
 }
 

@@ -48,6 +48,7 @@ func (c *Conn) tryCompleteRegistration() {
 		Host:       c.remoteHost,
 		Realname:   c.pending.realname,
 		Registered: true,
+		TS:         c.server.now().UnixNano(),
 	}
 	if _, err := c.server.world.AddUser(user); err != nil {
 		if errors.Is(err, state.ErrNickInUse) {

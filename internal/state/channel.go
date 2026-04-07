@@ -106,6 +106,35 @@ func (c *Channel) CreatedAt() time.Time {
 	return c.createdAt
 }
 
+// TS returns the channel's RFC 2813 §5.2 timestamp as unix
+// nanoseconds. Sourced from CreatedAt; v1.1 does not store a
+// separate TS field because the channel-creation time is the
+// canonical anchor for the lower-TS-wins tiebreaker.
+func (c *Channel) TS() int64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.createdAt.UnixNano()
+}
+
+// AdoptOlderTS lowers the channel's createdAt to ts iff ts is
+// strictly older (smaller) than the current timestamp. Used by
+// the federation receiver: when a peer bursts a channel that
+// already exists locally and the peer's TS is older, we adopt
+// the older TS so subsequent collision arithmetic on every node
+// converges on the same anchor.
+func (c *Channel) AdoptOlderTS(ts int64) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if ts <= 0 {
+		return false
+	}
+	if ts >= c.createdAt.UnixNano() {
+		return false
+	}
+	c.createdAt = time.Unix(0, ts)
+	return true
+}
+
 // Topic returns the current topic, the hostmask of whoever set it,
 // and when. Empty topic returns ("", "", zero).
 func (c *Channel) Topic() (text, setBy string, at time.Time) {

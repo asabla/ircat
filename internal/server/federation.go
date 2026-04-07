@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/asabla/ircat/internal/protocol"
 	"github.com/asabla/ircat/internal/state"
@@ -67,15 +68,37 @@ func (s *Server) SubscribePeerToChannel(peerName, channelName string) {
 
 // DropLocalUser disconnects the named local user with reason.
 // Implements internal/federation.Host. Called by the federation
-// Link when a remote KILL targets a user that happens to live on
-// this node. Reuses the existing KickUser pathway so the user
-// receives the same ERROR + QUIT broadcast they would get from a
-// local oper KILL.
+// Link in two scenarios:
+//
+//   - A remote KILL targets a user that happens to live on this
+//     node — the kill should also drop the live conn.
+//   - A nick collision lost the TS tiebreaker on this side — the
+//     world record is already gone, so we walk the conn registry
+//     directly by nick and cancel any matching conn.
+//
+// The walk-by-nick approach is safe even when the world record
+// has already been removed: every Conn keeps a pointer to the
+// state.User it was registered with, so the registry lookup
+// works regardless of world state.
 func (s *Server) DropLocalUser(nick, reason string) {
 	if reason == "" {
 		reason = "Killed"
 	}
-	_ = s.KickUser(context.Background(), nick, reason)
+	s.connsMu.RLock()
+	var target *Conn
+	for _, c := range s.conns {
+		if c.user != nil && c.user.Nick == nick {
+			target = c
+			break
+		}
+	}
+	s.connsMu.RUnlock()
+	if target == nil {
+		return
+	}
+	target.quitReason = reason
+	target.sendError(reason)
+	target.cancel(context.Canceled)
 }
 
 // HandleSquit performs the SQUIT recovery flow when a federation
@@ -352,19 +375,20 @@ func (s *Server) forwardChannelToSubscribed(ch *state.Channel, msg *protocol.Mes
 
 // announceUserToFederation broadcasts a burst-form NICK line for a
 // newly-registered local user so every peer can add them to their
-// world. The seven-param shape matches what sendBurst emits at
-// link-up time, so the receiving Link.handleRemoteNick path
-// reuses the same code that ingests bursted users.
+// world. The eight-param shape matches what sendBurst emits at
+// link-up time, including the TS so collision resolution works
+// for users that registered after the burst.
 func (s *Server) announceUserToFederation(u *state.User) {
 	if u == nil {
 		return
 	}
-	modes := u.Modes
 	msg := &protocol.Message{
 		Prefix:  s.cfg.Server.Name,
 		Command: "NICK",
 		Params: []string{
-			u.Nick, "1", u.User, u.Host, s.cfg.Server.Name, "+" + modes, u.Realname,
+			u.Nick, "1", u.User, u.Host, s.cfg.Server.Name, "+" + u.Modes,
+			strconv.FormatInt(u.TS, 10),
+			u.Realname, // trailing — must be last
 		},
 	}
 	s.forwardToAllLinks(msg)

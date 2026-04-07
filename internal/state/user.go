@@ -35,6 +35,16 @@ type User struct {
 	// and forwards directed messages back through the owning link
 	// rather than delivering to a local Conn.
 	HomeServer string
+
+	// TS is the user's timestamp for collision resolution per
+	// RFC 2813 §5.2. For local users it is set at registration
+	// completion (unix nanos); for remote users it is carried
+	// across the federation link in the burst NICK form. On a
+	// nick collision the lower TS wins — the higher-TS user is
+	// killed. The TS is preserved across NICK changes (a rename
+	// does not reset it) so the original-registration time
+	// remains the tiebreaker.
+	TS int64
 }
 
 // IsRemote reports whether the user lives on a different node.

@@ -394,14 +394,19 @@ func (l *Link) sendBurst() {
 			Prefix:  l.localName,
 			Command: "NICK",
 			Params: []string{
-				u.Nick, "1", u.User, u.Host, l.localName, "+" + u.Modes, u.Realname,
+				u.Nick, "1", u.User, u.Host, l.localName, "+" + u.Modes,
+				strconv.FormatInt(u.TS, 10),
+				u.Realname, // trailing — must be the LAST param
 			},
 		})
 	}
 	for _, ch := range world.ChannelsSnapshot() {
 		// Membership burst: one JOIN per local member, prefixed
 		// with the member's hostmask so the receiver can
-		// associate the JOIN with the right user record.
+		// associate the JOIN with the right user record. The
+		// second JOIN param carries the channel TS so the peer
+		// can run the lower-TS-wins resolution per RFC 2813.
+		chTS := strconv.FormatInt(ch.TS(), 10)
 		hasLocal := false
 		for id := range ch.MemberIDs() {
 			u := world.FindByID(id)
@@ -412,7 +417,7 @@ func (l *Link) sendBurst() {
 			l.Send(&protocol.Message{
 				Prefix:  u.Hostmask(),
 				Command: "JOIN",
-				Params:  []string{ch.Name()},
+				Params:  []string{ch.Name(), chTS},
 			})
 		}
 		if !hasLocal {
@@ -480,9 +485,24 @@ func (l *Link) sendBurst() {
 	}
 }
 
-// handleRemoteNick ingests a burst NICK line OR a post-burst NICK
-// change. Burst form has seven params (nick, hopcount, user, host,
-// server, umode, realname); change form has one (new nick).
+// handleRemoteNick ingests a burst or runtime NICK line. Burst /
+// runtime-announce form is 7 or 8 params (nick, hopcount, user,
+// host, server, umode, realname [, ts]). The TS is optional for
+// backward compatibility with v1.0 peers; missing TS is treated
+// as zero, which always wins (oldest possible) on collision.
+//
+// On collision the lower TS wins per RFC 2813 §5.2: if the
+// incoming user has a strictly lower TS than an existing local
+// or remote record with the same nick, the existing record is
+// dropped and the incoming one takes over. If the incoming TS
+// is higher, the incoming record is dropped (and a KILL is sent
+// back to the peer to clean up the loser on its side).
+//
+// Equal TS is rare in practice (nanosecond resolution); when it
+// happens we currently keep the existing record. RFC 2813
+// recommends killing both to avoid ambiguity, but the v1.1 scope
+// only covers the unequal-TS case — equal-TS is documented as a
+// v1.2 follow-up in PLAN.md.
 func (l *Link) handleRemoteNick(msg *protocol.Message) {
 	world := l.host.WorldState()
 	if world == nil {
@@ -505,17 +525,68 @@ func (l *Link) handleRemoteNick(msg *protocol.Message) {
 	if len(msg.Params) < 7 {
 		return
 	}
+	// Burst NICK shape evolved between v1.0 and v1.1.
+	//   v1.0: nick hopcount user host server umode realname        (7 params, realname trailing)
+	//   v1.1: nick hopcount user host server umode ts realname     (8 params, realname trailing)
+	// We sniff the layout by checking whether params[6] parses as
+	// an int (v1.1) and fall back to the v1.0 layout otherwise.
+	nick := msg.Params[0]
 	remoteServer := msg.Params[4]
+	user := msg.Params[2]
+	host := msg.Params[3]
+	modes := strings.TrimPrefix(msg.Params[5], "+")
+	var (
+		ts       int64
+		realname string
+	)
+	if len(msg.Params) >= 8 {
+		if parsed, err := strconv.ParseInt(msg.Params[6], 10, 64); err == nil {
+			ts = parsed
+			realname = msg.Params[7]
+		} else {
+			realname = msg.Params[6]
+		}
+	} else {
+		realname = msg.Params[6]
+	}
+
+	// Collision check: is there already a user with this nick?
+	if existing := world.FindByNick(nick); existing != nil {
+		if ts != 0 && existing.TS != 0 && ts >= existing.TS {
+			// Incoming loses the tiebreaker. Tell the peer to
+			// drop its copy via KILL so the network converges.
+			l.Send(&protocol.Message{
+				Prefix:  l.localName,
+				Command: "KILL",
+				Params:  []string{nick, "Nick collision (TS lost)"},
+			})
+			return
+		}
+		// Incoming wins. Remove the existing record from the
+		// world synchronously so the AddUser below cannot race
+		// the conn close path. If the loser is local we ALSO
+		// notify the host so it disconnects the live conn —
+		// the world removal already happened, so the close
+		// path will not double-remove.
+		existingLocal := !existing.IsRemote()
+		existingNick := existing.Nick
+		world.RemoveUser(existing.ID)
+		if existingLocal {
+			l.host.DropLocalUser(existingNick, "Nick collision (TS lost)")
+		}
+	}
+
 	if _, err := world.AddUser(&state.User{
-		Nick:       msg.Params[0],
-		User:       msg.Params[2],
-		Host:       msg.Params[3],
-		Realname:   msg.Params[6],
-		Modes:      strings.TrimPrefix(msg.Params[5], "+"),
+		Nick:       nick,
+		User:       user,
+		Host:       host,
+		Realname:   realname,
+		Modes:      modes,
 		Registered: true,
 		HomeServer: remoteServer,
+		TS:         ts,
 	}); err != nil {
-		l.logger.Warn("remote nick add failed", "nick", msg.Params[0], "error", err)
+		l.logger.Warn("remote nick add failed", "nick", nick, "error", err)
 	}
 }
 
@@ -544,9 +615,12 @@ func (l *Link) handleRemoteMessage(msg *protocol.Message) {
 }
 
 // handleRemoteJoin ingests a peer JOIN line: "<prefix> JOIN
-// <channel>". Creates the channel (if missing) and adds the
-// user as a member. Also records the subscription so subsequent
-// channel events route back to this peer.
+// <channel> [<ts>]". Creates the channel (if missing), adds the
+// user as a member, and records the subscription so subsequent
+// channel events route back to this peer. If the second param
+// is a numeric TS lower than our local channel's TS, we adopt
+// the older anchor so the entire mesh converges on the same
+// tiebreaker (per RFC 2813 §5.2).
 func (l *Link) handleRemoteJoin(msg *protocol.Message) {
 	if len(msg.Params) < 1 {
 		return
@@ -560,8 +634,16 @@ func (l *Link) handleRemoteJoin(msg *protocol.Message) {
 	if u == nil || !u.IsRemote() {
 		return
 	}
-	_, _, _, _ = world.JoinChannel(u.ID, msg.Params[0])
-	l.host.SubscribePeerToChannel(l.peerName, msg.Params[0])
+	channelName := msg.Params[0]
+	_, _, _, _ = world.JoinChannel(u.ID, channelName)
+	if len(msg.Params) >= 2 {
+		if ts, err := strconv.ParseInt(msg.Params[1], 10, 64); err == nil && ts > 0 {
+			if ch := world.FindChannel(channelName); ch != nil {
+				ch.AdoptOlderTS(ts)
+			}
+		}
+	}
+	l.host.SubscribePeerToChannel(l.peerName, channelName)
 	// Also fan the JOIN out to local members of the channel so
 	// they see the remote user arrive.
 	l.host.DeliverLocal(msg)
