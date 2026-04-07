@@ -163,8 +163,20 @@ func NewRuntime(source string, actions Actions, budget Budget) (*Runtime, error)
 	// it is the standard Lua bytecode escape vector. We strip it
 	// even though load() is already nil so a single misconfiguration
 	// upstream cannot reopen the door.
+	//
+	// Replace string.format with a length-bounded wrapper. Go's
+	// fmt.Sprintf (which gopher-lua's string.format delegates to)
+	// honours arbitrary width specifiers, so a malicious script
+	// could call string.format("%999999999s", "x") and trigger an
+	// O(N) allocation under operator-controlled width. The
+	// wrapper rejects format strings whose computed worst-case
+	// output size exceeds maxFormatOutput, and refuses calls with
+	// more than maxFormatArgs arguments to bound work even when
+	// every directive is small.
 	if str := L.GetGlobal("string"); str.Type() == lua.LTTable {
-		str.(*lua.LTable).RawSetString("dump", lua.LNil)
+		strTbl := str.(*lua.LTable)
+		strTbl.RawSetString("dump", lua.LNil)
+		strTbl.RawSetString("format", L.NewFunction(safeStringFormat))
 	}
 
 	rt := &Runtime{
@@ -425,6 +437,115 @@ func ctxKVDelete(L *lua.LState) int {
 		L.RaiseError("kv_delete: %s", err.Error())
 	}
 	return 0
+}
+
+// Format-safety bounds for the safeStringFormat wrapper. They
+// are deliberately generous — any sane bot uses string.format
+// for short message rendering — and tight enough that a
+// pathological format string cannot drive a multi-megabyte
+// allocation in a single call.
+const (
+	maxFormatArgs   = 16
+	maxFormatOutput = 8192
+	maxFormatWidth  = 1024
+)
+
+// safeStringFormat is the sandbox's replacement for string.format.
+// It walks the format string, refuses any directive whose width
+// specifier exceeds maxFormatWidth, refuses calls with more than
+// maxFormatArgs total args, and clamps the rendered output to
+// maxFormatOutput bytes after dispatching to fmt.Sprintf so a
+// runaway %s with multi-byte input cannot exceed the cap either.
+//
+// All four bounds raise a Lua error rather than silently
+// truncating, so a script that hits the cap fails noisily and
+// the operator sees the failure in the audit log.
+func safeStringFormat(L *lua.LState) int {
+	format := L.CheckString(1)
+	argc := L.GetTop() - 1
+	if argc > maxFormatArgs {
+		L.RaiseError("string.format: too many args (%d > %d)", argc, maxFormatArgs)
+		return 0
+	}
+	if err := validateFormatString(format); err != nil {
+		L.RaiseError("string.format: %s", err.Error())
+		return 0
+	}
+	args := make([]interface{}, argc)
+	for i := 2; i <= L.GetTop(); i++ {
+		args[i-2] = L.Get(i)
+	}
+	npat := strings.Count(format, "%") - strings.Count(format, "%%")
+	if npat > argc {
+		npat = argc
+	}
+	out := fmt.Sprintf(format, args[:npat]...)
+	if len(out) > maxFormatOutput {
+		L.RaiseError("string.format: output too large (%d > %d)", len(out), maxFormatOutput)
+		return 0
+	}
+	L.Push(lua.LString(out))
+	return 1
+}
+
+// validateFormatString walks the format string, ensuring every
+// directive's width specifier is within the bound. Returns nil
+// if the format string is safe to pass to fmt.Sprintf, or an
+// error explaining the first violation otherwise.
+func validateFormatString(s string) error {
+	for i := 0; i < len(s); i++ {
+		if s[i] != '%' {
+			continue
+		}
+		i++
+		if i >= len(s) {
+			return errors.New("trailing %")
+		}
+		if s[i] == '%' {
+			continue
+		}
+		// Skip flags: -, +, space, #, 0
+		for i < len(s) {
+			c := s[i]
+			if c == '-' || c == '+' || c == ' ' || c == '#' || c == '0' {
+				i++
+				continue
+			}
+			break
+		}
+		// Width digits.
+		widthStart := i
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+		if widthStart < i {
+			width := 0
+			for j := widthStart; j < i; j++ {
+				width = width*10 + int(s[j]-'0')
+				if width > maxFormatWidth {
+					return fmt.Errorf("width %d exceeds %d", width, maxFormatWidth)
+				}
+			}
+		}
+		// Optional .precision.
+		if i < len(s) && s[i] == '.' {
+			i++
+			precStart := i
+			for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+				i++
+			}
+			if precStart < i {
+				prec := 0
+				for j := precStart; j < i; j++ {
+					prec = prec*10 + int(s[j]-'0')
+					if prec > maxFormatWidth {
+						return fmt.Errorf("precision %d exceeds %d", prec, maxFormatWidth)
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // ExtractCommand parses a PRIVMSG text body for the "!name args"

@@ -212,6 +212,101 @@ func TestSandbox_InstructionBudgetMappingHonoured(t *testing.T) {
 	}
 }
 
+// TestSandbox_StringFormatRejectsHugeWidth verifies the
+// safeStringFormat wrapper refuses a width specifier that would
+// drive a multi-megabyte allocation in fmt.Sprintf, raising a
+// Lua error rather than silently allocating.
+func TestSandbox_StringFormatRejectsHugeWidth(t *testing.T) {
+	src := `
+		local ok, err = pcall(string.format, "%999999s", "x")
+		if ok then error("expected width rejection") end
+		if not err:find("width") then error("wrong error: " .. tostring(err)) end
+	`
+	fa := newFakeActions("bot")
+	rt, err := NewRuntime(src, fa, Budget{Instructions: 100_000, Wallclock: time.Second})
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	t.Cleanup(rt.Close)
+}
+
+// TestSandbox_StringFormatRejectsHugePrecision is the precision
+// twin: %.999999s clamps the rendered length to 999999 chars,
+// which is the same allocation pressure as a width.
+func TestSandbox_StringFormatRejectsHugePrecision(t *testing.T) {
+	src := `
+		local ok, err = pcall(string.format, "%.999999s", "x")
+		if ok then error("expected precision rejection") end
+		if not err:find("precision") then error("wrong error: " .. tostring(err)) end
+	`
+	fa := newFakeActions("bot")
+	rt, err := NewRuntime(src, fa, Budget{Instructions: 100_000, Wallclock: time.Second})
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	t.Cleanup(rt.Close)
+}
+
+// TestSandbox_StringFormatRejectsTooManyArgs ensures a script
+// passing more than maxFormatArgs to string.format hits the
+// argc gate before fmt.Sprintf even starts. Bound the total
+// work even when every directive is small.
+func TestSandbox_StringFormatRejectsTooManyArgs(t *testing.T) {
+	// gopher-lua uses Lua 5.1 semantics, so it ships unpack as
+	// a top-level global rather than table.unpack.
+	src := `
+		local fmt = "%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s"
+		local ok, err = pcall(string.format, fmt,
+			"a","a","a","a","a","a","a","a","a","a",
+			"a","a","a","a","a","a","a","a","a","a")
+		if ok then error("expected too-many-args rejection") end
+		if not err:find("too many args") then error("wrong error: " .. tostring(err)) end
+	`
+	fa := newFakeActions("bot")
+	rt, err := NewRuntime(src, fa, Budget{Instructions: 100_000, Wallclock: time.Second})
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	t.Cleanup(rt.Close)
+}
+
+// TestSandbox_StringFormatRejectsHugeOutput exercises the post-
+// dispatch length cap: a small width but a long input should
+// still trip the maxFormatOutput guard rather than returning a
+// multi-megabyte string.
+func TestSandbox_StringFormatRejectsHugeOutput(t *testing.T) {
+	src := `
+		local s = string.rep("x", 9000)
+		local ok, err = pcall(string.format, "%s", s)
+		if ok then error("expected output-too-large rejection") end
+		if not err:find("output too large") then error("wrong error: " .. tostring(err)) end
+	`
+	fa := newFakeActions("bot")
+	rt, err := NewRuntime(src, fa, Budget{Instructions: 100_000, Wallclock: time.Second})
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	t.Cleanup(rt.Close)
+}
+
+// TestSandbox_StringFormatHappyPath confirms a normal use case
+// (rendering a small message with a couple of substitutions)
+// still works after the wrapper is in place.
+func TestSandbox_StringFormatHappyPath(t *testing.T) {
+	src := `
+		local s = string.format("hello %s, %d guests", "alice", 7)
+		if s ~= "hello alice, 7 guests" then
+			error("got: " .. s)
+		end
+	`
+	fa := newFakeActions("bot")
+	rt, err := NewRuntime(src, fa, Budget{Instructions: 100_000, Wallclock: time.Second})
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	t.Cleanup(rt.Close)
+}
+
 // runWithBudget is the shared driver for the four
 // runaway-script tests above. Each variant differs only in the
 // Lua source it runs; the assertions are identical.
