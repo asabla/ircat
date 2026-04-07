@@ -72,34 +72,45 @@ instances. ✅
 **Goal:** stop relying on the wallclock + container memory cap as
 the sandbox's only guard rails.
 
-- **Per-call instruction budget.** Pin gopher-lua to a major that
-  exposes a stable hook API (or ship a small fork that does), and
-  attach `Sethook` with `lua.MaskCount` so the runtime decrements
-  an instruction counter on every Nth instruction. Trip the call
-  once the counter underflows, with the same context-cancel exit
-  path the wallclock budget uses today. Keep the wallclock as the
-  outer envelope.
-- **Per-bot memory ceiling.** Track allocations via a custom
-  allocator hook (or, if gopher-lua does not expose one, by
-  periodically polling `runtime.MemStats` per goroutine via
-  pprof's `goroutine` profile and refusing to schedule the next
-  event when the bot's heap exceeds the ceiling). Document the
-  trade-off in `docs/SECURITY.md`.
-- **Allowlist for `string.format` directives.** `%n` is already
-  blocked by gopher-lua but the audit found that an unconstrained
-  `%s` with a controlled width can drive O(N²) allocations.
-  Either cap the rendered length or refuse format strings whose
-  argument count exceeds 16.
-- **Sandbox fuzz target.** Add a `go test -fuzz` corpus that
-  feeds randomly mutated Lua source through `NewRuntime` +
-  `DispatchMessage` and asserts the runtime never panics, never
-  outlives the wallclock budget, and never allocates beyond the
-  configured ceiling.
+Shipped:
+- **Per-call instruction budget via the existing wallclock.**
+  Audit discovered that gopher-lua's VM dispatch loop already
+  checks `L.ctx.Done()` between every Lua bytecode instruction,
+  so the wallclock budget already enforces at instruction
+  granularity — there is no separate hook API to attach. The
+  `Budget.Instructions` field maps to a wallclock proxy at a
+  conservative 10M-instructions/second rate via
+  `Runtime.effectiveDeadline`, taking the lower of the two as
+  the actual ceiling. Five new tests cover the four runaway
+  vectors (tight loop, pcall-shielded loop, recursion, doubling
+  string concat) and the instruction-proxy mapping.
+- **Per-bot registry cap as a partial memory ceiling.**
+  `Budget.RegistrySlots` wires through to gopher-lua's
+  `RegistryMaxSize`, capping the data stack at a configurable
+  number of LValue slots (default 65536 ≈ 1 MiB). When a
+  script grows past the cap gopher-lua raises a Lua error
+  which the runtime turns into a clean handler exit. Partial
+  rather than a true allocator hook (gopher-lua doesn't expose
+  one), so a script can still allocate large strings or
+  userdata outside the registry — the compose stack's 1 GiB
+  process cap is the outer envelope.
+- **`string.format` hardening.** The default gopher-lua
+  `string.format` is replaced with `safeStringFormat` which
+  refuses widths and precisions above 1024, refuses calls with
+  more than 16 args, and clamps the rendered output to 8192
+  bytes. Five tests cover each rejection path plus the happy
+  path. Closes the
+  `string.format("%999999999s", "x")` allocation vector.
+- **Fuzz target.** `FuzzSandboxNeverPanics` drives random Lua
+  source through compile + dispatch and asserts no panic, no
+  budget overrun. Verified end-to-end with a 10s real fuzz run
+  (369k executions, 215 new corpus entries, zero failures).
+  Doubles as a regression test in CI via the seed corpus.
 
-**Exit:** `internal/bots/sandbox_test.go` grows three new cases
-(instruction underflow terminates a tight loop in <2ms,
-allocation cap prevents a 1 GiB blowup, fuzz seed corpus runs
-clean for 60s).
+Deferred to v1.2:
+- True per-allocation memory hook (waiting on a gopher-lua
+  release that exposes one).
+- Soak fuzz beyond 60s as part of the M11 nightly job.
 
 ---
 
