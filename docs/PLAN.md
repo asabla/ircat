@@ -1,215 +1,195 @@
-# Implementation Plan
+# PLAN — ircat v1.1.0
 
-Milestones are ordered. Do not start milestone N+1 until N's exit criteria are met. Each milestone should be shippable — the server runs, tests pass, something useful works.
+The v1.0.0 release shipped a feature-complete IRC server: full
+client surface (RFC 1459/2812), persistent operators and channels,
+htmx dashboard, admin API, sandboxed Lua bots, jsonl + webhook
+event sinks, two-node federation with TLS, and a hardened
+production compose stack. See [`PLAN-v1.0.md`](PLAN-v1.0.md) for
+the historical record of M0 → M8.
 
----
+v1.1.0 picks up the items that were explicitly deferred from v1.0
+plus the polish work that the v1.0 audit surfaced. The cuts are
+deliberately small — v1.1 is a hardening + polish release, not a
+new-feature release. New surfaces (IRCv3 caps beyond CAP END,
+SERVICE pseudo-server, full SQUIT recovery) live in v1.2+.
 
-## M0 — Scaffolding
+## Theme
 
-**Goal:** the repo builds, tests run, a trivial binary starts and exits cleanly.
+> "Make the v1.0 surface boring to operate at scale, and close the
+> obvious follow-ups from the v1.0 federation MVP."
 
-- `go.mod` initialized at `github.com/asabla/ircat` (or chosen path).
-- Directory layout per `CLAUDE.md`.
-- `cmd/ircat/main.go`: flag parsing, config load, signal-based shutdown skeleton.
-- `internal/config`: `Config` struct, JSON + YAML loaders, `Validate()`, tests.
-- `internal/logging`: `slog` setup, ring buffer.
-- `.devcontainer/` working (VS Code open-in-container succeeds).
-- `docker/Dockerfile` multi-stage build produces a <30 MB image.
-- `docker-compose.dev.yml` runs the binary with `air`-style reload.
-- `docker-compose.yml` runs the binary with Postgres.
-- GitHub Actions (or placeholder) runs `go test ./... && go vet ./...`.
+## Milestones
 
-**Exit:** `docker compose -f docker-compose.dev.yml up` brings up an ircat that logs "ready" and responds to SIGINT.
+### M9 — Federation hardening
 
----
+**Goal:** the federation transport stops being "MVP" and starts
+being production.
 
-## M1 — Protocol core
+- **Channel mode burst + ongoing MODE re-application on the
+  receiver.** v1.0 forwards MODE lines but does not re-apply the
+  bits, so a remote peer's view of `+t`/`+i`/`+k` drifts from the
+  home server. Add a mode burst to `sendBurst` and have
+  `handleRemoteMode` apply the changes via the existing
+  `applyMode` machinery.
+- **TS-based collision resolution.** Today the second user with a
+  duplicate nick or the second peer to claim a channel just wins
+  by accident. Add a per-record TS field, propagate it in burst
+  and live messages, and use the lower TS as the tiebreaker per
+  RFC 2813.
+- **SQUIT recovery beyond "drop the link and forget".** When a
+  peer goes away, the local node should:
+  1. Send `:server SQUIT peer :reason` to every remaining link.
+  2. Walk the world and remove every user whose `HomeServer`
+     matches the dropped peer.
+  3. Emit per-user QUIT broadcasts to every shared channel so
+     local clients see the disappearance with the right
+     hostmasks.
+  Add a `Server.HandleSquit(peerName, reason)` entry point and
+  call it from the `OnClosed` callback path.
+- **Subscription-aware federation routing.** v1.0 fans every
+  channel event to every peer. Switch to a per-channel
+  subscription set built from the burst + JOIN/PART events so
+  each event hits only peers that actually have a member in the
+  channel. Keep the v1.0 fan-everything code path behind a
+  `federation.broadcast_mode: fanout|subscription` config knob
+  for one minor cycle so a regression can be flipped off
+  without a redeploy.
+- **KILL routing across links.** Operator KILL on node A
+  currently disconnects only the local user. Forward `:nick KILL
+  target :reason` over every link and have the receiver call
+  `Server.KickUser` for the local conn or drop the remote-user
+  record otherwise.
 
-**Goal:** one user can connect, register, and get a welcome banner.
-
-- `internal/protocol`:
-  - `Message` type + `Parse([]byte)` + `(m Message) Bytes() []byte`.
-  - Numeric reply constants (001–599 range, at least the ones we use).
-  - Fuzz test for the parser (`go test -fuzz`).
-- `internal/state`:
-  - `World` with users + channels maps and sharded locks.
-  - RFC 1459 case mapping.
-- `internal/server`:
-  - Plain TCP listener, per-connection goroutines.
-  - Registration state machine: PASS → NICK → USER → RPL_WELCOME (001), RPL_YOURHOST (002), RPL_CREATED (003), RPL_MYINFO (004).
-  - PING/PONG keepalive + timeout.
-  - Graceful QUIT.
-- Unit tests for parser, state mutations, registration.
-- E2E test (`tests/e2e/registration_test.go`) that drives a real TCP connection against a started server and asserts on numerics.
-
-**Exit:** `irssi -c localhost -p 6667` connects, sees the welcome banner, and `/quit` is clean. CI runs the e2e test.
-
----
-
-## M2 — Channels & messaging
-
-**Goal:** two users can join the same channel and talk.
-
-- Commands: JOIN, PART, PRIVMSG, NOTICE, TOPIC, NAMES, LIST, WHO, WHOIS, KICK, INVITE, NICK (post-registration), QUIT.
-- Channel modes: `+n +t +m +i +k +l +b +o +v`.
-- User modes: `+i +w +o`.
-- Flood control on PRIVMSG.
-- Numeric replies for all the above, per RFC 2812.
-- E2E tests for each command's happy path and the most common error paths.
-
-**Exit:** two clients can join `#test`, chat, be kicked, be op'd, set a topic, and leave. Tests cover it.
-
----
-
-## M3 — Persistence & storage
-
-**Goal:** operators, API tokens, bots, persistent channel settings, and audit log survive restart.
-
-- `internal/storage` interface + `sqlite` driver + migrations.
-- `postgres` driver + migrations. Same SQL semantics, dialect-specific types.
-- `OPER` command verifies against the operator store.
-- Audit events (admin actions, opers, mode changes on persistent channels) written to the event store.
-- Tests run against **both** drivers via a build matrix. No mocks.
-
-**Exit:** kill the server mid-session, restart, operators still auth, persistent channels keep their modes/topic.
+**Exit:** a three-node federation test where node A kills a user
+on node C via node B; the user disappears on every node within
+500ms; closing node C drops every C-homed user from A and B with
+proper QUIT broadcasts.
 
 ---
 
-## M4 — Dashboard & admin API
+### M10 — Lua sandbox tightening
 
-**Goal:** an operator can log into the dashboard, see live activity, and take action.
+**Goal:** stop relying on the wallclock + container memory cap as
+the sandbox's only guard rails.
 
-- `internal/auth`: password hashing, session cookies, API tokens.
-- `internal/api`: `/api/v1/` endpoints — see `API.md`.
-- `internal/dashboard`:
-  - Login page.
-  - Overview (counts, uptime).
-  - Users list with kick/kill actions.
-  - Channels list with mode editor.
-  - Settings page (hot-reloadable subset).
-  - Log tail via SSE.
-  - Live chat page (in-dashboard IRC client).
-- htmx served as a single vendored JS asset in `internal/dashboard/static/`.
-- `/metrics`, `/healthz`, `/readyz`.
-- E2E: a Go test drives the HTTP API to create an oper, kick a user, and verify via IRC.
+- **Per-call instruction budget.** Pin gopher-lua to a major that
+  exposes a stable hook API (or ship a small fork that does), and
+  attach `Sethook` with `lua.MaskCount` so the runtime decrements
+  an instruction counter on every Nth instruction. Trip the call
+  once the counter underflows, with the same context-cancel exit
+  path the wallclock budget uses today. Keep the wallclock as the
+  outer envelope.
+- **Per-bot memory ceiling.** Track allocations via a custom
+  allocator hook (or, if gopher-lua does not expose one, by
+  periodically polling `runtime.MemStats` per goroutine via
+  pprof's `goroutine` profile and refusing to schedule the next
+  event when the bot's heap exceeds the ceiling). Document the
+  trade-off in `docs/SECURITY.md`.
+- **Allowlist for `string.format` directives.** `%n` is already
+  blocked by gopher-lua but the audit found that an unconstrained
+  `%s` with a controlled width can drive O(N²) allocations.
+  Either cap the rendered length or refuse format strings whose
+  argument count exceeds 16.
+- **Sandbox fuzz target.** Add a `go test -fuzz` corpus that
+  feeds randomly mutated Lua source through `NewRuntime` +
+  `DispatchMessage` and asserts the runtime never panics, never
+  outlives the wallclock budget, and never allocates beyond the
+  configured ceiling.
 
-**Exit:** dashboard is usable end-to-end on a fresh install. API has token auth. Docs published.
-
----
-
-## M5 — Lua bots
-
-**Goal:** an operator can register a Lua bot that reacts to messages and can be hot-reloaded.
-
-- `internal/bots`: supervisor, sandboxed runtime, event dispatch, per-bot KV.
-- Dashboard: bot list, editor (textarea is fine for v1), enable/disable, logs.
-- Example bots shipped in `examples/bots/`: echo, 8ball, scheduled announcer.
-- CPU + instruction budget enforced via gopher-lua hooks.
-
-**Exit:** an operator pastes a Lua script into the dashboard, it joins a channel, it reacts to `!ping` with `pong`.
-
----
-
-## M6 — Event export
-
-**Goal:** external systems can consume ircat events.
-
-- Webhook sink (POST JSON, retry with exponential backoff, dead-letter to disk).
-- JSONL file sink (one event per line, size-based rotation).
-- Each sink is optional and independently configurable.
-- Additional transports (Redis, Kafka, NATS, ...) can land later as drop-in `Sink` implementations without touching the bus.
-
-**Exit:** a webhook endpoint receives events with at-least-once semantics; a jsonl file accumulates events and rotates on size.
+**Exit:** `internal/bots/sandbox_test.go` grows three new cases
+(instruction underflow terminates a tight loop in <2ms,
+allocation cap prevents a 1 GiB blowup, fuzz seed corpus runs
+clean for 60s).
 
 ---
 
-## M7 — Federation
+### M11 — Operational validation
 
-**Goal:** two ircat servers link and behave as one network.
+**Goal:** stop guessing about the operating envelope. Replace
+"conservative defaults" with measured numbers.
 
-Shipped:
-- `internal/federation`:
-  - PASS + SERVER handshake (outbound dial + inbound accept).
-  - State burst (users + channel memberships).
-  - Runtime propagation: NICK (registration + rename), QUIT, JOIN,
-    PART, KICK, TOPIC, MODE, PRIVMSG, NOTICE.
-  - Per-link OnActive/OnClosed callbacks so the broadcast hot path
-    only sees fully-handshaked links.
-- `cmd/ircat`:
-  - Outbound dial supervisor with exponential-backoff reconnect
-    (1s floor, 60s ceiling, reset on a clean run).
-  - Inbound listener bound to `federation.listen_address`.
-- Integration tests in `internal/server` and `cmd/ircat` that
-  exercise both the static burst and runtime propagation paths
-  end-to-end through real `*server.Server` instances.
+- **Soak test rig.** Write a `tests/soak/` harness (Go binary
+  built off the existing `ircclient` test helper) that opens N
+  connections, joins each one to M channels, and runs a sustained
+  PRIVMSG load for D hours. Configurable via flags. Targets:
+  - 10k concurrent registered connections.
+  - 1k channels with average 10 members each.
+  - 24h run on the reference Hetzner box documented in
+    `docs/OPERATIONS.md`.
+  - End-of-run assertions: zero dropped lines, zero protocol
+    violations, RSS within 25% of the 1h baseline.
+- **Flood-control benchmark suite.** `internal/server/floodcontrol`
+  already has the token bucket; add `Benchmark*` cases that
+  measure the steady-state ceiling at 1, 10, 100, 1000 senders
+  and produce a CSV the docs can plot. Use the result to revise
+  the default `message_burst` / `message_refill_per_second`
+  values in `default-config.yaml` and `production.yaml`.
+- **Federation latency benchmark.** Two-node Compose stack, one
+  client on each side, measure the wall-clock between
+  `c.Write([]byte("PRIVMSG #x :hi"))` on node A and the
+  corresponding read on node B's client. Repeat for 100k samples
+  and document the median + p99 in `docs/FEDERATION.md`.
+- **Storage benchmark.** Time the SQLite vs. Postgres backends
+  on the audit-write hot path (`storage.Audit().Append`) at
+  1k/10k/100k events. Document the results in
+  `docs/OPERATIONS.md` so operators can pick a backend with
+  numbers in hand.
 
-Deferred to M8 / post-1.0:
-- TLS on the federation transport (config field is in place).
-- Channel-mode burst + ongoing MODE propagation re-application on
-  the receiver (currently MODE is forwarded but not re-applied).
-- TS-based nick/channel collision resolution.
-- SQUIT recovery beyond "drop the link and forget remote users".
-- Subscription-aware routing (currently every channel event is
-  fanned out to every peer).
-- KILL routing, SERVICE pseudo-server, WHOIS over link.
-
----
-
-## M8 — Production hardening
-
-Shipped:
-- TLS on IRC client listeners (cert_file/key_file in
-  `listeners[]`, TLS 1.2 floor) with a registration roundtrip
-  test.
-- TLS on federation links in both directions, with optional
-  SHA-256 leaf-cert fingerprint pinning so operators can run a
-  self-signed PKI without distributing a CA bundle. Two
-  integration tests cover the happy path and a fingerprint
-  mismatch rejection.
-- Prometheus `/metrics` endpoint on the dashboard listener
-  (text format, hand-rolled, no client_golang dependency).
-  Exposes user/channel/federation/bot gauges plus inbound/
-  outbound message counters and uptime.
-- Production `docker-compose.yml` hardened with `cap_drop ALL`,
-  `no-new-privileges`, `read_only` root, `/tmp` tmpfs, log
-  rotation on every service, and CPU/memory caps on Postgres.
-  Federation listener guidance documented in the file header.
-- Lua sandbox audit (`docs/SECURITY.md`) covering the trust
-  boundaries and the sandbox close-out work. `string.dump`
-  stripped explicitly. Enumerated regression test in
-  `internal/bots/sandbox_test.go` so any future change to
-  OpenLibs that reintroduces a dangerous symbol fails loudly.
-- `docs/OPERATIONS.md` covering the metrics surface, hot
-  backup recipes for both SQLite and Postgres, restore + DR
-  drill, and an incident response cheat sheet keyed off
-  specific metrics.
-
-Deferred to post-1.0:
-- Per-call instruction budget for Lua bots (waiting on a stable
-  gopher-lua hook API; wallclock budget covers tight loops).
-- Soak test at 10k connections / 1k channels / 24h — needs a
-  dedicated reference machine.
-- Flood control benchmark suite — current limits are
-  conservative defaults rather than measured.
-- Memory budget for individual Lua bots (currently relies on
-  the container memory cap to bound a runaway).
-
-**Exit:** every M8 deliverable above is in main with tests; the
-remaining items are tracked but do not block tagging v1.0.0.
+**Exit:** `docs/OPERATIONS.md` gains a "measured envelope"
+section pointing at concrete CSV/text artefacts checked into
+`tests/soak/results/`. The defaults in production.yaml are
+updated to match the soak result.
 
 ---
 
-## Cross-cutting work (touch every milestone)
+### M12 — Polish & release plumbing
 
-- Keep `docs/PROTOCOL.md` updated with ambiguities and decisions.
-- Keep `docs/CONFIG.md` up to date with every new config field.
-- Keep `AGENTS.md` current if the bot API surface grows.
-- Every new feature ships with at least one unit test and, where it crosses an API boundary, an e2e test.
+**Goal:** clean up everything that v1.0 left scuffed.
 
-## Open questions (to resolve before M1 wraps)
+- **TLS termination on the dashboard listener.** The recommended
+  v1.0 deployment fronts the dashboard with a reverse proxy. Make
+  in-tree TLS work too, so the operator can opt out of the proxy
+  layer. Reuse the existing `dashboard.tls.{cert_file,key_file}`
+  fields that already round-trip through the config loader.
+- **Reload-on-SIGHUP.** v1.0 documents which config sections are
+  hot-reloadable but only the MOTD is actually wired. Wire
+  `logging.level`, `operators` (statically configured ones), and
+  the bot list. Everything else still requires a restart.
+- **`/api/v1/config/reload` admin endpoint.** Same surface as
+  SIGHUP but addressable from the API.
+- **Release plumbing.** GoReleaser config, container image
+  signing (cosign), SBOM generation, an `installer.sh` that
+  fetches the latest tagged binary and a sample compose file.
+- **Migration guide v1.0 → v1.1.** Empty section unless M9 ends
+  up needing a TS-field migration on the persistent state — in
+  which case the guide explains the cold-restart upgrade path.
 
-1. Go module path — pick one and commit it.
-2. License — MIT, Apache-2.0, or AGPL? Affects contribution appetite.
-3. Do we ship a minimal YAML loader in-tree, or take the `sigs.k8s.io/yaml` dependency? Defer decision to M2.
-4. IRCv3 `message-tags` — adopt in M2 or push to v2? Current plan: push to v2, but leave room in the parser.
-5. Nickname case mapping: RFC 1459 only, or also `rfc7613`/`ascii`? Current plan: RFC 1459 default, `ascii` opt-in.
+**Exit:** `git tag v1.1.0` cuts a signed release whose changelog
+covers M9 → M12 in operator-readable language.
+
+---
+
+## Cross-cutting
+
+- Every commit still follows Conventional Commits — see
+  `CLAUDE.md` for the type table.
+- Every new feature still ships with at least one test, and
+  every cross-API surface still ships with an e2e test.
+- `docs/PROTOCOL.md` continues to absorb RFC ambiguities as
+  they come up.
+- `docs/CONFIG.md` is updated in the same commit as any new
+  config field.
+
+## Out of scope for v1.1
+
+These were considered and explicitly cut. They live in a future
+v1.2+ plan.
+
+- IRCv3 capabilities beyond `CAP END` (`message-tags`,
+  `account-tag`, `chghost`, ...).
+- SERVICE pseudo-server.
+- Multi-DC federation routing tables.
+- Webhook v2 event payload schema (the v1 jsonl payload stays
+  compatible for the whole 1.x line).
+- Operator account federation (operator records are still
+  per-node).
