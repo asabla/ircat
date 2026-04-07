@@ -77,14 +77,58 @@ func (s *fedSupervisor) dialOutbound(spec config.LinkSpec) {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		dialer := net.Dialer{Timeout: 10 * time.Second}
-		conn, err := dialer.DialContext(s.ctx, "tcp", addr)
-		if err != nil {
-			s.logger.Warn("federation dial failed", "peer", spec.Name, "addr", addr, "error", err)
-			return
+		// Reconnect loop. We back off exponentially between
+		// failed attempts up to a 60s ceiling and reset the
+		// backoff every time a link runs to completion (so a
+		// fast disconnect/reconnect cycle still climbs the
+		// ladder, but a successful long-lived link starts the
+		// next attempt at the floor again).
+		backoff := time.Second
+		const maxBackoff = 60 * time.Second
+		for {
+			if s.ctx.Err() != nil {
+				return
+			}
+			dialer := net.Dialer{Timeout: 10 * time.Second}
+			conn, err := dialer.DialContext(s.ctx, "tcp", addr)
+			if err != nil {
+				s.logger.Warn("federation dial failed",
+					"peer", spec.Name, "addr", addr, "error", err,
+					"retry_in", backoff.String())
+				if !sleepOrCancel(s.ctx, backoff) {
+					return
+				}
+				if backoff < maxBackoff {
+					backoff *= 2
+					if backoff > maxBackoff {
+						backoff = maxBackoff
+					}
+				}
+				continue
+			}
+			s.runLink(conn, cfg, true)
+			backoff = time.Second
+			s.logger.Info("federation link dropped, will reconnect",
+				"peer", spec.Name, "retry_in", backoff.String())
+			if !sleepOrCancel(s.ctx, backoff) {
+				return
+			}
 		}
-		s.runLink(conn, cfg, true)
 	}()
+}
+
+// sleepOrCancel waits for d or for ctx to be cancelled. Returns
+// true if the wait elapsed normally and false if ctx was
+// cancelled (in which case the caller should bail out).
+func sleepOrCancel(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // runLink is the shared drain routine for both outbound and
