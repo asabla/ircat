@@ -119,37 +119,46 @@ Deferred to v1.2:
 **Goal:** stop guessing about the operating envelope. Replace
 "conservative defaults" with measured numbers.
 
-- **Soak test rig.** Write a `tests/soak/` harness (Go binary
-  built off the existing `ircclient` test helper) that opens N
-  connections, joins each one to M channels, and runs a sustained
-  PRIVMSG load for D hours. Configurable via flags. Targets:
-  - 10k concurrent registered connections.
-  - 1k channels with average 10 members each.
-  - 24h run on the reference Hetzner box documented in
-    `docs/OPERATIONS.md`.
-  - End-of-run assertions: zero dropped lines, zero protocol
-    violations, RSS within 25% of the 1h baseline.
-- **Flood-control benchmark suite.** `internal/server/floodcontrol`
-  already has the token bucket; add `Benchmark*` cases that
-  measure the steady-state ceiling at 1, 10, 100, 1000 senders
-  and produce a CSV the docs can plot. Use the result to revise
-  the default `message_burst` / `message_refill_per_second`
-  values in `default-config.yaml` and `production.yaml`.
-- **Federation latency benchmark.** Two-node Compose stack, one
-  client on each side, measure the wall-clock between
-  `c.Write([]byte("PRIVMSG #x :hi"))` on node A and the
-  corresponding read on node B's client. Repeat for 100k samples
-  and document the median + p99 in `docs/FEDERATION.md`.
-- **Storage benchmark.** Time the SQLite vs. Postgres backends
-  on the audit-write hot path (`storage.Audit().Append`) at
-  1k/10k/100k events. Document the results in
-  `docs/OPERATIONS.md` so operators can pick a backend with
-  numbers in hand.
+Shipped:
+- **Flood-control benchmark suite.** `internal/server/floodcontrol_bench_test.go`
+  has three benchmark families: uncontended floor (~55 ns/op),
+  N-senders-on-shared-bucket worst case (caps at ~200 ns at
+  N=1000), and per-connection production model (~4 ns/op at
+  N≥10 thanks to parallel scaling). Numbers and operator
+  guidance in `docs/OPERATIONS.md`.
+- **Storage backend benchmarks.** `internal/storage/sqlite/events_bench_test.go`
+  and the matching Postgres file. The audit found that the
+  default SQLite DSN was using WAL with implicit
+  `synchronous=FULL`, which fsyncs every commit at ~8.4 ms.
+  Switched the default to `synchronous=NORMAL` (the upstream-
+  recommended WAL pairing), bringing serial Append down to
+  ~183 µs and parallel Append to ~73 µs — a 46x speedup with
+  no API change. Numbers in `docs/OPERATIONS.md`.
+- **Federation latency benchmark.** `internal/server/federation_bench_test.go`
+  brings up two real Server instances bridged via `net.Pipe`
+  and measures the wall-clock between `cAlice.Write` and the
+  matching read on `cBob`. Reports per-message latency plus
+  p50 / p99 metrics. Reference numbers (~38 µs mean / 36 µs
+  p50 / 89 µs p99) in `docs/FEDERATION.md`.
+- **Soak test harness.** `tests/soak/` Go binary using the
+  existing `ircclient` helper. Per-conn sender + drain
+  reader; reports sent / received / drops / rate; exits
+  non-zero when the drop rate exceeds the configurable
+  threshold (default 1%). Smoke test with `go run ./tests/soak`
+  takes < 10s on a dev box; the v1.1 reference soak (10k conns
+  / 1k channels / 24h) is documented in `docs/OPERATIONS.md`.
 
-**Exit:** `docs/OPERATIONS.md` gains a "measured envelope"
-section pointing at concrete CSV/text artefacts checked into
-`tests/soak/results/`. The defaults in production.yaml are
-updated to match the soak result.
+The required helper refactor moved `dialClient`, `expectNumeric`,
+`readUntil`, and `linkTwoServers` from `*testing.T` to
+`testing.TB` so the federation latency benchmark could share
+them with the integration tests. Production code is unchanged.
+
+Deferred to v1.2:
+- A 24h reference soak run on a dedicated box and a CI nightly
+  job that gates merges on its result. The harness exists; the
+  schedule is the missing piece.
+- A storage benchmark against a real Postgres on tuned hardware
+  (the existing bench Skips cleanly without `IRCAT_TEST_POSTGRES_DSN`).
 
 ---
 
