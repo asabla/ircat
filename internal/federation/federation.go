@@ -664,7 +664,15 @@ func (l *Link) handleRemoteJoin(msg *protocol.Message) {
 	if len(msg.Params) >= 2 {
 		if ts, err := strconv.ParseInt(msg.Params[1], 10, 64); err == nil && ts > 0 {
 			if ch := world.FindChannel(channelName); ch != nil {
-				ch.AdoptOlderTS(ts)
+				if ch.AdoptOlderTS(ts) {
+					// Older TS won — per RFC 2813 §5.2 we
+					// discard our local op/voice state and
+					// accept whatever the peer bursts as
+					// authoritative. The bursted MODE +o /
+					// +v lines that follow this JOIN will
+					// reapply the right flags.
+					ch.ResetMembershipFlags()
+				}
 			}
 		}
 	}

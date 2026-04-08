@@ -201,6 +201,54 @@ func TestChannel_SortedMemberIDs(t *testing.T) {
 	}
 }
 
+func TestChannel_AdoptOlderTSAndReset(t *testing.T) {
+	w := NewWorld()
+	a, _ := w.AddUser(&User{Nick: "alice"})
+	b, _ := w.AddUser(&User{Nick: "bob"})
+	ch, _ := w.EnsureChannel("#x")
+	ch.addMember(a, true) // first member is opped automatically
+	ch.addMember(b, false)
+	ch.AddMembership(b, MemberVoice)
+
+	if !ch.Membership(a).IsOp() {
+		t.Fatal("alice should start as op")
+	}
+	if !ch.Membership(b).IsVoice() {
+		t.Fatal("bob should start with +v")
+	}
+
+	// AdoptOlderTS with the current TS or a newer one is a
+	// no-op and must NOT trigger a flag reset.
+	currentTS := ch.TS()
+	if ch.AdoptOlderTS(currentTS) {
+		t.Errorf("AdoptOlderTS at current returned true")
+	}
+	if ch.AdoptOlderTS(currentTS + 100) {
+		t.Errorf("AdoptOlderTS at newer returned true")
+	}
+	if !ch.Membership(a).IsOp() || !ch.Membership(b).IsVoice() {
+		t.Errorf("flags should be intact after no-op AdoptOlderTS")
+	}
+
+	// Now adopt a strictly older TS. The caller is expected
+	// to follow up with ResetMembershipFlags per the doc.
+	if !ch.AdoptOlderTS(currentTS - 1_000_000) {
+		t.Errorf("AdoptOlderTS at older should return true")
+	}
+	ch.ResetMembershipFlags()
+	if ch.Membership(a) != 0 {
+		t.Errorf("alice flags after reset = %v, want 0", ch.Membership(a))
+	}
+	if ch.Membership(b) != 0 {
+		t.Errorf("bob flags after reset = %v, want 0", ch.Membership(b))
+	}
+	// The members themselves should still be in the channel —
+	// only the per-member flags get cleared.
+	if !ch.IsMember(a) || !ch.IsMember(b) {
+		t.Errorf("members should still be present after flag reset")
+	}
+}
+
 func TestMembership_Prefix(t *testing.T) {
 	if got := MemberOp.Prefix(); got != "@" {
 		t.Errorf("op prefix = %q", got)

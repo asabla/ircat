@@ -122,6 +122,10 @@ func (c *Channel) TS() int64 {
 // already exists locally and the peer's TS is older, we adopt
 // the older TS so subsequent collision arithmetic on every node
 // converges on the same anchor.
+//
+// Returns true if the anchor was lowered. Callers that need
+// the matching membership reset (per RFC 2813 §5.2) should
+// follow up with ResetMembershipFlags.
 func (c *Channel) AdoptOlderTS(ts int64) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -133,6 +137,24 @@ func (c *Channel) AdoptOlderTS(ts int64) bool {
 	}
 	c.createdAt = time.Unix(0, ts)
 	return true
+}
+
+// ResetMembershipFlags strips every per-member flag (op,
+// voice) on every member of the channel, leaving the membership
+// set itself intact. Used by the federation receiver after an
+// AdoptOlderTS reset: per RFC 2813 §5.2, when the peer wins
+// the channel TS race we discard our local op/voice state and
+// accept the peer's bursted flags as authoritative.
+//
+// This is a hammer rather than a scalpel — every flag goes —
+// because the local node has no way to tell which flags were
+// granted under the older or newer TS regime.
+func (c *Channel) ResetMembershipFlags() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for id := range c.members {
+		c.members[id] = 0
+	}
 }
 
 // Topic returns the current topic, the hostmask of whoever set it,
