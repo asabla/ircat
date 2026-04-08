@@ -33,6 +33,10 @@ type PageDeps struct {
 	// Bots is the supervisor surface used by the bots CRUD
 	// pages. Optional — without it the form posts return 503.
 	Bots BotManager
+	// LogTail is the in-memory ring buffer the /dashboard/logs
+	// SSE stream polls. Optional — without it the page renders
+	// the empty state and the SSE handler returns 503.
+	LogTail LogRing
 }
 
 // PageServerInfo is the small interface the overview page reads.
@@ -62,6 +66,24 @@ type BotManager interface {
 	CreateBot(ctx context.Context, bot *storage.Bot) error
 	UpdateBot(ctx context.Context, bot *storage.Bot) error
 	DeleteBot(ctx context.Context, id string) error
+}
+
+// LogRing is the small read-only surface the live log tail
+// page polls. internal/logging.RingBuffer satisfies it via the
+// matching Since method declared on the entry type.
+type LogRing interface {
+	Since(seq uint64) []LogEntry
+}
+
+// LogEntry is the dashboard-side projection of one log record
+// for the SSE stream. The four getters are exactly what the
+// /dashboard/logs JS client renders. internal/logging.Entry
+// satisfies it via getter methods declared in that package.
+type LogEntry interface {
+	Sequence() uint64
+	Timestamp() time.Time
+	LevelName() string
+	MessageText() string
 }
 
 // FederationLister is the small read-only surface the
@@ -960,6 +982,149 @@ func (s *Server) handleFederationPage(sess *session, w http.ResponseWriter, r *h
 		})
 	}
 	s.renderPage(w, "federation", data)
+}
+
+// handleLogsPage renders the static /dashboard/logs page. The
+// real work happens in the SSE handler below — the page is
+// just a script that opens an EventSource and appends each
+// incoming record to the #logstream div.
+func (s *Server) handleLogsPage(sess *session, w http.ResponseWriter, r *http.Request) {
+	data := s.newPageData(sess, "logs", "live logs")
+	s.renderPage(w, "logs", data)
+}
+
+// handleLogsSSE streams new log records out as Server-Sent
+// Events. The handler polls the configured ring buffer every
+// logsPollInterval and emits any entries newer than the last
+// sequence it sent to this client. The polling rate is fast
+// enough to feel live but slow enough not to burn CPU; a
+// future commit can switch to a fan-out subscriber on the
+// ring buffer if 250 ms ever turns out to be too slow.
+func (s *Server) handleLogsSSE(sess *session, w http.ResponseWriter, r *http.Request) {
+	if s.pages == nil || s.pages.LogTail == nil {
+		http.Error(w, "log tail not configured", http.StatusServiceUnavailable)
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no") // disable nginx proxy buffering
+
+	// Send the initial backlog so the operator immediately
+	// sees the last few entries instead of an empty box.
+	var lastSeq uint64
+	for _, e := range s.pages.LogTail.Since(0) {
+		if err := writeLogSSE(w, e); err != nil {
+			return
+		}
+		if e.Sequence() > lastSeq {
+			lastSeq = e.Sequence()
+		}
+	}
+	flusher.Flush()
+
+	ticker := time.NewTicker(logsPollInterval)
+	defer ticker.Stop()
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			entries := s.pages.LogTail.Since(lastSeq)
+			if len(entries) == 0 {
+				// SSE comment ping so intermediaries do not
+				// time the connection out during quiet
+				// periods.
+				if _, err := w.Write([]byte(": ping\n\n")); err != nil {
+					return
+				}
+				flusher.Flush()
+				continue
+			}
+			for _, e := range entries {
+				if err := writeLogSSE(w, e); err != nil {
+					return
+				}
+				if e.Sequence() > lastSeq {
+					lastSeq = e.Sequence()
+				}
+			}
+			flusher.Flush()
+		}
+	}
+}
+
+// logsPollInterval is how often the SSE handler asks the ring
+// buffer for new entries. Picked to feel live in a browser
+// while staying off the CPU.
+const logsPollInterval = 250 * time.Millisecond
+
+// writeLogSSE writes one log entry as an SSE data frame. The
+// payload is hand-rolled JSON because the four fields are
+// short and known — no need to drag encoding/json into the
+// hot path.
+func writeLogSSE(w http.ResponseWriter, e LogEntry) error {
+	msg := jsonEscape(e.MessageText())
+	ts := e.Timestamp().UTC().Format("15:04:05.000")
+	payload := `{"seq":` + u64toa(e.Sequence()) +
+		`,"time":"` + ts +
+		`","level":"` + lowerLevel(e.LevelName()) +
+		`","message":"` + msg + `"}`
+	_, err := w.Write([]byte("data: " + payload + "\n\n"))
+	return err
+}
+
+// jsonEscape escapes the small set of characters that would
+// break a JSON string literal. Good enough for log lines; not
+// a general-purpose JSON encoder.
+func jsonEscape(s string) string {
+	if !strings.ContainsAny(s, "\"\\\n\r\t") {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s) + 8)
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch c {
+		case '"':
+			b.WriteString(`\"`)
+		case '\\':
+			b.WriteString(`\\`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
+// lowerLevel maps slog level strings to the four-step taxonomy
+// the JS client uses for filtering: debug, info, warn, error.
+// slog uses upper-case names like "DEBUG"/"INFO"; the JS uses
+// lowercase. Anything we do not recognise is mapped to "info"
+// so the row still renders.
+func lowerLevel(s string) string {
+	switch s {
+	case "DEBUG", "debug":
+		return "debug"
+	case "WARN", "warn", "WARNING":
+		return "warn"
+	case "ERROR", "error", "ERR":
+		return "error"
+	default:
+		return "info"
+	}
 }
 
 func (s *Server) handleEventsPage(sess *session, w http.ResponseWriter, r *http.Request) {

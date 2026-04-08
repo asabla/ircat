@@ -58,7 +58,7 @@ func runServer(args []string) error {
 		return fmt.Errorf("load config %q: %w", configPath, err)
 	}
 
-	logger, _, levelVar, err := logging.NewWithLevel(logging.Options{
+	logger, ring, levelVar, err := logging.NewWithLevel(logging.Options{
 		Level:             cfg.Logging.Level,
 		Format:            cfg.Logging.Format,
 		RingBufferEntries: cfg.Logging.RingBufferEntries,
@@ -147,6 +147,7 @@ func runServer(args []string) error {
 			Actuator:   srv,
 			Federation: federationListerAdapter{srv: srv},
 			Bots:       sup,
+			LogTail:    logRingAdapter{ring: ring},
 		},
 		Metrics: srv,
 		ReadyFunc: func() error {
@@ -238,6 +239,28 @@ func (a federationListerAdapter) FederationSnapshot() []dashboard.FederationLink
 	out := make([]dashboard.FederationLinkRow, len(rows))
 	for i := range rows {
 		out[i] = rows[i]
+	}
+	return out
+}
+
+// logRingAdapter widens *logging.RingBuffer.Since (which
+// returns []logging.Entry) into the dashboard.LogRing.Since
+// signature (which returns []dashboard.LogEntry). The wrap is
+// trivial — every Entry already satisfies LogEntry via getter
+// methods on the entry type — but the slice type itself needs
+// the explicit copy for Go to accept the conversion.
+type logRingAdapter struct {
+	ring *logging.RingBuffer
+}
+
+func (a logRingAdapter) Since(seq uint64) []dashboard.LogEntry {
+	if a.ring == nil {
+		return nil
+	}
+	entries := a.ring.Since(seq)
+	out := make([]dashboard.LogEntry, len(entries))
+	for i := range entries {
+		out[i] = entries[i]
 	}
 	return out
 }

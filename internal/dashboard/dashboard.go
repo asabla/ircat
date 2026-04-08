@@ -255,6 +255,8 @@ func (s *Server) registerRoutes(api http.Handler) {
 	s.mux.HandleFunc("POST /dashboard/tokens", s.requireSession(s.handleTokenCreate))
 	s.mux.HandleFunc("POST /dashboard/tokens/{id}/delete", s.requireSession(s.handleTokenDelete))
 	s.mux.HandleFunc("GET /dashboard/events", s.requireSession(s.handleEventsPage))
+	s.mux.HandleFunc("GET /dashboard/logs", s.requireSession(s.handleLogsPage))
+	s.mux.HandleFunc("GET /dashboard/logs/sse", s.requireSession(s.handleLogsSSE))
 
 	if api != nil {
 		s.mux.Handle("/api/v1/", http.StripPrefix("/api/v1", api))

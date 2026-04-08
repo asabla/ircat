@@ -18,6 +18,15 @@ type Entry struct {
 	Attrs   map[string]any `json:"attrs,omitempty"`
 }
 
+// Sequence / Timestamp / LevelName / MessageText satisfy the
+// internal/dashboard.LogEntry interface so the dashboard SSE
+// page can consume the ring buffer without importing this
+// package for the concrete type.
+func (e Entry) Sequence() uint64    { return e.Seq }
+func (e Entry) Timestamp() time.Time { return e.Time }
+func (e Entry) LevelName() string   { return e.Level }
+func (e Entry) MessageText() string { return e.Message }
+
 // RingBuffer is a fixed-capacity, thread-safe in-memory log tail.
 //
 // Entries are addressed by a monotonically increasing sequence number;

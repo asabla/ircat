@@ -266,6 +266,65 @@ func TestOperatorsPage_RendersOperator(t *testing.T) {
 	}
 }
 
+// fakeLogEntry / fakeLogRing back the log SSE test without
+// dragging the real internal/logging RingBuffer in.
+type fakeLogEntry struct {
+	seq   uint64
+	when  time.Time
+	level string
+	msg   string
+}
+
+func (f fakeLogEntry) Sequence() uint64     { return f.seq }
+func (f fakeLogEntry) Timestamp() time.Time { return f.when }
+func (f fakeLogEntry) LevelName() string    { return f.level }
+func (f fakeLogEntry) MessageText() string  { return f.msg }
+
+type fakeLogRing struct{ entries []LogEntry }
+
+func (f *fakeLogRing) Since(seq uint64) []LogEntry {
+	out := make([]LogEntry, 0, len(f.entries))
+	for _, e := range f.entries {
+		if e.Sequence() > seq {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// flushingRecorder wraps httptest.ResponseRecorder so the SSE
+// handler's http.Flusher type-assertion succeeds. Flush is a
+// no-op since the recorder accumulates everything.
+type flushingRecorder struct{ *httptest.ResponseRecorder }
+
+func (f *flushingRecorder) Flush() {}
+
+func TestLogsSSE_StreamsInitialBacklog(t *testing.T) {
+	srv, _, _ := newPageServer(t)
+	srv.pages.LogTail = &fakeLogRing{entries: []LogEntry{
+		fakeLogEntry{seq: 1, when: time.Date(2026, 4, 8, 12, 0, 0, 0, time.UTC), level: "INFO", msg: "ready"},
+		fakeLogEntry{seq: 2, when: time.Date(2026, 4, 8, 12, 0, 1, 0, time.UTC), level: "WARN", msg: "ouch"},
+	}}
+	cookie := loginCookie(t, srv, "admin", "secret")
+	req := httptest.NewRequest("GET", "/dashboard/logs/sse", nil)
+	req.AddCookie(cookie)
+	rec := &flushingRecorder{ResponseRecorder: httptest.NewRecorder()}
+	// Use a tiny timeout so the polling loop exits quickly.
+	ctx, cancel := context.WithTimeout(req.Context(), 50*time.Millisecond)
+	defer cancel()
+	srv.mux.ServeHTTP(rec, req.WithContext(ctx))
+	body := rec.Body.String()
+	if !strings.Contains(body, `"seq":1`) || !strings.Contains(body, `"message":"ready"`) {
+		t.Errorf("backlog seq 1 missing: %q", body)
+	}
+	if !strings.Contains(body, `"seq":2`) || !strings.Contains(body, `"level":"warn"`) {
+		t.Errorf("backlog seq 2 missing: %q", body)
+	}
+	if !strings.Contains(body, "data: {") {
+		t.Errorf("missing SSE data prefix: %q", body)
+	}
+}
+
 // fakeBotManager records every supervisor call so the bot
 // page tests can stay isolated from the real internal/bots
 // supervisor (which would compile the Lua source on every
