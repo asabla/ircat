@@ -82,6 +82,41 @@ func (s *Server) Version() string { return "ircat-0.0.1" }
 // StartedAt returns the server creation timestamp.
 func (s *Server) StartedAt() time.Time { return s.createdAt }
 
+// SetChannelTopic is the operator-facing topic setter used by
+// the dashboard / API. It mirrors the conn-side TOPIC handler:
+// applies the channel's topic length cap, persists, audits,
+// and broadcasts the change to local + federated members. The
+// setBy argument is the prefix that ends up on the wire as
+// the TOPIC line origin — pass an operator label like
+// "dashboard:alice" so other clients can distinguish
+// dashboard-driven topic edits from regular IRC TOPIC lines.
+//
+// Returns ErrUserNotFound when the channel does not exist (the
+// name is reused so callers can do a single not-found mapping
+// in the api / dashboard layer).
+func (s *Server) SetChannelTopic(ctx context.Context, channelName, topic, setBy string) error {
+	ch := s.world.FindChannel(channelName)
+	if ch == nil {
+		return ErrUserNotFound
+	}
+	if maxLen := s.cfg.Server.Limits.TopicLength; maxLen > 0 && len(topic) > maxLen {
+		topic = topic[:maxLen]
+	}
+	ch.SetTopic(topic, setBy, s.now())
+	s.persistChannel(ctx, ch)
+	s.emitAudit(ctx, AuditTypeTopic, setBy, ch.Name(), map[string]any{
+		"topic":  topic,
+		"source": "dashboard",
+	})
+	topicMsg := &protocol.Message{
+		Prefix:  setBy,
+		Command: "TOPIC",
+		Params:  []string{ch.Name(), topic},
+	}
+	s.broadcastToChannelFederated(ch, topicMsg, 0, true)
+	return nil
+}
+
 // UserCount returns the number of registered users currently
 // tracked by the world (excluding pending registrations).
 // Implements internal/dashboard.MetricsSource.

@@ -266,6 +266,78 @@ func TestOperatorsPage_RendersOperator(t *testing.T) {
 	}
 }
 
+func TestChannelDetailPage_RendersChannelWithMembers(t *testing.T) {
+	srv, _, world := newPageServer(t)
+	alice, _ := world.AddUser(&state.User{Nick: "alice", User: "alice", Host: "h", Registered: true})
+	_, _, _, _ = world.JoinChannel(alice, "#general")
+	cookie := loginCookie(t, srv, "admin", "secret")
+	req := httptest.NewRequest("GET", "/dashboard/channels/%23general", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"#general", "alice", "members", "edit topic"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("channel detail missing %q", want)
+		}
+	}
+}
+
+func TestChannelDetailPage_404OnUnknownChannel(t *testing.T) {
+	srv, _, _ := newPageServer(t)
+	cookie := loginCookie(t, srv, "admin", "secret")
+	req := httptest.NewRequest("GET", "/dashboard/channels/%23missing", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status %d, want 404", rec.Code)
+	}
+}
+
+func TestChannelTopicPost_AppliesViaActuator(t *testing.T) {
+	act := &fakeKickActuator{}
+	srv, _, world := newPageServerWithActuator(t, act)
+	alice, _ := world.AddUser(&state.User{Nick: "alice", User: "alice", Host: "h", Registered: true})
+	_, _, _, _ = world.JoinChannel(alice, "#general")
+	cookie := loginCookie(t, srv, "admin", "secret")
+
+	// Pull a CSRF token from the channel detail page first.
+	gReq := httptest.NewRequest("GET", "/dashboard/channels/%23general", nil)
+	gReq.AddCookie(cookie)
+	gRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(gRec, gReq)
+	body := gRec.Body.String()
+	idx := strings.Index(body, `name="csrf" value="`)
+	if idx < 0 {
+		t.Fatal("no csrf in channel detail")
+	}
+	rest := body[idx+len(`name="csrf" value="`):]
+	end := strings.Index(rest, `"`)
+	csrf := rest[:end]
+
+	form := url.Values{}
+	form.Set("csrf", csrf)
+	form.Set("topic", "welcome travelers")
+	pReq := httptest.NewRequest("POST", "/dashboard/channels/%23general/topic", strings.NewReader(form.Encode()))
+	pReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	pReq.AddCookie(cookie)
+	pRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(pRec, pReq)
+	if pRec.Code != http.StatusSeeOther {
+		t.Fatalf("status %d body %s", pRec.Code, pRec.Body.String())
+	}
+	if act.topicChan != "#general" || act.topic != "welcome travelers" {
+		t.Errorf("actuator chan=%q topic=%q", act.topicChan, act.topic)
+	}
+	if !strings.HasPrefix(act.topicSet, "dashboard:") {
+		t.Errorf("topic set-by should be prefixed dashboard:, got %q", act.topicSet)
+	}
+}
+
 // fakeFedRow / fakeFederationLister back the federation page
 // test without dragging the real federation registry into the
 // dashboard test suite.
@@ -319,18 +391,31 @@ func TestFederationPage_RendersLinks(t *testing.T) {
 	}
 }
 
-// fakeKickActuator records every KickUser call for the tests.
+// fakeKickActuator records every KickUser / SetChannelTopic
+// call for the tests. Renamed-in-spirit but kept under the
+// existing name to avoid churning every existing test that
+// references it.
 type fakeKickActuator struct {
-	last   string
-	reason string
-	err    error
-	calls  int
+	last      string
+	reason    string
+	err       error
+	calls     int
+	topic     string
+	topicChan string
+	topicSet  string
 }
 
 func (f *fakeKickActuator) KickUser(ctx context.Context, nick, reason string) error {
 	f.calls++
 	f.last = nick
 	f.reason = reason
+	return f.err
+}
+
+func (f *fakeKickActuator) SetChannelTopic(ctx context.Context, channel, topic, setBy string) error {
+	f.topicChan = channel
+	f.topic = topic
+	f.topicSet = setBy
 	return f.err
 }
 

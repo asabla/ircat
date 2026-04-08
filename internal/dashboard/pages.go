@@ -42,10 +42,11 @@ type PageServerInfo interface {
 }
 
 // PageActuator is the small interface the dashboard mutation
-// handlers (kick, etc.) call into. internal/server.Server
-// satisfies it via its existing KickUser method.
+// handlers (kick, set topic, etc.) call into. internal/server.Server
+// satisfies it via the matching method names.
 type PageActuator interface {
 	KickUser(ctx context.Context, nick, reason string) error
+	SetChannelTopic(ctx context.Context, channel, topic, setBy string) error
 }
 
 // FederationLister is the small read-only surface the
@@ -450,6 +451,86 @@ func (s *Server) handleKickUserPage(sess *session, w http.ResponseWriter, r *htt
 		return
 	}
 	http.Redirect(w, r, "/dashboard/users", http.StatusSeeOther)
+}
+
+// handleChannelDetailPage renders the per-channel page
+// reachable from the channels list. Shows topic, modes, the
+// member list with op/voice prefixes and a local/remote pill,
+// and an inline topic-edit form. The full ban list is
+// surfaced too if any are set.
+func (s *Server) handleChannelDetailPage(sess *session, w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	// Channel names start with # or & and the path uses URL
+	// encoding for # — accept both forms by re-prepending the
+	// prefix when the path value is bare.
+	if name != "" && name[0] != '#' && name[0] != '&' {
+		name = "#" + name
+	}
+	data := s.newPageData(sess, "channels", "channel — "+name)
+	if s.pages == nil || s.pages.World == nil {
+		http.Error(w, "world not configured", http.StatusServiceUnavailable)
+		return
+	}
+	ch := s.pages.World.FindChannel(name)
+	if ch == nil {
+		http.Error(w, "no such channel", http.StatusNotFound)
+		return
+	}
+	modes, _ := ch.ModeString()
+	topic, setBy, _ := ch.Topic()
+	detail := &channelDetailPayload{
+		Name:        ch.Name(),
+		MemberCount: ch.MemberCount(),
+		ModeWord:    modes,
+		Topic:       topic,
+		TopicSetBy:  setBy,
+	}
+	for id, mem := range ch.MemberIDs() {
+		u := s.pages.World.FindByID(id)
+		if u == nil {
+			continue
+		}
+		detail.Members = append(detail.Members, channelMemberPayload{
+			Nick:   u.Nick,
+			Prefix: mem.Prefix(),
+			Remote: u.IsRemote(),
+		})
+	}
+	sort.Slice(detail.Members, func(i, j int) bool { return detail.Members[i].Nick < detail.Members[j].Nick })
+	data.ChannelDetail = detail
+	s.renderPage(w, "channel_detail", data)
+}
+
+// handleChannelTopicPost is the form post that backs the
+// topic-edit form on the channel detail page. Calls into the
+// PageActuator with a "dashboard:<operator>" set-by prefix so
+// audit + federation broadcasts attribute the change to the
+// dashboard rather than to a regular IRC client.
+func (s *Server) handleChannelTopicPost(sess *session, w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name != "" && name[0] != '#' && name[0] != '&' {
+		name = "#" + name
+	}
+	if s.pages == nil || s.pages.Actuator == nil {
+		http.Error(w, "topic edit disabled", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if !s.checkCSRF(sess, r.PostForm.Get("csrf")) {
+		http.Error(w, "bad csrf token", http.StatusForbidden)
+		return
+	}
+	topic := r.PostForm.Get("topic")
+	setBy := "dashboard:" + sess.Operator
+	if err := s.pages.Actuator.SetChannelTopic(r.Context(), name, topic, setBy); err != nil {
+		s.logger.Warn("dashboard set topic failed", "channel", name, "error", err)
+		http.Error(w, "set topic failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/dashboard/channels/"+name, http.StatusSeeOther)
 }
 
 func (s *Server) handleFederationPage(sess *session, w http.ResponseWriter, r *http.Request) {
