@@ -61,3 +61,27 @@ jobs:
         run: go install honnef.co/go/tools/cmd/staticcheck@latest
       - name: run
         run: staticcheck ./...
+
+  fuzz-sandbox:
+    # Drives the existing FuzzSandboxNeverPanics target for 5
+    # minutes on every PR. The seed corpus already runs as a
+    # regression test in the main `test` job; this matrix entry
+    # exists so we get real fuzzing coverage on each change
+    # rather than waiting for a manual nightly trigger. The
+    # 5-minute budget is short enough to keep PR feedback fast
+    # and long enough to find a regression in the sandbox
+    # close-out path before it merges.
+    name: fuzz sandbox
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          check-latest: true
+          cache: true
+      - name: fuzz
+        run: |
+          go test -run='^$' -fuzz=FuzzSandboxNeverPanics \
+            -fuzztime=5m ./internal/bots/
