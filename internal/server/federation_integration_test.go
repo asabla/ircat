@@ -656,6 +656,117 @@ func TestFederation_NickCollisionHigherTSDropped(t *testing.T) {
 	}
 }
 
+// TestFederation_BanListPropagatesViaModeBurst exercises M14
+// #122: a +b set on the home server is mirrored on every peer
+// via the burst MODE +b lines (link-up) and the runtime
+// MODE +b path (post-burst). Local PRIVMSG enforcement on
+// the receiver therefore honours the same blocks the home
+// server does.
+func TestFederation_BanListPropagatesViaModeBurst(t *testing.T) {
+	addrA, srvA, closeA := buildFederationPeer(t, "node-a")
+	defer closeA()
+	_, srvB, closeB := buildFederationPeer(t, "node-b")
+	defer closeB()
+
+	// Set up #banned with a single +b BEFORE the link comes
+	// up so the burst path is what propagates the ban.
+	cAlice, rAlice := dialClient(t, addrA)
+	defer cAlice.Close()
+	cAlice.Write([]byte("NICK alice\r\nUSER alice 0 * :Alice\r\n"))
+	expectNumeric(t, cAlice, rAlice, "422", time.Now().Add(2*time.Second))
+	cAlice.Write([]byte("JOIN #banned\r\n"))
+	readUntil(t, cAlice, rAlice, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "366"
+	})
+	cAlice.Write([]byte("MODE #banned +b spammer!*@*\r\n"))
+	readUntil(t, cAlice, rAlice, time.Now().Add(2*time.Second), func(l string) bool {
+		return strings.Contains(l, " MODE #banned ") && strings.Contains(l, "+b")
+	})
+
+	// Bring the link up. Burst should carry +b spammer!*@*
+	closeLink := linkTwoServers(t, srvA, srvB)
+	defer closeLink()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		ch := srvB.world.FindChannel("#banned")
+		if ch != nil {
+			bans := ch.Bans()
+			if _, ok := bans["spammer!*@*"]; ok {
+				return
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if ch := srvB.world.FindChannel("#banned"); ch != nil {
+		t.Fatalf("ban not propagated to node B; bans = %+v", ch.Bans())
+	}
+	t.Fatal("#banned never appeared on node B")
+}
+
+// TestFederation_BanListRuntimePropagation drives a +b after
+// the link is already up, exercising the runtime MODE +b
+// receive path rather than the burst path.
+func TestFederation_BanListRuntimePropagation(t *testing.T) {
+	addrA, srvA, closeA := buildFederationPeer(t, "node-a")
+	defer closeA()
+	_, srvB, closeB := buildFederationPeer(t, "node-b")
+	defer closeB()
+
+	closeLink := linkTwoServers(t, srvA, srvB)
+	defer closeLink()
+
+	cAlice, rAlice := dialClient(t, addrA)
+	defer cAlice.Close()
+	cAlice.Write([]byte("NICK alice\r\nUSER alice 0 * :Alice\r\n"))
+	expectNumeric(t, cAlice, rAlice, "422", time.Now().Add(2*time.Second))
+	cAlice.Write([]byte("JOIN #live\r\n"))
+	readUntil(t, cAlice, rAlice, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "366"
+	})
+
+	// Wait for the channel to materialize on node B via the
+	// JOIN we just broadcast.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if srvB.world.FindChannel("#live") != nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	cAlice.Write([]byte("MODE #live +b badnick!*@*\r\n"))
+
+	deadline = time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		ch := srvB.world.FindChannel("#live")
+		if ch != nil {
+			if _, ok := ch.Bans()["badnick!*@*"]; ok {
+				goto added
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("runtime +b never propagated to node B")
+
+added:
+	// Now remove the ban. The receiver should mirror the
+	// removal too.
+	cAlice.Write([]byte("MODE #live -b badnick!*@*\r\n"))
+	deadline = time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		ch := srvB.world.FindChannel("#live")
+		if ch == nil {
+			break
+		}
+		if _, ok := ch.Bans()["badnick!*@*"]; !ok {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("runtime -b never propagated to node B")
+}
+
 // TestFederation_NickCollisionEqualTSKillsBoth exercises M14
 // #120: when the incoming TS exactly matches the existing TS
 // the receiver kills both copies (RFC 2813 §5.2). The local

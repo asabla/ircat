@@ -459,6 +459,19 @@ func (l *Link) sendBurst() {
 			Command: "MODE",
 			Params:  modeMsgParams,
 		})
+		// Ban-list burst: one MODE +b line per ban so the
+		// receiver can re-apply via the same handleRemoteMode
+		// path the runtime +b uses. The local channel's ban
+		// matching is what enforces +b at PRIVMSG time, so
+		// mirroring the bans is part of correct federation
+		// behaviour, not a nice-to-have.
+		for mask := range ch.Bans() {
+			l.Send(&protocol.Message{
+				Prefix:  l.localName,
+				Command: "MODE",
+				Params:  []string{ch.Name(), "+b", mask},
+			})
+		}
 		// Per-member privilege burst: one MODE line per op/voice
 		// on a local member. Remote members are skipped — their
 		// home server will burst them to us.
@@ -917,10 +930,22 @@ func applyRemoteChannelMode(world *state.World, ch *state.Channel, params []stri
 				_, _ = ch.RemoveMembership(target.ID, flag)
 			}
 		case 'b':
-			// Ban list propagation is a M9 follow-up. The home
-			// server still enforces +b on its own clients; the
-			// receiver simply does not duplicate the ban set.
-			_, _ = popArg()
+			// Ban list propagation. Mirror the peer's ban set
+			// so local PRIVMSG enforcement against remote
+			// channels honours the same blocks the home server
+			// does. The use-time field on AddBan does not need
+			// to be authoritative — we use the receive
+			// timestamp because the wire format does not carry
+			// the original.
+			mask, ok := popArg()
+			if !ok || mask == "" {
+				continue
+			}
+			if dir == '+' {
+				ch.AddBan(mask, time.Now())
+			} else {
+				ch.RemoveBan(mask)
+			}
 		}
 	}
 }

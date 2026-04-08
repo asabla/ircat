@@ -388,8 +388,23 @@ func (s *Server) broadcastToChannelFederated(ch *state.Channel, msg *protocol.Me
 	}
 	// Subscription mode. JOIN is the establishment message — it
 	// must reach every peer so the channel materializes there
-	// and a future PRIVMSG can route through the new subscription.
+	// and a future PRIVMSG can route through the new
+	// subscription. We also self-subscribe each peer on the
+	// way out: we just told them about this channel, so from
+	// our point of view they are now a subscriber and the next
+	// non-JOIN event for the channel routes back to them
+	// without waiting for the receiver-side handleRemoteJoin
+	// to subscribe in the other direction.
 	if msg.Command == "JOIN" {
+		s.fedMu.RLock()
+		peers := make([]string, 0, len(s.fedLinks))
+		for name := range s.fedLinks {
+			peers = append(peers, name)
+		}
+		s.fedMu.RUnlock()
+		for _, name := range peers {
+			s.SubscribePeerToChannel(name, ch.Name())
+		}
 		s.forwardToAllLinks(msg)
 		return
 	}
