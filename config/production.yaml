@@ -10,10 +10,16 @@ server:
   listeners:
     - address: "0.0.0.0:6667"
       tls: false
-    - address: "0.0.0.0:6697"
-      tls: true
-      cert_file: /etc/ircat/tls/cert.pem
-      key_file: /etc/ircat/tls/key.pem
+    # Uncomment + provide a real cert/key pair to enable
+    # the canonical TLS port. The default config does NOT
+    # enable it because the cert paths below have no shipped
+    # default file, and a missing keypair would crash-loop
+    # the container on first boot. Mount your cert chain at
+    # /etc/ircat/tls/ (read-only) and uncomment.
+    # - address: "0.0.0.0:6697"
+    #   tls: true
+    #   cert_file: /etc/ircat/tls/cert.pem
+    #   key_file: /etc/ircat/tls/key.pem
   limits:
     max_clients: 10000
     max_channels_per_user: 50
