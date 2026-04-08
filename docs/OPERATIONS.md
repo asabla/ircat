@@ -178,8 +178,8 @@ local figure. The benchmark Skip's cleanly when
 `tests/soak/` is a small Go binary that opens N concurrent IRC
 connections, joins each to M channels, and runs a sustained
 PRIVMSG load against a real ircat instance for the configured
-duration. Use it for quick load smoke tests during development
-and as the basis for the v1.1 nightly soak job.
+duration. Use it for quick load smoke tests during development,
+the nightly CI cron, and the manual reference soak.
 
 ```sh
 # Smoke test (≈5 seconds, no harm to run on a dev box):
@@ -189,25 +189,99 @@ go run ./tests/soak \
   -channels 10 \
   -msgs-per-sec 500 \
   -duration 5s
+```
 
-# Reference v1.1 soak (run against the production-style stack
-# with raised file-descriptor limits):
+#### Nightly CI run (automatic)
+
+`.github/workflows/soak.yml` runs the harness every day at
+03:00 UTC against a fresh ircat instance:
+
+| Setting | Value |
+|---|---|
+| Connections | 5 000 |
+| Channels | 500 |
+| Aggregate rate | 500 msgs/sec |
+| Duration | 1 hour |
+| Max drop rate | 0.1 % |
+
+Targets are deliberately smaller than the reference soak below
+because GitHub-hosted runners have 4 CPU and 16 GB RAM, not
+dedicated hardware. The CI job exists to catch broadcast
+hot-path regressions between releases; the **reference soak**
+is the bigger periodic exercise.
+
+Manual trigger via workflow_dispatch:
+```sh
+gh workflow run soak.yml -f conns=10000 -f channels=1000 \
+  -f msgs_per_sec=5000 -f duration=4h
+```
+
+Logs and the soak summary are uploaded as workflow artefacts
+on every run, including failures.
+
+#### Reference soak (manual, real hardware)
+
+The v1.1 plan called for a 24-hour reference soak at 10k
+concurrent connections, 1k channels, 24h on the reference
+Hetzner box. It's an operator drill rather than a CI job — the
+runner would need at least 4 CPU and 8 GB RAM dedicated to
+the harness alone, plus another 4 CPU and 4 GB for ircat.
+
+Recommended invocation, with the host pre-tuned (`ulimit -n
+65536`, raised TCP keepalives, no swap pressure):
+
+```sh
 go run ./tests/soak \
   -addr 127.0.0.1:6667 \
   -conns 10000 \
   -channels 1000 \
   -msgs-per-sec 5000 \
   -duration 24h \
-  -max-drop-rate 0.001
+  -warmup 5m \
+  -max-drop-rate 0.0005
 ```
+
+End-of-run sanity checks the drill commits to:
+
+| Property | Target |
+|---|---|
+| Drop rate | < 0.05 % |
+| RSS at 24h vs RSS at 1h baseline | within 25 % |
+| `ircat_messages_in_total` rate | stable to within 5 % over the run |
+| Audit log size | linear in event count, no exponential blowup |
+
+Capture the per-process RSS via the dashboard `/metrics`
+endpoint or `top -bn1 -p $(pidof ircat)`; the harness itself
+does not read RSS because it runs in a separate process.
 
 The harness reports `sent / received / drops / rate` and exits
 non-zero when the drop rate exceeds `-max-drop-rate` (default
-1 %). Server-side memory observation is the operator's job —
-scrape `ircat_messages_in_total` and process RSS via
-`/metrics`, or run `top -p $(pidof ircat)` in a side window.
-The harness intentionally does not measure the server's RSS
-itself because it runs in a separate process.
+1 %).
+
+#### Postgres backend benchmark on real hardware
+
+`internal/storage/postgres/events_bench_test.go` hosts the
+Postgres equivalent of the SQLite audit-write benchmark. It
+Skips cleanly when `IRCAT_TEST_POSTGRES_DSN` is unset, which is
+why the v1.1 measured envelope only quotes SQLite. Real
+numbers need an actual Postgres on tuned hardware:
+
+```sh
+# Against a local container:
+docker run --rm -d --name pgbench \
+  -e POSTGRES_PASSWORD=ircat -e POSTGRES_DB=ircat -e POSTGRES_USER=ircat \
+  -p 5432:5432 postgres:16-alpine
+
+IRCAT_TEST_POSTGRES_DSN='postgres://ircat:ircat@127.0.0.1:5432/ircat?sslmode=disable' \
+  go test -bench=BenchmarkEvents -benchtime=2s ./internal/storage/postgres/
+
+docker rm -f pgbench
+```
+
+For RDS-class numbers, point the DSN at a tuned managed
+instance and let the benchmark run for 30 seconds per case.
+Document the result alongside the SQLite numbers at the top of
+this section.
 
 ## Disaster recovery exercise
 
