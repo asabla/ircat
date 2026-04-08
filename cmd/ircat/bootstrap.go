@@ -43,7 +43,9 @@ func bootstrapStore(ctx context.Context, store storage.Store, cfg *config.Config
 
 func bootstrapInitialAdmin(ctx context.Context, store storage.Store, cfg *config.Config, logger *slog.Logger) error {
 	admin := cfg.Auth.InitialAdmin
-	if admin.Username == "" || admin.Password == "" {
+	if admin.Username == "" && admin.Password == "" {
+		// Both fields blank means the operator deliberately
+		// opted out of the bootstrap. No warning needed.
 		return nil
 	}
 	existing, err := store.Operators().List(ctx)
@@ -51,6 +53,35 @@ func bootstrapInitialAdmin(ctx context.Context, store storage.Store, cfg *config
 		return err
 	}
 	if len(existing) > 0 {
+		// Operators already exist; the bootstrap is a no-op
+		// on every restart after the first one.
+		return nil
+	}
+	// At this point the operators table is empty AND the
+	// config has at least partly opted into the bootstrap.
+	// Three failure modes get a WARN instead of a silent
+	// skip — they all leave the dashboard unloggable on a
+	// fresh boot, which v1.2 hit in production:
+	//
+	//   - username set, password env unset → silent skip
+	//   - username set, password resolved to empty string
+	//   - password set but username forgotten
+	//
+	// In every case the WARN tells the operator what is
+	// missing and how to recover via the `ircat operator
+	// add` subcommand introduced alongside this fix.
+	if admin.Username == "" || admin.Password == "" {
+		var missing string
+		switch {
+		case admin.Username == "" && admin.Password != "":
+			missing = "auth.initial_admin.username"
+		case admin.Username != "" && admin.Password == "":
+			missing = "auth.initial_admin.password (set IRCAT_INITIAL_ADMIN_PASSWORD or password_env)"
+		}
+		logger.Warn("initial admin bootstrap skipped — operators table is empty and config is incomplete",
+			"missing", missing,
+			"recovery", "run `ircat operator add <username>` against this store, or set the missing field and restart",
+		)
 		return nil
 	}
 	hash, err := auth.Hash(cfg.Auth.PasswordHash, admin.Password, auth.Argon2idParams{
