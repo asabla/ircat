@@ -27,6 +27,21 @@ func (fakeServerInfo) Version() string             { return "ircat-test" }
 func (fakeServerInfo) StartedAt() time.Time        { return time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC) }
 func (fakeServerInfo) ListenerAddresses() []string { return []string{"127.0.0.1:6667"} }
 
+// fakeMetricsForPages satisfies MetricsSource for the page-level
+// tests so the overview cards have something to render.
+type fakeMetricsForPages struct {
+	users, channels, fed, bots int
+	in, out                    uint64
+}
+
+func (f *fakeMetricsForPages) UserCount() int           { return f.users }
+func (f *fakeMetricsForPages) ChannelCount() int        { return f.channels }
+func (f *fakeMetricsForPages) FederationLinkCount() int { return f.fed }
+func (f *fakeMetricsForPages) BotCount() int            { return f.bots }
+func (f *fakeMetricsForPages) MessagesIn() uint64       { return f.in }
+func (f *fakeMetricsForPages) MessagesOut() uint64      { return f.out }
+func (f *fakeMetricsForPages) StartedAt() time.Time     { return time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC) }
+
 func newPageServer(t *testing.T) (*Server, *sqlite.Store, *state.World) {
 	t.Helper()
 	dir := t.TempDir()
@@ -61,6 +76,7 @@ func newPageServer(t *testing.T) (*Server, *sqlite.Store, *state.World) {
 			World:      world,
 			ServerInfo: fakeServerInfo{},
 		},
+		Metrics: &fakeMetricsForPages{users: 7, channels: 3, fed: 1, bots: 2, in: 100, out: 50},
 	})
 	return srv, store, world
 }
@@ -144,8 +160,47 @@ func TestOverviewPage_RendersWithSession(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "irc.test") {
+	body := rec.Body.String()
+	if !strings.Contains(body, "irc.test") {
 		t.Errorf("server name missing from overview")
+	}
+	// The card grid is the M13 headline. Confirm the values
+	// from the fake metrics source rendered.
+	for _, want := range []string{
+		`<h3>users</h3>`, `<div class="value">7</div>`,
+		`<h3>channels</h3>`, `<div class="value">3</div>`,
+		`<h3>federation links</h3>`,
+		`<h3>bots</h3>`, `<div class="value">2</div>`,
+		`hx-get="/dashboard/overview/cards"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("overview missing %q", want)
+		}
+	}
+}
+
+// TestOverviewCards_PartialReturnsBlockOnly hits the htmx
+// fragment endpoint and asserts the response is the cards
+// block, not the full page chrome.
+func TestOverviewCards_PartialReturnsBlockOnly(t *testing.T) {
+	srv, _, _ := newPageServer(t)
+	cookie := loginCookie(t, srv, "admin", "secret")
+	req := httptest.NewRequest("GET", "/dashboard/overview/cards", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "<html") || strings.Contains(body, "<aside") {
+		t.Errorf("partial leaked the chrome: %s", body[:200])
+	}
+	if !strings.Contains(body, `class="cards"`) {
+		t.Errorf("partial missing cards container")
+	}
+	if !strings.Contains(body, `<div class="value">7</div>`) {
+		t.Errorf("partial missing users value")
 	}
 }
 

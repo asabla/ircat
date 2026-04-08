@@ -227,6 +227,7 @@ func (s *Server) registerRoutes(api http.Handler) {
 
 	// Authenticated pages.
 	s.mux.HandleFunc("GET /dashboard", s.requireSession(s.handleOverview))
+	s.mux.HandleFunc("GET /dashboard/overview/cards", s.requireSession(s.handleOverviewCards))
 	s.mux.HandleFunc("GET /dashboard/users", s.requireSession(s.handleUsersPage))
 	s.mux.HandleFunc("POST /dashboard/users/{nick}/kick", s.requireSession(s.handleKickUserPage))
 	s.mux.HandleFunc("GET /dashboard/channels", s.requireSession(s.handleChannelsPage))

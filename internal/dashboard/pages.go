@@ -276,6 +276,21 @@ func (s *Server) handleOverview(sess *session, w http.ResponseWriter, r *http.Re
 	s.renderPage(w, "overview", data)
 }
 
+// handleOverviewCards renders just the overview-cards block,
+// not the surrounding chrome. The htmx attribute on the cards
+// container polls this endpoint every 5s and swaps the
+// returned fragment in place — that is the entire live-refresh
+// mechanism on the overview page.
+func (s *Server) handleOverviewCards(sess *session, w http.ResponseWriter, r *http.Request) {
+	data := s.newPageData(sess, "overview", "overview")
+	s.fillOverview(data)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.renderPartial(w, "overview", "overview-cards", data); err != nil {
+		s.logger.Warn("template render failed", "page", "overview-cards", "error", err)
+		http.Error(w, "render error", http.StatusInternalServerError)
+	}
+}
+
 // fillOverview populates the Server + Cards payloads. Extracted
 // so the partial-refresh handler can reuse it without
 // re-rendering the surrounding chrome.
