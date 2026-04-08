@@ -656,6 +656,104 @@ func TestFederation_NickCollisionHigherTSDropped(t *testing.T) {
 	}
 }
 
+// TestFederation_NickCollisionEqualTSKillsBoth exercises M14
+// #120: when the incoming TS exactly matches the existing TS
+// the receiver kills both copies (RFC 2813 §5.2). The local
+// alice gets disconnected, the incoming alice is dropped, and
+// a KILL line is emitted back to the peer for its side.
+func TestFederation_NickCollisionEqualTSKillsBoth(t *testing.T) {
+	addrA, srvA, closeA := buildFederationPeer(t, "node-a")
+	defer closeA()
+
+	cAlice, rAlice := dialClient(t, addrA)
+	defer cAlice.Close()
+	cAlice.Write([]byte("NICK alice\r\nUSER alice 0 * :Alice\r\n"))
+	expectNumeric(t, cAlice, rAlice, "422", time.Now().Add(2*time.Second))
+	aliceLocal := srvA.world.FindByNick("alice")
+	if aliceLocal == nil {
+		t.Fatal("alice not registered locally")
+	}
+	equalTS := aliceLocal.TS
+
+	logger, _, _ := logging.New(logging.Options{Format: "text", Level: "info"})
+	link := federation.New(srvA, federation.LinkConfig{
+		PeerName: "node-b", PasswordIn: "shared", PasswordOut: "shared",
+		Description: "equal-ts collision test",
+	}, logger)
+
+	connSrv, connTest := net.Pipe()
+	reader := federation.WrapConnRead(connSrv)
+	writer := federation.WrapConnWrite(connSrv)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- link.Run(ctx, reader, writer) }()
+	defer func() {
+		cancel()
+		_ = connSrv.Close()
+		_ = connTest.Close()
+		<-done
+	}()
+	if _, err := connTest.Write([]byte("PASS shared 0210 IRC| ircat-test\r\nSERVER node-b 1 1 :node-b\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if link.State() == federation.LinkActive {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	burstEqualTS := ":node-b NICK alice 1 alice 10.0.0.1 node-b + " +
+		strconv.FormatInt(equalTS, 10) + " :Alice from B\r\n"
+	if _, err := connTest.Write([]byte(burstEqualTS)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Local alice should be killed (the conn closes).
+	cAlice.SetReadDeadline(time.Now().Add(3 * time.Second))
+	disconnected := false
+	for !disconnected {
+		_, err := rAlice.ReadString('\n')
+		if err != nil {
+			disconnected = true
+		}
+	}
+	if !disconnected {
+		t.Fatal("local alice was not killed on equal-TS collision")
+	}
+
+	// Incoming alice should NOT have been added — neither side
+	// wins on equal TS.
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if srvA.world.FindByNick("alice") == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if u := srvA.world.FindByNick("alice"); u != nil {
+		t.Errorf("alice should be gone after equal-TS kill-both; got %+v", u)
+	}
+
+	// Receiver should have emitted KILL alice back to the peer.
+	rTest := bufio.NewReader(connTest)
+	connTest.SetReadDeadline(time.Now().Add(2 * time.Second))
+	gotKill := false
+	for !gotKill {
+		line, err := rTest.ReadString('\n')
+		if err != nil {
+			break
+		}
+		if strings.Contains(line, " KILL alice ") && strings.Contains(line, "equal TS") {
+			gotKill = true
+		}
+	}
+	if !gotKill {
+		t.Fatal("receiver did not emit equal-TS KILL back to the peer")
+	}
+}
+
 // TestFederation_SubscriptionRoutingDedupesPerPeer exercises M9
 // task #94 by counting the number of times a single PRIVMSG
 // crosses the federation link. With subscription routing the

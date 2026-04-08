@@ -552,7 +552,29 @@ func (l *Link) handleRemoteNick(msg *protocol.Message) {
 
 	// Collision check: is there already a user with this nick?
 	if existing := world.FindByNick(nick); existing != nil {
-		if ts != 0 && existing.TS != 0 && ts >= existing.TS {
+		switch {
+		case ts != 0 && existing.TS != 0 && ts == existing.TS:
+			// Equal-TS: per RFC 2813 §5.2 we kill BOTH copies
+			// because the network has no way to pick a winner
+			// without an external tiebreaker. The probability
+			// is vanishingly small at nanosecond resolution
+			// but the v1.2 plan called for closing this gap.
+			l.Send(&protocol.Message{
+				Prefix:  l.localName,
+				Command: "KILL",
+				Params:  []string{nick, "Nick collision (equal TS, both lose)"},
+			})
+			existingLocal := !existing.IsRemote()
+			existingNick := existing.Nick
+			world.RemoveUser(existing.ID)
+			if existingLocal {
+				l.host.DropLocalUser(existingNick, "Nick collision (equal TS, both lose)")
+			}
+			// Do NOT add the incoming record either — both
+			// sides lose. The peer's matching handler will
+			// drop its copy on the KILL we just sent.
+			return
+		case ts != 0 && existing.TS != 0 && ts > existing.TS:
 			// Incoming loses the tiebreaker. Tell the peer to
 			// drop its copy via KILL so the network converges.
 			l.Send(&protocol.Message{
@@ -562,11 +584,14 @@ func (l *Link) handleRemoteNick(msg *protocol.Message) {
 			})
 			return
 		}
-		// Incoming wins. Remove the existing record from the
-		// world synchronously so the AddUser below cannot race
-		// the conn close path. If the loser is local we ALSO
-		// notify the host so it disconnects the live conn —
-		// the world removal already happened, so the close
+		// Incoming wins (incoming TS strictly less than the
+		// existing TS, or one of the TSes is zero — the missing
+		// TS case is treated as v1.0 fallback, see the burst
+		// layout sniff above). Remove the existing record from
+		// the world synchronously so the AddUser below cannot
+		// race the conn close path. If the loser is local we
+		// ALSO notify the host so it disconnects the live conn
+		// — the world removal already happened, so the close
 		// path will not double-remove.
 		existingLocal := !existing.IsRemote()
 		existingNick := existing.Nick
