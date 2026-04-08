@@ -220,6 +220,37 @@ func TestUsersPage_RendersConnectedUser(t *testing.T) {
 	}
 }
 
+func TestUserDetailPage_RendersConnectedUser(t *testing.T) {
+	srv, _, world := newPageServer(t)
+	_, _ = world.AddUser(&state.User{Nick: "alice", User: "alice", Host: "h", Modes: "iow", Registered: true})
+	cookie := loginCookie(t, srv, "admin", "secret")
+	req := httptest.NewRequest("GET", "/dashboard/users/alice", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"alice", "alice!alice@h", "+iow", "actions"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("user detail missing %q", want)
+		}
+	}
+}
+
+func TestUserDetailPage_404OnUnknownNick(t *testing.T) {
+	srv, _, _ := newPageServer(t)
+	cookie := loginCookie(t, srv, "admin", "secret")
+	req := httptest.NewRequest("GET", "/dashboard/users/ghost", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status %d, want 404", rec.Code)
+	}
+}
+
 func TestOperatorsPage_RendersOperator(t *testing.T) {
 	srv, _, _ := newPageServer(t)
 	cookie := loginCookie(t, srv, "admin", "secret")

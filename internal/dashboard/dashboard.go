@@ -236,6 +236,7 @@ func (s *Server) registerRoutes(api http.Handler) {
 	s.mux.HandleFunc("GET /dashboard", s.requireSession(s.handleOverview))
 	s.mux.HandleFunc("GET /dashboard/overview/cards", s.requireSession(s.handleOverviewCards))
 	s.mux.HandleFunc("GET /dashboard/users", s.requireSession(s.handleUsersPage))
+	s.mux.HandleFunc("GET /dashboard/users/{nick}", s.requireSession(s.handleUserDetailPage))
 	s.mux.HandleFunc("POST /dashboard/users/{nick}/kick", s.requireSession(s.handleKickUserPage))
 	s.mux.HandleFunc("GET /dashboard/channels", s.requireSession(s.handleChannelsPage))
 	s.mux.HandleFunc("GET /dashboard/federation", s.requireSession(s.handleFederationPage))

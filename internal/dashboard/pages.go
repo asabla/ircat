@@ -396,6 +396,34 @@ func (s *Server) handleOperatorsPage(sess *session, w http.ResponseWriter, r *ht
 	s.renderPage(w, "operators", data)
 }
 
+// handleUserDetailPage renders the per-user page reachable
+// from each row of the users table. The page shows identity,
+// channel membership, and an inline kick form with an optional
+// reason field.
+func (s *Server) handleUserDetailPage(sess *session, w http.ResponseWriter, r *http.Request) {
+	nick := r.PathValue("nick")
+	data := s.newPageData(sess, "users", "user — "+nick)
+	if s.pages != nil && s.pages.World != nil {
+		u := s.pages.World.FindByNick(nick)
+		if u == nil {
+			http.Error(w, "no such user", http.StatusNotFound)
+			return
+		}
+		detail := &userDetailPayload{
+			Nick:       u.Nick,
+			Hostmask:   u.Hostmask(),
+			Modes:      u.Modes,
+			HomeServer: u.HomeServer,
+		}
+		for _, ch := range s.pages.World.UserChannels(u.ID) {
+			detail.Channels = append(detail.Channels, ch.Name())
+		}
+		sort.Strings(detail.Channels)
+		data.UserDetail = detail
+	}
+	s.renderPage(w, "user_detail", data)
+}
+
 // handleKickUserPage is the dashboard form post that mirrors the
 // API kick path. The form template lives in templates/users.html.
 func (s *Server) handleKickUserPage(sess *session, w http.ResponseWriter, r *http.Request) {
