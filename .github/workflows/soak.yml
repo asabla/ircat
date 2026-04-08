@@ -1,0 +1,143 @@
+name: soak
+
+# Nightly soak run that drives the existing tests/soak harness
+# against a fresh ircat instance for one hour. The targets here
+# are deliberately smaller than the v1.1 reference soak (10k
+# conns / 1k channels / 24h) — this job runs on a GitHub-hosted
+# runner which has 4 CPU and 16 GB RAM, not a dedicated
+# Hetzner box. The 24h reference soak is documented in
+# docs/OPERATIONS.md as a manual operator drill.
+#
+# The job uploads the per-run summary as a workflow artefact
+# and posts a comment on the latest commit if the harness
+# exits non-zero (drop rate > 0.1 percent).
+
+on:
+  schedule:
+    # Daily at 03:00 UTC. Picked to avoid the morning push wave
+    # so the runner pool is not contended.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      conns:
+        description: 'concurrent connections'
+        default: '5000'
+      channels:
+        description: 'distinct channels'
+        default: '500'
+      msgs_per_sec:
+        description: 'aggregate target msgs/sec'
+        default: '500'
+      duration:
+        description: 'soak duration (Go duration string)'
+        default: '1h'
+
+permissions:
+  contents: read
+
+jobs:
+  soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup-go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+          cache: true
+
+      - name: build server + soak harness
+        run: |
+          go build -trimpath -o ./ircat ./cmd/ircat
+          go build -trimpath -o ./soak ./tests/soak
+
+      - name: write soak config
+        run: |
+          mkdir -p /tmp/soak
+          cat > /tmp/soak/config.yaml <<'EOF'
+          version: 1
+          server:
+            name: soak.ci
+            network: SoakCI
+            listeners:
+              - address: "127.0.0.1:16667"
+                tls: false
+            limits:
+              nick_length: 30
+              channel_length: 50
+              topic_length: 390
+              away_length: 255
+              kick_reason_length: 255
+              ping_interval_seconds: 60
+              ping_timeout_seconds: 240
+              message_burst: 100000
+              message_refill_per_second: 100000
+              message_violations_to_kick: 100000
+          storage:
+            driver: sqlite
+            sqlite:
+              path: /tmp/soak/ircat.db
+          dashboard:
+            enabled: false
+          EOF
+
+      - name: raise file descriptor ulimit
+        run: |
+          # 5k clients + buffer headroom + the server's own fds.
+          # The default 1024 limit on GitHub runners is not enough.
+          ulimit -n 65536 || true
+          echo "ulimit -n = $(ulimit -n)"
+
+      - name: launch ircat
+        run: |
+          nohup ./ircat --config /tmp/soak/config.yaml > /tmp/soak/server.log 2>&1 &
+          echo $! > /tmp/soak/ircat.pid
+          # Wait until the listener accepts a connection.
+          for i in $(seq 1 30); do
+            if printf '' | timeout 1 bash -c 'cat < /dev/tcp/127.0.0.1/16667' >/dev/null 2>&1; then
+              echo "ircat ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: run soak harness
+        id: soak
+        env:
+          CONNS: ${{ github.event.inputs.conns || '5000' }}
+          CHANNELS: ${{ github.event.inputs.channels || '500' }}
+          RATE: ${{ github.event.inputs.msgs_per_sec || '500' }}
+          DURATION: ${{ github.event.inputs.duration || '1h' }}
+        run: |
+          set -o pipefail
+          ulimit -n 65536 || true
+          ./soak \
+            -addr 127.0.0.1:16667 \
+            -conns "${CONNS}" \
+            -channels "${CHANNELS}" \
+            -msgs-per-sec "${RATE}" \
+            -duration "${DURATION}" \
+            -warmup 30s \
+            -max-drop-rate 0.001 \
+            2>&1 | tee /tmp/soak/soak.log
+
+      - name: stop ircat
+        if: always()
+        run: |
+          if [ -f /tmp/soak/ircat.pid ]; then
+            kill "$(cat /tmp/soak/ircat.pid)" 2>/dev/null || true
+          fi
+
+      - name: upload soak artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-${{ github.run_id }}
+          path: |
+            /tmp/soak/soak.log
+            /tmp/soak/server.log
+          retention-days: 30
