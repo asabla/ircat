@@ -97,6 +97,13 @@ type Server struct {
 	fedMu    sync.RWMutex
 	fedLinks map[string]fedLinkSender
 	fedSubs  map[string]map[string]bool
+	// squitSeen is the (peer, reason) -> expiry map used by
+	// HandleSquit to short-circuit a fan-out loop in a
+	// >3-node mesh. Entries are added on first observation and
+	// drop on the next call after their expiry. Guarded by
+	// fedMu so concurrent SQUIT receivers do not race each
+	// other or the LinkFor read path.
+	squitSeen map[squitSeenKey]time.Time
 
 	// motd is the message-of-the-day file content split into lines.
 	// Loaded at startup and re-read on ReloadMOTD; nil if no MOTD

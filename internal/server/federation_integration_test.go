@@ -656,6 +656,51 @@ func TestFederation_NickCollisionHigherTSDropped(t *testing.T) {
 	}
 }
 
+// TestFederation_SquitLoopGuardDedupesByPeerAndReason
+// asserts that calling HandleSquit with the same (peer,
+// reason) tuple twice in a row only fans the synthetic QUITs
+// once. The guard breaks fan-out loops in a >3-node mesh
+// without needing a hop counter.
+func TestFederation_SquitLoopGuardDedupesByPeerAndReason(t *testing.T) {
+	addrA, srvA, closeA := buildFederationPeer(t, "node-a")
+	defer closeA()
+
+	// Inject a remote user homed on node-b so HandleSquit has
+	// something to clean up. We can drive HandleSquit
+	// directly without a real link.
+	if _, err := srvA.world.AddUser(&state.User{
+		Nick: "ghost", User: "ghost", Host: "h", Registered: true, HomeServer: "node-b",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// First call performs the recovery: ghost goes away.
+	srvA.HandleSquit("node-b", "First split")
+	if u := srvA.world.FindByNick("ghost"); u != nil {
+		t.Fatalf("ghost should be gone after first SQUIT, got %+v", u)
+	}
+
+	// Add another remote user with the same home + reason to
+	// prove the second call is a no-op.
+	if _, err := srvA.world.AddUser(&state.User{
+		Nick: "ghost2", User: "ghost2", Host: "h", Registered: true, HomeServer: "node-b",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srvA.HandleSquit("node-b", "First split")
+	if u := srvA.world.FindByNick("ghost2"); u == nil {
+		t.Fatal("loop guard did not fire: second SQUIT should not have removed ghost2")
+	}
+
+	// A different reason for the same peer is a fresh event
+	// and should pass through.
+	srvA.HandleSquit("node-b", "Second split")
+	if u := srvA.world.FindByNick("ghost2"); u != nil {
+		t.Fatalf("distinct reason should bypass the guard, got %+v", u)
+	}
+	_ = addrA
+}
+
 // TestFederation_BanListPropagatesViaModeBurst exercises M14
 // #122: a +b set on the home server is mirrored on every peer
 // via the burst MODE +b lines (link-up) and the runtime

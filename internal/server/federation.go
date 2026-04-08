@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"strconv"
+	"time"
 
 	"github.com/asabla/ircat/internal/protocol"
 	"github.com/asabla/ircat/internal/state"
@@ -101,6 +102,46 @@ func (s *Server) DropLocalUser(nick, reason string) {
 	target.cancel(context.Canceled)
 }
 
+// squitSeenKey is the dedup key for the SQUIT loop guard.
+type squitSeenKey struct {
+	peer   string
+	reason string
+}
+
+// squitSeenRecently reports whether a (peer, reason) tuple has
+// been observed in the last squitSeenTTL. Records the
+// observation as a side effect when it is fresh, so the next
+// call within the TTL returns true. Stale entries are dropped
+// opportunistically on every call to keep the map small
+// without a separate sweeper goroutine.
+func (s *Server) squitSeenRecently(peer, reason string) bool {
+	key := squitSeenKey{peer: peer, reason: reason}
+	now := time.Now()
+	s.fedMu.Lock()
+	defer s.fedMu.Unlock()
+	if s.squitSeen == nil {
+		s.squitSeen = make(map[squitSeenKey]time.Time)
+	}
+	// Drop stale entries opportunistically.
+	for k, exp := range s.squitSeen {
+		if now.After(exp) {
+			delete(s.squitSeen, k)
+		}
+	}
+	if exp, ok := s.squitSeen[key]; ok && now.Before(exp) {
+		return true
+	}
+	s.squitSeen[key] = now.Add(squitSeenTTL)
+	return false
+}
+
+// squitSeenTTL is how long a (peer, reason) seen-set entry
+// stays in the dedup map. Picked long enough to cover the
+// fan-out propagation delay across a 5-hop mesh on a busy
+// host, short enough to never block a legitimate
+// reconnect-then-disconnect sequence.
+const squitSeenTTL = 5 * time.Second
+
 // HandleSquit performs the SQUIT recovery flow when a federation
 // peer drops: every user whose HomeServer matches peerName is
 // removed from the world, and a synthetic QUIT broadcast goes
@@ -113,7 +154,9 @@ func (s *Server) DropLocalUser(nick, reason string) {
 // HandleSquit also forwards :localServer SQUIT peerName :reason
 // to every remaining federation link so the rest of the mesh
 // learns about the loss without needing each node to detect it
-// independently.
+// independently. A small (peer, reason) seen-set with a few-
+// second TTL guards against a fan-out loop in a >3-node mesh:
+// every node forwards SQUIT exactly once and ignores duplicates.
 //
 // This is the receiver-of-loss path. It does NOT call
 // UnregisterLink — the supervisor's OnClosed callback is the
@@ -126,6 +169,14 @@ func (s *Server) HandleSquit(peerName, reason string) {
 	}
 	if reason == "" {
 		reason = "Net split"
+	}
+	// Loop guard: drop SQUITs we have seen recently for the
+	// same (peer, reason) tuple. The TTL is short so a
+	// reconnect-then-disconnect sequence is not blocked, and
+	// the key includes the reason so two distinct disconnect
+	// events for the same peer still propagate.
+	if s.squitSeenRecently(peerName, reason) {
+		return
 	}
 	// Snapshot the world under the world lock so a concurrent
 	// runtime announce cannot race the cleanup. Walk the snapshot
