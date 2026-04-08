@@ -698,15 +698,45 @@ func TestKickFromDashboard_WithCSRFKicks(t *testing.T) {
 func TestLogout_ClearsCookieAndRedirects(t *testing.T) {
 	srv, _, _ := newPageServer(t)
 	cookie := loginCookie(t, srv, "admin", "secret")
-	req := httptest.NewRequest("POST", "/dashboard/logout", nil)
+
+	// Pull the per-session CSRF off the overview page first;
+	// the logout form post is now CSRF-protected like every
+	// other mutating dashboard endpoint.
+	gReq := httptest.NewRequest("GET", "/dashboard", nil)
+	gReq.AddCookie(cookie)
+	gRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(gRec, gReq)
+	csrf := extractCSRF(t, gRec.Body.String())
+
+	form := url.Values{}
+	form.Set("csrf", csrf)
+	req := httptest.NewRequest("POST", "/dashboard/logout", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	srv.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("status %d", rec.Code)
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
 	}
 	if rec.Header().Get("Location") != "/login" {
 		t.Errorf("location = %q", rec.Header().Get("Location"))
+	}
+}
+
+// TestLogout_RejectsMissingCSRF asserts that the new CSRF
+// guard on the logout endpoint actually rejects a form post
+// without the token. Together with the happy-path test above
+// this is the regression net for the M13 #119 audit.
+func TestLogout_RejectsMissingCSRF(t *testing.T) {
+	srv, _, _ := newPageServer(t)
+	cookie := loginCookie(t, srv, "admin", "secret")
+	req := httptest.NewRequest("POST", "/dashboard/logout", nil)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status %d, want 403", rec.Code)
 	}
 }
 

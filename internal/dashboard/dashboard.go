@@ -230,7 +230,7 @@ func (s *Server) registerRoutes(api http.Handler) {
 	// Login surface.
 	s.mux.HandleFunc("GET /login", s.handleLoginGet)
 	s.mux.HandleFunc("POST /dashboard/login", s.handleLoginPost)
-	s.mux.HandleFunc("POST /dashboard/logout", s.handleLogout)
+	s.mux.HandleFunc("POST /dashboard/logout", s.requireSession(s.handleLogout))
 
 	// Authenticated pages.
 	s.mux.HandleFunc("GET /dashboard", s.requireSession(s.handleOverview))

@@ -333,7 +333,20 @@ func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 }
 
-func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+// handleLogout drops the current session cookie. Wrapped in
+// requireSession + carries a CSRF token in the form so an
+// unrelated origin cannot force a logout via a cross-site form
+// post (the same protection every other mutating dashboard
+// route gets).
+func (s *Server) handleLogout(sess *session, w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if !s.checkCSRF(sess, r.PostForm.Get("csrf")) {
+		http.Error(w, "bad csrf token", http.StatusForbidden)
+		return
+	}
 	s.sessions.clear(w)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
