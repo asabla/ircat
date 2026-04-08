@@ -656,6 +656,93 @@ func TestFederation_NickCollisionHigherTSDropped(t *testing.T) {
 	}
 }
 
+// TestFederation_ThreeNodeMeshConvergence is the v1.2 plan
+// exit criterion for M14: bring up three real Server peers in
+// a triangle (AB, BC, AC), join clients on each, send a
+// PRIVMSG, and verify it reaches every other node. The
+// individual collision / SQUIT scenarios have their own
+// dedicated tests above; this one only covers the "three real
+// nodes can route a message" property because that is the
+// thing the v1.2 plan promised but v1.1 only proved with two
+// nodes.
+func TestFederation_ThreeNodeMeshConvergence(t *testing.T) {
+	addrA, srvA, closeA := buildFederationPeer(t, "node-a")
+	defer closeA()
+	addrB, srvB, closeB := buildFederationPeer(t, "node-b")
+	defer closeB()
+	addrC, srvC, closeC := buildFederationPeer(t, "node-c")
+	defer closeC()
+
+	// Triangle: AB, BC, AC. Each pair runs a linkTwoServers.
+	closeAB := linkTwoServers(t, srvA, srvB)
+	defer closeAB()
+	closeBC := linkTwoServers(t, srvB, srvC)
+	defer closeBC()
+	closeAC := linkTwoServers(t, srvA, srvC)
+	defer closeAC()
+
+	cAlice, rAlice := dialClient(t, addrA)
+	defer cAlice.Close()
+	cAlice.Write([]byte("NICK alice\r\nUSER alice 0 * :Alice\r\n"))
+	expectNumeric(t, cAlice, rAlice, "422", time.Now().Add(2*time.Second))
+
+	cBob, rBob := dialClient(t, addrB)
+	defer cBob.Close()
+	cBob.Write([]byte("NICK bob\r\nUSER bob 0 * :Bob\r\n"))
+	expectNumeric(t, cBob, rBob, "422", time.Now().Add(2*time.Second))
+
+	cCarol, rCarol := dialClient(t, addrC)
+	defer cCarol.Close()
+	cCarol.Write([]byte("NICK carol\r\nUSER carol 0 * :Carol\r\n"))
+	expectNumeric(t, cCarol, rCarol, "422", time.Now().Add(2*time.Second))
+
+	// Wait for runtime user announce to ripple through every
+	// direct pair. Each NICK is fanned out to direct peers; in
+	// a triangle every node has direct links to the other
+	// two, so every node should learn about every user
+	// without any second-hop relaying.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if srvA.world.FindByNick("bob") != nil &&
+			srvA.world.FindByNick("carol") != nil &&
+			srvB.world.FindByNick("alice") != nil &&
+			srvB.world.FindByNick("carol") != nil &&
+			srvC.world.FindByNick("alice") != nil &&
+			srvC.world.FindByNick("bob") != nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// Everyone joins #mesh.
+	cAlice.Write([]byte("JOIN #mesh\r\n"))
+	readUntil(t, cAlice, rAlice, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "366"
+	})
+	cBob.Write([]byte("JOIN #mesh\r\n"))
+	readUntil(t, cBob, rBob, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "366"
+	})
+	cCarol.Write([]byte("JOIN #mesh\r\n"))
+	readUntil(t, cCarol, rCarol, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "366"
+	})
+
+	// alice on node A sends PRIVMSG #mesh; bob (B) and carol
+	// (C) should both receive it.
+	cAlice.Write([]byte("PRIVMSG #mesh :hello mesh\r\n"))
+	readUntil(t, cBob, rBob, time.Now().Add(3*time.Second), func(line string) bool {
+		return strings.HasPrefix(line, ":alice!") &&
+			strings.Contains(line, " PRIVMSG #mesh ") &&
+			strings.HasSuffix(line, ":hello mesh")
+	})
+	readUntil(t, cCarol, rCarol, time.Now().Add(3*time.Second), func(line string) bool {
+		return strings.HasPrefix(line, ":alice!") &&
+			strings.Contains(line, " PRIVMSG #mesh ") &&
+			strings.HasSuffix(line, ":hello mesh")
+	})
+}
+
 // TestFederation_SquitLoopGuardDedupesByPeerAndReason
 // asserts that calling HandleSquit with the same (peer,
 // reason) tuple twice in a row only fans the synthetic QUITs
