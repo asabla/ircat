@@ -235,6 +235,59 @@ func TestOperatorsPage_RendersOperator(t *testing.T) {
 	}
 }
 
+// fakeFedRow / fakeFederationLister back the federation page
+// test without dragging the real federation registry into the
+// dashboard test suite.
+type fakeFedRow struct {
+	peer, state, descr string
+	subs               []string
+}
+
+func (r fakeFedRow) Peer() string         { return r.peer }
+func (r fakeFedRow) State() string        { return r.state }
+func (r fakeFedRow) Description() string  { return r.descr }
+func (r fakeFedRow) Subscribed() []string { return r.subs }
+
+type fakeFederationLister struct{ rows []FederationLinkRow }
+
+func (f fakeFederationLister) FederationSnapshot() []FederationLinkRow { return f.rows }
+
+func TestFederationPage_RendersEmpty(t *testing.T) {
+	srv, _, _ := newPageServer(t)
+	cookie := loginCookie(t, srv, "admin", "secret")
+	req := httptest.NewRequest("GET", "/dashboard/federation", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "no federation links registered") {
+		t.Errorf("missing empty state")
+	}
+}
+
+func TestFederationPage_RendersLinks(t *testing.T) {
+	srv, _, _ := newPageServer(t)
+	srv.pages.Federation = fakeFederationLister{rows: []FederationLinkRow{
+		fakeFedRow{peer: "node-b", state: "active", descr: "test peer", subs: []string{"#fed", "#x"}},
+	}}
+	cookie := loginCookie(t, srv, "admin", "secret")
+	req := httptest.NewRequest("GET", "/dashboard/federation", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"node-b", "test peer", "#fed", "#x", "active"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("federation page missing %q", want)
+		}
+	}
+}
+
 // fakeKickActuator records every KickUser call for the tests.
 type fakeKickActuator struct {
 	last   string

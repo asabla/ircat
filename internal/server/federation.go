@@ -174,6 +174,69 @@ func (s *Server) LinkFor(peerName string) fedLinkSender {
 	return s.fedLinks[peerName]
 }
 
+// FederationLinkRow is the row shape returned by
+// FederationSnapshot. Implements the four getters
+// internal/dashboard.FederationLinkRow expects via value
+// methods so the dashboard package never has to import
+// internal/server or internal/federation for the type.
+type FederationLinkRow struct {
+	peer        string
+	state       string
+	description string
+	subscribed  []string
+}
+
+func (r FederationLinkRow) Peer() string         { return r.peer }
+func (r FederationLinkRow) State() string        { return r.state }
+func (r FederationLinkRow) Description() string  { return r.description }
+func (r FederationLinkRow) Subscribed() []string { return r.subscribed }
+
+// dashboardLinkRow is the wider interface used to type-assert
+// inside FederationSnapshot. The federation.Link struct
+// satisfies it via its existing methods, but we keep the
+// assertion local so the server package never imports
+// internal/federation just for the type.
+type dashboardLinkRow interface {
+	State() string
+	PeerName() string
+}
+
+// FederationSnapshot returns a slice of FederationLinkRow
+// describing every currently registered federation link plus
+// its known channel subscriptions. The result is a snapshot
+// taken under the federation registry RLock, so callers can
+// walk the slice without holding any server-side locks.
+//
+// Implements internal/dashboard.FederationLister via duck-
+// typing on the FederationLinkRow getter methods. The dashboard
+// package consumes the returned slice as
+// []internal/dashboard.FederationLinkRow; the conversion is
+// handled at the call site so server stays independent of
+// dashboard.
+func (s *Server) FederationSnapshot() []FederationLinkRow {
+	s.fedMu.RLock()
+	defer s.fedMu.RUnlock()
+	out := make([]FederationLinkRow, 0, len(s.fedLinks))
+	for name, link := range s.fedLinks {
+		row := FederationLinkRow{peer: name, state: "active"}
+		// link is the unexported fedLinkSender alias which only
+		// exposes Send. The concrete federation.Link satisfies
+		// the wider dashboardLinkRow interface above, so we
+		// type-assert here for the extra fields. A future
+		// refactor can fold this into the registry directly.
+		if rich, ok := link.(dashboardLinkRow); ok {
+			row.state = rich.State()
+		}
+		if subs, ok := s.fedSubs[name]; ok {
+			for chName := range subs {
+				row.subscribed = append(row.subscribed, chName)
+			}
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
 // ----- federation.Host implementation ---------------------------
 //
 // Server satisfies internal/federation.Host so a Link can be

@@ -25,6 +25,10 @@ type PageDeps struct {
 	// via form posts (kick, etc.). Optional — without it the
 	// corresponding buttons return 503.
 	Actuator PageActuator
+	// Federation lists the active links for the federation
+	// page. Optional — without it the page renders the empty
+	// state.
+	Federation FederationLister
 }
 
 // PageServerInfo is the small interface the overview page reads.
@@ -42,6 +46,31 @@ type PageServerInfo interface {
 // satisfies it via its existing KickUser method.
 type PageActuator interface {
 	KickUser(ctx context.Context, nick, reason string) error
+}
+
+// FederationLister is the small read-only surface the
+// /dashboard/federation page consults. internal/server.Server
+// satisfies it via FederationSnapshot. Optional — when nil the
+// page renders the empty state.
+//
+// The return type is a slice of FederationLinkRow rather than a
+// concrete struct so the implementing package (internal/server)
+// does not have to import internal/dashboard for a shared
+// type. server uses its own value-type concrete row that
+// happens to satisfy these four method signatures.
+type FederationLister interface {
+	FederationSnapshot() []FederationLinkRow
+}
+
+// FederationLinkRow is one row on the federation page. The
+// methods are intentionally simple getters so a server-side
+// struct can satisfy them with field accessors and the
+// dashboard never reaches into the federation package.
+type FederationLinkRow interface {
+	Peer() string
+	State() string
+	Description() string
+	Subscribed() []string
 }
 
 // pageData is the per-request render struct. Every handler
@@ -393,6 +422,24 @@ func (s *Server) handleKickUserPage(sess *session, w http.ResponseWriter, r *htt
 		return
 	}
 	http.Redirect(w, r, "/dashboard/users", http.StatusSeeOther)
+}
+
+func (s *Server) handleFederationPage(sess *session, w http.ResponseWriter, r *http.Request) {
+	data := s.newPageData(sess, "federation", "federation")
+	if s.pages != nil && s.pages.Federation != nil {
+		for _, row := range s.pages.Federation.FederationSnapshot() {
+			data.Federation = append(data.Federation, fedLinkPayload{
+				Peer:        row.Peer(),
+				State:       row.State(),
+				Description: row.Description(),
+				Subscribed:  row.Subscribed(),
+			})
+		}
+		sort.Slice(data.Federation, func(i, j int) bool {
+			return data.Federation[i].Peer < data.Federation[j].Peer
+		})
+	}
+	s.renderPage(w, "federation", data)
 }
 
 func (s *Server) handleEventsPage(sess *session, w http.ResponseWriter, r *http.Request) {

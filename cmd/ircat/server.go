@@ -145,6 +145,7 @@ func runServer(args []string) error {
 			World:      world,
 			ServerInfo: srv,
 			Actuator:   srv,
+			Federation: federationListerAdapter{srv: srv},
 		},
 		Metrics: srv,
 		ReadyFunc: func() error {
@@ -221,6 +222,23 @@ func runServer(args []string) error {
 	logger.Info("ircat shutting down", "reason", context.Cause(ctx))
 	logger.Info("ircat stopped")
 	return nil
+}
+
+// federationListerAdapter bridges the slice-of-concrete-type
+// returned by *server.Server.FederationSnapshot into the
+// slice-of-interface the dashboard package expects. Defined
+// here in cmd so the server package never imports dashboard.
+type federationListerAdapter struct {
+	srv *server.Server
+}
+
+func (a federationListerAdapter) FederationSnapshot() []dashboard.FederationLinkRow {
+	rows := a.srv.FederationSnapshot()
+	out := make([]dashboard.FederationLinkRow, len(rows))
+	for i := range rows {
+		out[i] = rows[i]
+	}
+	return out
 }
 
 // runCtxOrBg is a tiny helper: startFederation wants a context
