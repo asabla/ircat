@@ -95,24 +95,36 @@ Every user has a `nickTS` (nickname set time). Every channel has a `channelTS` (
 Source: `internal/server/federation_bench_test.go`. Rerun with
 `go test -bench=BenchmarkFederation_PrivmsgRoundtrip ./internal/server/`.
 
-| Metric | Value |
-|---|---|
-| Mean PRIVMSG roundtrip | ~38 µs |
-| p50 | ~36 µs |
-| p99 | ~89 µs |
+| Bridge | Mean | p50 | p99 |
+|---|---|---|---|
+| `net.Pipe` (in-process channels) | ~38 µs | ~36 µs | ~89 µs |
+| TCP loopback (`127.0.0.1`) | ~51 µs | ~47 µs | ~115 µs |
 
 Numbers from a single ext4 host on an Intel Xeon E-2286M
-running both peers in-process bridged via `net.Pipe`. The
-benchmark measures the wall-clock between `cAlice.Write` on
-node A and the matching read on `cBob` on node B, averaged over
-60k samples.
+running both peers in-process. The benchmark measures the
+wall-clock between `cAlice.Write` on node A and the matching
+read on `cBob` on node B, averaged over tens of thousands of
+samples per run.
 
-Real TCP loopback adds about 30-100 µs of kernel overhead per
-direction. A two-host LAN deployment will see another
-0.1-0.5 ms of network latency depending on the link. Treat the
-in-process number as the **floor** of what the federation
-broadcast + routing logic costs and add network round-trip on
-top.
+Reading the table:
+
+- The **`net.Pipe`** column is the floor of what the federation
+  broadcast + routing logic itself costs — no kernel TCP, no
+  socket syscalls, just the Go scheduler shuffling buffers
+  between goroutines.
+- The **TCP loopback** column adds the kernel's TCP overhead
+  on a single host (no NIC). Treat this as the realistic
+  floor for an operator deployment where both peers are
+  cohabitated (same VM, same host) — what you actually see
+  when you run two ircat containers behind a bridge network.
+- A two-host **LAN deployment** will add another 0.1–0.5 ms of
+  network round-trip on top depending on the link, plus
+  whatever the operator's TLS settings cost (single-digit µs
+  per direction at the AES-NI rate).
+
+Both benchmarks use the same handler hot path; the difference
+between the two columns is exactly the kernel TCP cost, ~13 µs
+mean / ~26 µs p99 on this host.
 
 ## Testing
 
