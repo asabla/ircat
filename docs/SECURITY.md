@@ -55,6 +55,31 @@ globals individually:
   reset to empty tables so even if `require` is reinstated by
   mistake the loader chain is a no-op.
 
+### Pinned upstream
+
+The sandbox lives on top of [`gopher-lua`](https://github.com/yuin/gopher-lua)
+**v1.1.2**, which is the version every guarantee in this
+document was validated against. The pin is in `go.mod`. Two
+follow-ups documented in the v1.2 plan are still
+**upstream-blocked** at this version:
+
+- **Per-allocation memory hook.** gopher-lua does not expose a
+  per-`malloc` callback the way the C reference implementation
+  does. Without it the only memory bound we can express is the
+  data-stack cap (`Budget.RegistrySlots`, see #2 below). Once
+  upstream adds an allocator hook (or we vendor a small fork),
+  `Budget.RegistryBytes` ships and the cap becomes a true
+  heap ceiling.
+- **Instruction-count `Sethook`.** gopher-lua does not expose
+  the standard Lua debug hook with `lua.MaskCount`. The
+  wallclock proxy in `Runtime.effectiveDeadline` is the
+  closest we can get without a fork.
+
+The CI fuzz job (`.github/workflows/ci.yml`) runs
+`FuzzSandboxNeverPanics` for 5 minutes on every PR against
+this exact pinned version, so any future bump bring its own
+regression net.
+
 ### What the sandbox does and does not cover
 
 1. **Per-instruction interruption.** gopher-lua's VM dispatch
