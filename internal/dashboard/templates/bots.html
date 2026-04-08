@@ -1,0 +1,53 @@
+{{define "content"}}
+<h2>bots</h2>
+<p class="subtitle">{{len .Bots}} configured</p>
+
+{{if .Flash}}<p class="error">{{.Flash}}</p>{{end}}
+
+<div class="panel">
+  <h3>create bot</h3>
+  <form method="post" action="/dashboard/bots">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>name <input type="text" name="name" required placeholder="greetbot"></label>
+    <label>lua source
+      <textarea name="source" placeholder="function on_join(ctx, ev) ctx:say(ev.channel, 'hello ' .. ev.sender) end"></textarea>
+    </label>
+    <label class="row" style="flex-direction: row; align-items: center;">
+      <input type="checkbox" name="enabled" value="1" checked> enabled on save
+    </label>
+    <button type="submit" class="primary">create bot</button>
+  </form>
+</div>
+
+<div class="panel">
+  <h3>configured bots</h3>
+  {{if .Bots}}
+  <table>
+    <thead><tr><th>name</th><th>status</th><th></th></tr></thead>
+    <tbody>
+    {{range .Bots}}
+    <tr>
+      <td><a href="/dashboard/bots/{{.ID}}">{{.Name}}</a></td>
+      <td>
+        {{if .Enabled}}<span class="pill ok">enabled</span>{{else}}<span class="pill warn">disabled</span>{{end}}
+        {{if .Status}}<span class="muted">{{.Status}}</span>{{end}}
+      </td>
+      <td>
+        <form method="post" action="/dashboard/bots/{{.ID}}/toggle" class="inline">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <button type="submit">{{if .Enabled}}disable{{else}}enable{{end}}</button>
+        </form>
+        <form method="post" action="/dashboard/bots/{{.ID}}/delete" class="inline">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <button type="submit" class="danger">delete</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="muted">no bots configured.</p>
+  {{end}}
+</div>
+{{end}}

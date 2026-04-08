@@ -1,0 +1,43 @@
+{{define "content"}}
+<h2>API tokens</h2>
+<p class="subtitle">{{len .Tokens}} active</p>
+
+{{if .Flash}}<p class="error">{{.Flash}}</p>{{end}}
+
+<div class="panel">
+  <h3>mint token</h3>
+  <form method="post" action="/dashboard/tokens" class="row">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>label <input type="text" name="label" required placeholder="ci-runner"></label>
+    <button type="submit" class="primary">mint</button>
+  </form>
+  <p class="muted">The plaintext token is shown once after creation. Copy it now; you cannot retrieve it later.</p>
+</div>
+
+<div class="panel">
+  <h3>active tokens</h3>
+  {{if .Tokens}}
+  <table>
+    <thead><tr><th>id</th><th>label</th><th>created</th><th>last used</th><th></th></tr></thead>
+    <tbody>
+    {{range .Tokens}}
+    <tr>
+      <td><code>{{.ID}}</code></td>
+      <td>{{.Label}}</td>
+      <td class="muted">{{.CreatedAt}}</td>
+      <td class="muted">{{if .LastUsedAt}}{{.LastUsedAt}}{{else}}never{{end}}</td>
+      <td>
+        <form method="post" action="/dashboard/tokens/{{.ID}}/delete" class="inline">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <button type="submit" class="danger">revoke</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="muted">no tokens minted yet.</p>
+  {{end}}
+</div>
+{{end}}

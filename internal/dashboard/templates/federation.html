@@ -1,0 +1,30 @@
+{{define "content"}}
+<h2>federation</h2>
+<p class="subtitle">{{len .Federation}} active link(s)</p>
+
+<div class="panel">
+  {{if .Federation}}
+  <table>
+    <thead><tr><th>peer</th><th>state</th><th>description</th><th>subscribed channels</th></tr></thead>
+    <tbody>
+    {{range .Federation}}
+    <tr>
+      <td><strong>{{.Peer}}</strong></td>
+      <td><span class="pill ok">{{.State}}</span></td>
+      <td>{{.Description}}</td>
+      <td>
+        {{if .Subscribed}}
+          {{range .Subscribed}}<code>{{.}}</code> {{end}}
+        {{else}}
+          <span class="muted">—</span>
+        {{end}}
+      </td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="muted">no federation links registered. Configure peers in <code>federation.links</code> to see them here.</p>
+  {{end}}
+</div>
+{{end}}

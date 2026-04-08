@@ -22,7 +22,18 @@ type templates struct {
 }
 
 func loadTemplates() (*templates, error) {
-	pages := []string{"login", "overview", "users", "channels", "operators", "events"}
+	pages := []string{
+		"login",
+		"overview",
+		"users", "user_detail",
+		"channels", "channel_detail",
+		"federation",
+		"bots", "bot_detail",
+		"operators",
+		"tokens",
+		"events",
+		"logs",
+	}
 	out := &templates{pages: make(map[string]*template.Template, len(pages))}
 	for _, name := range pages {
 		t, err := template.New("base.html").ParseFS(templateFS,
@@ -35,6 +46,18 @@ func loadTemplates() (*templates, error) {
 		out.pages[name] = t
 	}
 	return out, nil
+}
+
+// renderPartial renders a single named block (rather than the
+// "base" wrapper) — used by htmx fragment handlers like the
+// overview cards refresh. The page name picks which template
+// set to use; the block name selects the {{define}}d block.
+func (t *templates) renderPartial(w io.Writer, page, block string, data any) error {
+	tpl, ok := t.pages[page]
+	if !ok {
+		return fmt.Errorf("unknown page %q", page)
+	}
+	return tpl.ExecuteTemplate(w, block, data)
 }
 
 // render writes the named page to w with data. Pages always render

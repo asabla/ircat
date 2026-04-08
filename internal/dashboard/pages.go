@@ -43,19 +43,31 @@ type PageActuator interface {
 	KickUser(ctx context.Context, nick, reason string) error
 }
 
-// pageData is the per-request render struct.
+// pageData is the per-request render struct. Every handler
+// builds one of these via newPageData so the brand + nav +
+// CSRF fields are filled in consistently.
 type pageData struct {
-	Title    string
-	Operator string
-	CSRF     string
+	Title      string
+	Operator   string
+	CSRF       string
+	NavActive  string // sidebar highlight key (overview, users, ...)
+	ServerName string // small caption under the brand
 
 	// per-page payloads
-	Server    overviewPayload
-	Users     []userPayload
-	Channels  []channelPayload
-	Operators []operatorPayload
-	Events    []eventPayload
-	Error     string
+	Server       overviewPayload
+	Cards        []cardPayload
+	Users        []userPayload
+	UserDetail   *userDetailPayload
+	Channels     []channelPayload
+	ChannelDetail *channelDetailPayload
+	Federation   []fedLinkPayload
+	Bots         []botPayload
+	BotDetail    *botDetailPayload
+	Operators    []operatorPayload
+	Tokens       []tokenPayload
+	Events       []eventPayload
+	Error        string
+	Flash        string
 }
 
 type overviewPayload struct {
@@ -68,11 +80,27 @@ type overviewPayload struct {
 	Listeners    []string
 }
 
+// cardPayload is one stat tile on the overview.
+type cardPayload struct {
+	Title string
+	Value string
+	Delta string // optional caption beneath the value
+	Spark string // SVG fragment for the inline sparkline
+}
+
 type userPayload struct {
 	Nick     string
 	Hostmask string
 	Modes    string
 	Channels []string
+}
+
+type userDetailPayload struct {
+	Nick       string
+	Hostmask   string
+	Modes      string
+	HomeServer string
+	Channels   []string
 }
 
 type channelPayload struct {
@@ -82,11 +110,56 @@ type channelPayload struct {
 	Topic       string
 }
 
+type channelDetailPayload struct {
+	Name      string
+	MemberCount int
+	ModeWord  string
+	Topic     string
+	TopicSetBy string
+	Members   []channelMemberPayload
+	Bans      []string
+}
+
+type channelMemberPayload struct {
+	Nick   string
+	Prefix string // "@" / "+" / ""
+	Remote bool
+}
+
+type fedLinkPayload struct {
+	Peer        string
+	State       string
+	Description string
+	Subscribed  []string
+}
+
+type botPayload struct {
+	ID      string
+	Name    string
+	Enabled bool
+	Status  string
+}
+
+type botDetailPayload struct {
+	ID      string
+	Name    string
+	Enabled bool
+	Source  string
+	Status  string
+}
+
 type operatorPayload struct {
 	Name      string
 	HostMask  string
 	Flags     []string
 	CreatedAt string
+}
+
+type tokenPayload struct {
+	ID         string
+	Label      string
+	CreatedAt  string
+	LastUsedAt string
 }
 
 type eventPayload struct {
@@ -95,6 +168,24 @@ type eventPayload struct {
 	Actor     string
 	Target    string
 	DataJSON  string
+}
+
+// newPageData builds a pre-filled pageData with the brand,
+// session, CSRF, and nav fields populated. Every authenticated
+// page handler should call this rather than constructing
+// pageData{} directly so the sidebar highlight stays
+// consistent.
+func (s *Server) newPageData(sess *session, navActive, title string) *pageData {
+	pd := &pageData{
+		Title:     title,
+		Operator:  sess.Operator,
+		NavActive: navActive,
+		CSRF:      s.csrfToken(sess),
+	}
+	if s.pages != nil && s.pages.ServerInfo != nil {
+		pd.ServerName = s.pages.ServerInfo.ServerName()
+	}
+	return pd
 }
 
 // csrfToken returns the per-session CSRF token via the session
@@ -180,7 +271,15 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleOverview(sess *session, w http.ResponseWriter, r *http.Request) {
-	data := &pageData{Title: "overview", Operator: sess.Operator}
+	data := s.newPageData(sess, "overview", "overview")
+	s.fillOverview(data)
+	s.renderPage(w, "overview", data)
+}
+
+// fillOverview populates the Server + Cards payloads. Extracted
+// so the partial-refresh handler can reuse it without
+// re-rendering the surrounding chrome.
+func (s *Server) fillOverview(data *pageData) {
 	if s.pages != nil && s.pages.ServerInfo != nil {
 		data.Server.Name = s.pages.ServerInfo.ServerName()
 		data.Server.Network = s.pages.ServerInfo.NetworkName()
@@ -192,11 +291,11 @@ func (s *Server) handleOverview(sess *session, w http.ResponseWriter, r *http.Re
 		data.Server.UserCount = s.pages.World.UserCount()
 		data.Server.ChannelCount = s.pages.World.ChannelCount()
 	}
-	s.renderPage(w, "overview", data)
+	data.Cards = s.buildOverviewCards()
 }
 
 func (s *Server) handleUsersPage(sess *session, w http.ResponseWriter, r *http.Request) {
-	data := &pageData{Title: "users", Operator: sess.Operator, CSRF: s.csrfToken(sess)}
+	data := s.newPageData(sess, "users", "users")
 	if s.pages != nil && s.pages.World != nil {
 		snap := s.pages.World.Snapshot()
 		for _, u := range snap {
@@ -217,7 +316,7 @@ func (s *Server) handleUsersPage(sess *session, w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) handleChannelsPage(sess *session, w http.ResponseWriter, r *http.Request) {
-	data := &pageData{Title: "channels", Operator: sess.Operator}
+	data := s.newPageData(sess, "channels", "channels")
 	if s.pages != nil && s.pages.World != nil {
 		for _, ch := range s.pages.World.ChannelsSnapshot() {
 			modes, _ := ch.ModeString()
@@ -235,7 +334,7 @@ func (s *Server) handleChannelsPage(sess *session, w http.ResponseWriter, r *htt
 }
 
 func (s *Server) handleOperatorsPage(sess *session, w http.ResponseWriter, r *http.Request) {
-	data := &pageData{Title: "operators", Operator: sess.Operator}
+	data := s.newPageData(sess, "operators", "operators")
 	if s.pages != nil && s.pages.Store != nil {
 		ops, err := s.pages.Store.Operators().List(r.Context())
 		if err == nil {
@@ -281,7 +380,7 @@ func (s *Server) handleKickUserPage(sess *session, w http.ResponseWriter, r *htt
 }
 
 func (s *Server) handleEventsPage(sess *session, w http.ResponseWriter, r *http.Request) {
-	data := &pageData{Title: "events", Operator: sess.Operator}
+	data := s.newPageData(sess, "events", "audit log")
 	if s.pages != nil && s.pages.Store != nil {
 		events, err := s.pages.Store.Events().List(r.Context(), storage.ListEventsOptions{Limit: 50})
 		if err == nil {
@@ -312,6 +411,50 @@ func (s *Server) renderPage(w http.ResponseWriter, name string, data any) {
 		s.logger.Warn("template render failed", "page", name, "error", err)
 		http.Error(w, "render error", http.StatusInternalServerError)
 	}
+}
+
+// buildOverviewCards turns the live MetricsSource into a slice
+// of stat cards rendered on the overview page. The sparkline
+// SVG is filled in by the M13 follow-up that adds the
+// per-metric rolling sample buffer; for now we render a flat
+// dash to keep the layout stable.
+func (s *Server) buildOverviewCards() []cardPayload {
+	if s.metrics == nil {
+		return nil
+	}
+	out := []cardPayload{
+		{Title: "users", Value: itoa(s.metrics.UserCount())},
+		{Title: "channels", Value: itoa(s.metrics.ChannelCount())},
+		{Title: "federation links", Value: itoa(s.metrics.FederationLinkCount())},
+		{Title: "bots", Value: itoa(s.metrics.BotCount())},
+		{Title: "messages in", Value: u64toa(s.metrics.MessagesIn())},
+		{Title: "messages out", Value: u64toa(s.metrics.MessagesOut())},
+	}
+	return out
+}
+
+func itoa(n int) string  { return strconvItoa(int64(n)) }
+func u64toa(n uint64) string { return strconvItoa(int64(n)) }
+func strconvItoa(n int64) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
 }
 
 // silence unused-import warnings while iterating

@@ -1,0 +1,57 @@
+{{define "content"}}
+<h2>{{.ChannelDetail.Name}}</h2>
+<p class="subtitle"><a href="/dashboard/channels">← all channels</a> — {{.ChannelDetail.MemberCount}} members</p>
+
+<div class="panel">
+  <h3>state</h3>
+  <dl class="kv">
+    <dt>modes</dt><dd><span class="pill">{{.ChannelDetail.ModeWord}}</span></dd>
+    <dt>topic</dt><dd>{{if .ChannelDetail.Topic}}{{.ChannelDetail.Topic}}{{else}}<span class="muted">no topic set</span>{{end}}</dd>
+    {{if .ChannelDetail.TopicSetBy}}<dt>topic by</dt><dd><code>{{.ChannelDetail.TopicSetBy}}</code></dd>{{end}}
+  </dl>
+</div>
+
+<div class="panel">
+  <h3>edit topic</h3>
+  <form method="post" action="/dashboard/channels/{{.ChannelDetail.Name}}/topic" class="row">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <input type="text" name="topic" value="{{.ChannelDetail.Topic}}" style="flex: 1; min-width: 18rem;">
+    <button type="submit" class="primary">set topic</button>
+  </form>
+</div>
+
+<div class="panel">
+  <h3>members</h3>
+  {{if .ChannelDetail.Members}}
+  <table>
+    <thead><tr><th></th><th>nick</th><th>where</th><th></th></tr></thead>
+    <tbody>
+    {{range .ChannelDetail.Members}}
+    <tr>
+      <td>{{if .Prefix}}<span class="pill">{{.Prefix}}</span>{{end}}</td>
+      <td><a href="/dashboard/users/{{.Nick}}">{{.Nick}}</a></td>
+      <td>{{if .Remote}}<span class="pill warn">remote</span>{{else}}<span class="pill ok">local</span>{{end}}</td>
+      <td>
+        {{if not .Remote}}
+        <form method="post" action="/dashboard/users/{{.Nick}}/kick" class="inline">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <button type="submit" class="danger">kick</button>
+        </form>
+        {{end}}
+      </td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="muted">no members.</p>
+  {{end}}
+</div>
+
+{{if .ChannelDetail.Bans}}
+<div class="panel">
+  <h3>bans</h3>
+  <ul>{{range .ChannelDetail.Bans}}<li><code>{{.}}</code></li>{{end}}</ul>
+</div>
+{{end}}
+{{end}}

@@ -1,0 +1,57 @@
+{{define "content"}}
+<h2>live logs</h2>
+<p class="subtitle">streaming from the in-memory ring buffer</p>
+
+<div class="panel">
+  <div class="toolbar">
+    <label>level
+      <select id="log-level">
+        <option value="">all</option>
+        <option value="debug">debug+</option>
+        <option value="info" selected>info+</option>
+        <option value="warn">warn+</option>
+        <option value="error">error+</option>
+      </select>
+    </label>
+    <input type="search" id="log-filter" placeholder="substring filter">
+    <button type="button" onclick="document.getElementById('logstream').innerHTML='';">clear</button>
+  </div>
+  <div id="logstream"></div>
+</div>
+
+<script>
+(function() {
+  var stream = document.getElementById('logstream');
+  var levelSel = document.getElementById('log-level');
+  var filterIn = document.getElementById('log-filter');
+  var levelRank = { debug: 0, info: 1, warn: 2, error: 3 };
+
+  function shouldShow(rec) {
+    var minLevel = levelSel.value;
+    if (minLevel && levelRank[rec.level] < levelRank[minLevel]) return false;
+    var filter = filterIn.value.toLowerCase();
+    if (filter && rec.message.toLowerCase().indexOf(filter) < 0) return false;
+    return true;
+  }
+
+  var es = new EventSource('/dashboard/logs/sse');
+  es.onmessage = function(e) {
+    var rec;
+    try { rec = JSON.parse(e.data); } catch(_) { return; }
+    if (!shouldShow(rec)) return;
+    var line = document.createElement('span');
+    line.className = 'line lvl-' + rec.level;
+    line.textContent = rec.time + ' ' + rec.level.toUpperCase().padEnd(5) + ' ' + rec.message;
+    stream.appendChild(line);
+    if (stream.childElementCount > 500) stream.removeChild(stream.firstChild);
+    stream.scrollTop = stream.scrollHeight;
+  };
+  es.onerror = function() {
+    var note = document.createElement('span');
+    note.className = 'line lvl-error';
+    note.textContent = '[stream disconnected]';
+    stream.appendChild(note);
+  };
+})();
+</script>
+{{end}}

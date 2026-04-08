@@ -1,20 +1,39 @@
 {{define "content"}}
-<h2>channels ({{len .Channels}})</h2>
-{{if .Channels}}
-<table>
-<thead><tr><th>name</th><th>members</th><th>modes</th><th>topic</th></tr></thead>
-<tbody>
-{{range .Channels}}
-<tr>
-<td>{{.Name}}</td>
-<td>{{.MemberCount}}</td>
-<td>{{.ModeWord}}</td>
-<td>{{.Topic}}</td>
-</tr>
-{{end}}
-</tbody>
-</table>
-{{else}}
-<p>no channels.</p>
-{{end}}
+<h2>channels</h2>
+<p class="subtitle">{{len .Channels}} tracked</p>
+
+<div class="panel">
+  <div class="toolbar">
+    <input type="search" id="channel-filter" placeholder="filter by name, mode, or topic"
+           oninput="filterRows('channels-tbody', this.value)">
+  </div>
+  {{if .Channels}}
+  <table>
+    <thead><tr><th>name</th><th>members</th><th>modes</th><th>topic</th></tr></thead>
+    <tbody id="channels-tbody">
+    {{range .Channels}}
+    <tr>
+      <td><a href="/dashboard/channels/{{.Name}}">{{.Name}}</a></td>
+      <td>{{.MemberCount}}</td>
+      <td><span class="pill">{{.ModeWord}}</span></td>
+      <td>{{.Topic}}</td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="muted">no channels.</p>
+  {{end}}
+</div>
+
+<script>
+function filterRows(tbodyId, query) {
+  var q = query.toLowerCase();
+  var rows = document.getElementById(tbodyId).getElementsByTagName('tr');
+  for (var i = 0; i < rows.length; i++) {
+    var t = rows[i].textContent.toLowerCase();
+    rows[i].style.display = (q === '' || t.indexOf(q) >= 0) ? '' : 'none';
+  }
+}
+</script>
 {{end}}

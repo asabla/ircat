@@ -1,20 +1,45 @@
 {{define "content"}}
-<h2>operators ({{len .Operators}})</h2>
-{{if .Operators}}
-<table>
-<thead><tr><th>name</th><th>host mask</th><th>flags</th><th>created</th></tr></thead>
-<tbody>
-{{range .Operators}}
-<tr>
-<td>{{.Name}}</td>
-<td>{{if .HostMask}}{{.HostMask}}{{else}}<em>any</em>{{end}}</td>
-<td>{{range .Flags}}{{.}} {{end}}</td>
-<td>{{.CreatedAt}}</td>
-</tr>
-{{end}}
-</tbody>
-</table>
-{{else}}
-<p>no operators registered.</p>
-{{end}}
+<h2>operators</h2>
+<p class="subtitle">{{len .Operators}} configured</p>
+
+{{if .Flash}}<p class="error">{{.Flash}}</p>{{end}}
+
+<div class="panel">
+  <h3>create operator</h3>
+  <form method="post" action="/dashboard/operators" class="row">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>name <input type="text" name="name" required></label>
+    <label>password <input type="password" name="password" required></label>
+    <label>host mask <input type="text" name="host_mask" placeholder="*@10.0.0.*"></label>
+    <label>flags <input type="text" name="flags" placeholder="kill,kline,rehash"></label>
+    <button type="submit" class="primary">create</button>
+  </form>
+</div>
+
+<div class="panel">
+  <h3>configured operators</h3>
+  {{if .Operators}}
+  <table>
+    <thead><tr><th>name</th><th>host mask</th><th>flags</th><th>created</th><th></th></tr></thead>
+    <tbody>
+    {{range .Operators}}
+    <tr>
+      <td>{{.Name}}</td>
+      <td><code>{{if .HostMask}}{{.HostMask}}{{else}}*{{end}}</code></td>
+      <td>{{range .Flags}}<span class="pill">{{.}}</span> {{end}}</td>
+      <td class="muted">{{.CreatedAt}}</td>
+      <td>
+        <form method="post" action="/dashboard/operators/{{.Name}}/delete" class="inline">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <button type="submit" class="danger">delete</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="muted">no operators configured.</p>
+  {{end}}
+</div>
 {{end}}

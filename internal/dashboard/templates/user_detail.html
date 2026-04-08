@@ -1,0 +1,32 @@
+{{define "content"}}
+<h2>{{.UserDetail.Nick}}</h2>
+<p class="subtitle"><a href="/dashboard/users">← all users</a></p>
+
+<div class="panel">
+  <h3>identity</h3>
+  <dl class="kv">
+    <dt>nick</dt><dd>{{.UserDetail.Nick}}</dd>
+    <dt>hostmask</dt><dd><code>{{.UserDetail.Hostmask}}</code></dd>
+    <dt>modes</dt><dd>{{if .UserDetail.Modes}}<span class="pill">+{{.UserDetail.Modes}}</span>{{else}}<span class="muted">none</span>{{end}}</dd>
+    <dt>home</dt><dd>{{if .UserDetail.HomeServer}}<span class="pill warn">remote: {{.UserDetail.HomeServer}}</span>{{else}}<span class="pill ok">local</span>{{end}}</dd>
+  </dl>
+</div>
+
+<div class="panel">
+  <h3>channels</h3>
+  {{if .UserDetail.Channels}}
+  <ul>{{range .UserDetail.Channels}}<li><a href="/dashboard/channels/{{.}}">{{.}}</a></li>{{end}}</ul>
+  {{else}}
+  <p class="muted">not in any channels.</p>
+  {{end}}
+</div>
+
+<div class="panel">
+  <h3>actions</h3>
+  <form method="post" action="/dashboard/users/{{.UserDetail.Nick}}/kick" class="row">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <input type="text" name="reason" placeholder="reason (optional)">
+    <button type="submit" class="danger">kick</button>
+  </form>
+</div>
+{{end}}

@@ -1,9 +1,12 @@
 {{define "content"}}
-<h2>sign in</h2>
-{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
-<form method="post" action="/dashboard/login">
-<label>operator <input type="text" name="username" autofocus required></label>
-<label>password <input type="password" name="password" required></label>
-<button type="submit">sign in</button>
-</form>
+<div class="panel" style="max-width: 24rem; margin: 4rem auto;">
+  <h2 style="margin-top: 0;">ircat</h2>
+  <p class="subtitle">operator sign-in</p>
+  {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+  <form method="post" action="/dashboard/login">
+    <label>operator <input type="text" name="username" autofocus required></label>
+    <label>password <input type="password" name="password" required></label>
+    <button type="submit" class="primary">sign in</button>
+  </form>
+</div>
 {{end}}

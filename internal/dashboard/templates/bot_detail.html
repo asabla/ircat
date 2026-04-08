@@ -1,0 +1,25 @@
+{{define "content"}}
+<h2>bot — {{.BotDetail.Name}}</h2>
+<p class="subtitle"><a href="/dashboard/bots">← all bots</a></p>
+
+<div class="panel">
+  <h3>state</h3>
+  <dl class="kv">
+    <dt>id</dt><dd><code>{{.BotDetail.ID}}</code></dd>
+    <dt>name</dt><dd>{{.BotDetail.Name}}</dd>
+    <dt>enabled</dt><dd>
+      {{if .BotDetail.Enabled}}<span class="pill ok">enabled</span>{{else}}<span class="pill warn">disabled</span>{{end}}
+    </dd>
+    {{if .BotDetail.Status}}<dt>status</dt><dd>{{.BotDetail.Status}}</dd>{{end}}
+  </dl>
+</div>
+
+<div class="panel">
+  <h3>source</h3>
+  <form method="post" action="/dashboard/bots/{{.BotDetail.ID}}/source">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <textarea name="source" rows="20">{{.BotDetail.Source}}</textarea>
+    <button type="submit" class="primary">save source</button>
+  </form>
+</div>
+{{end}}

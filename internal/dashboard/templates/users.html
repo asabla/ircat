@@ -1,26 +1,45 @@
 {{define "content"}}
-<h2>users ({{len .Users}})</h2>
-{{if .Users}}
-<table>
-<thead><tr><th>nick</th><th>hostmask</th><th>modes</th><th>channels</th><th></th></tr></thead>
-<tbody>
-{{range .Users}}
-<tr>
-<td>{{.Nick}}</td>
-<td>{{.Hostmask}}</td>
-<td>+{{.Modes}}</td>
-<td>{{range .Channels}}{{.}} {{end}}</td>
-<td>
-<form method="post" action="/dashboard/users/{{.Nick}}/kick" class="inline">
-<input type="hidden" name="csrf" value="{{$.CSRF}}">
-<button type="submit">kick</button>
-</form>
-</td>
-</tr>
-{{end}}
-</tbody>
-</table>
-{{else}}
-<p>no users connected.</p>
-{{end}}
+<h2>users</h2>
+<p class="subtitle">{{len .Users}} registered</p>
+
+<div class="panel">
+  <div class="toolbar">
+    <input type="search" id="user-filter" placeholder="filter by nick, hostmask, or channel"
+           oninput="filterRows('users-tbody', this.value)">
+  </div>
+  {{if .Users}}
+  <table>
+    <thead><tr><th>nick</th><th>hostmask</th><th>modes</th><th>channels</th><th></th></tr></thead>
+    <tbody id="users-tbody">
+    {{range .Users}}
+    <tr>
+      <td><a href="/dashboard/users/{{.Nick}}">{{.Nick}}</a></td>
+      <td><code>{{.Hostmask}}</code></td>
+      <td>{{if .Modes}}<span class="pill">+{{.Modes}}</span>{{end}}</td>
+      <td>{{range .Channels}}<a href="/dashboard/channels/{{.}}">{{.}}</a> {{end}}</td>
+      <td>
+        <form method="post" action="/dashboard/users/{{.Nick}}/kick" class="inline">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <button type="submit" class="danger">kick</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="muted">no users connected.</p>
+  {{end}}
+</div>
+
+<script>
+function filterRows(tbodyId, query) {
+  var q = query.toLowerCase();
+  var rows = document.getElementById(tbodyId).getElementsByTagName('tr');
+  for (var i = 0; i < rows.length; i++) {
+    var t = rows[i].textContent.toLowerCase();
+    rows[i].style.display = (q === '' || t.indexOf(q) >= 0) ? '' : 'none';
+  }
+}
+</script>
 {{end}}
