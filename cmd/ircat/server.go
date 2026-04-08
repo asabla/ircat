@@ -146,6 +146,7 @@ func runServer(args []string) error {
 			ServerInfo: srv,
 			Actuator:   srv,
 			Federation: federationListerAdapter{srv: srv},
+			Bots:       sup,
 		},
 		Metrics: srv,
 		ReadyFunc: func() error {

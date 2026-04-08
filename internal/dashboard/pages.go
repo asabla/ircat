@@ -30,6 +30,9 @@ type PageDeps struct {
 	// page. Optional — without it the page renders the empty
 	// state.
 	Federation FederationLister
+	// Bots is the supervisor surface used by the bots CRUD
+	// pages. Optional — without it the form posts return 503.
+	Bots BotManager
 }
 
 // PageServerInfo is the small interface the overview page reads.
@@ -48,6 +51,17 @@ type PageServerInfo interface {
 type PageActuator interface {
 	KickUser(ctx context.Context, nick, reason string) error
 	SetChannelTopic(ctx context.Context, channel, topic, setBy string) error
+}
+
+// BotManager is the small interface the dashboard bot CRUD
+// pages call into. Same shape as the api package's BotManager
+// — internal/bots.Supervisor satisfies both. We declare it
+// twice (once per consumer) so neither package has to import
+// the other for the type.
+type BotManager interface {
+	CreateBot(ctx context.Context, bot *storage.Bot) error
+	UpdateBot(ctx context.Context, bot *storage.Bot) error
+	DeleteBot(ctx context.Context, id string) error
 }
 
 // FederationLister is the small read-only surface the
@@ -424,6 +438,187 @@ func (s *Server) handleUserDetailPage(sess *session, w http.ResponseWriter, r *h
 		data.UserDetail = detail
 	}
 	s.renderPage(w, "user_detail", data)
+}
+
+// handleBotsPage renders /dashboard/bots: a create form plus a
+// list of every persisted bot with toggle/delete actions. The
+// status pill comes from the supervisor's running set if it is
+// wired; otherwise the row falls back to a static "configured"
+// label.
+func (s *Server) handleBotsPage(sess *session, w http.ResponseWriter, r *http.Request) {
+	data := s.newPageData(sess, "bots", "bots")
+	s.fillBots(r.Context(), data)
+	s.renderPage(w, "bots", data)
+}
+
+func (s *Server) fillBots(ctx context.Context, data *pageData) {
+	if s.pages == nil || s.pages.Store == nil {
+		return
+	}
+	bots, err := s.pages.Store.Bots().List(ctx)
+	if err != nil {
+		s.logger.Warn("dashboard list bots failed", "error", err)
+		return
+	}
+	for _, b := range bots {
+		row := botPayload{
+			ID:      b.ID,
+			Name:    b.Name,
+			Enabled: b.Enabled,
+		}
+		data.Bots = append(data.Bots, row)
+	}
+	sort.Slice(data.Bots, func(i, j int) bool { return data.Bots[i].Name < data.Bots[j].Name })
+}
+
+// handleBotsCreate persists + starts a new bot via the
+// supervisor's CreateBot. Source is taken verbatim from the
+// textarea; the supervisor compiles it on insert and surfaces
+// any compile error to the operator via the Flash field.
+func (s *Server) handleBotsCreate(sess *session, w http.ResponseWriter, r *http.Request) {
+	if s.pages == nil || s.pages.Bots == nil {
+		http.Error(w, "bot manager not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if !s.checkCSRF(sess, r.PostForm.Get("csrf")) {
+		http.Error(w, "bad csrf token", http.StatusForbidden)
+		return
+	}
+	name := strings.TrimSpace(r.PostForm.Get("name"))
+	source := r.PostForm.Get("source")
+	enabled := r.PostForm.Get("enabled") != ""
+	if name == "" {
+		s.renderBotsWithFlash(sess, w, r, "name is required")
+		return
+	}
+	bot := &storage.Bot{
+		Name:    name,
+		Source:  source,
+		Enabled: enabled,
+	}
+	if err := s.pages.Bots.CreateBot(r.Context(), bot); err != nil {
+		s.renderBotsWithFlash(sess, w, r, "create failed: "+err.Error())
+		return
+	}
+	http.Redirect(w, r, "/dashboard/bots", http.StatusSeeOther)
+}
+
+func (s *Server) renderBotsWithFlash(sess *session, w http.ResponseWriter, r *http.Request, flash string) {
+	data := s.newPageData(sess, "bots", "bots")
+	data.Flash = flash
+	s.fillBots(r.Context(), data)
+	s.renderPage(w, "bots", data)
+}
+
+// handleBotDetailPage renders the per-bot edit page: identity,
+// status, and a textarea pre-filled with the current source.
+func (s *Server) handleBotDetailPage(sess *session, w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	data := s.newPageData(sess, "bots", "bot")
+	if s.pages == nil || s.pages.Store == nil {
+		http.Error(w, "store not configured", http.StatusServiceUnavailable)
+		return
+	}
+	bot, err := s.pages.Store.Bots().Get(r.Context(), id)
+	if err != nil {
+		http.Error(w, "no such bot", http.StatusNotFound)
+		return
+	}
+	data.Title = "bot — " + bot.Name
+	data.BotDetail = &botDetailPayload{
+		ID:      bot.ID,
+		Name:    bot.Name,
+		Enabled: bot.Enabled,
+		Source:  bot.Source,
+	}
+	s.renderPage(w, "bot_detail", data)
+}
+
+// handleBotSourcePost saves a fresh copy of the bot source via
+// the supervisor's UpdateBot, which compiles + hot-reloads the
+// runtime in one shot.
+func (s *Server) handleBotSourcePost(sess *session, w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.pages == nil || s.pages.Bots == nil || s.pages.Store == nil {
+		http.Error(w, "bot manager not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if !s.checkCSRF(sess, r.PostForm.Get("csrf")) {
+		http.Error(w, "bad csrf token", http.StatusForbidden)
+		return
+	}
+	bot, err := s.pages.Store.Bots().Get(r.Context(), id)
+	if err != nil {
+		http.Error(w, "no such bot", http.StatusNotFound)
+		return
+	}
+	bot.Source = r.PostForm.Get("source")
+	if err := s.pages.Bots.UpdateBot(r.Context(), bot); err != nil {
+		http.Error(w, "update failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/dashboard/bots/"+id, http.StatusSeeOther)
+}
+
+// handleBotTogglePost flips a bot's Enabled flag and pushes the
+// new state through UpdateBot, which starts or stops the
+// runtime accordingly.
+func (s *Server) handleBotTogglePost(sess *session, w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.pages == nil || s.pages.Bots == nil || s.pages.Store == nil {
+		http.Error(w, "bot manager not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if !s.checkCSRF(sess, r.PostForm.Get("csrf")) {
+		http.Error(w, "bad csrf token", http.StatusForbidden)
+		return
+	}
+	bot, err := s.pages.Store.Bots().Get(r.Context(), id)
+	if err != nil {
+		http.Error(w, "no such bot", http.StatusNotFound)
+		return
+	}
+	bot.Enabled = !bot.Enabled
+	if err := s.pages.Bots.UpdateBot(r.Context(), bot); err != nil {
+		http.Error(w, "toggle failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/dashboard/bots", http.StatusSeeOther)
+}
+
+// handleBotDelete removes a bot via the supervisor's DeleteBot
+// which stops the runtime and drops the persisted record.
+func (s *Server) handleBotDelete(sess *session, w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.pages == nil || s.pages.Bots == nil {
+		http.Error(w, "bot manager not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if !s.checkCSRF(sess, r.PostForm.Get("csrf")) {
+		http.Error(w, "bad csrf token", http.StatusForbidden)
+		return
+	}
+	if err := s.pages.Bots.DeleteBot(r.Context(), id); err != nil {
+		http.Error(w, "delete failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/dashboard/bots", http.StatusSeeOther)
 }
 
 // handleOperatorCreate handles POST /dashboard/operators. The

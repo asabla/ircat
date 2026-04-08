@@ -266,6 +266,71 @@ func TestOperatorsPage_RendersOperator(t *testing.T) {
 	}
 }
 
+// fakeBotManager records every supervisor call so the bot
+// page tests can stay isolated from the real internal/bots
+// supervisor (which would compile the Lua source on every
+// CreateBot and pull in the runtime).
+type fakeBotManager struct {
+	created []*storage.Bot
+	updated []*storage.Bot
+	deleted []string
+	err     error
+}
+
+func (f *fakeBotManager) CreateBot(_ context.Context, b *storage.Bot) error {
+	if b.ID == "" {
+		b.ID = "bot_test_1"
+	}
+	f.created = append(f.created, b)
+	return f.err
+}
+func (f *fakeBotManager) UpdateBot(_ context.Context, b *storage.Bot) error {
+	f.updated = append(f.updated, b)
+	return f.err
+}
+func (f *fakeBotManager) DeleteBot(_ context.Context, id string) error {
+	f.deleted = append(f.deleted, id)
+	return f.err
+}
+
+func TestBotsCreate_PersistsAndRedirects(t *testing.T) {
+	srv, store, _ := newPageServer(t)
+	bm := &fakeBotManager{}
+	srv.pages.Bots = bm
+	cookie := loginCookie(t, srv, "admin", "secret")
+
+	gReq := httptest.NewRequest("GET", "/dashboard/bots", nil)
+	gReq.AddCookie(cookie)
+	gRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(gRec, gReq)
+	csrf := extractCSRF(t, gRec.Body.String())
+
+	form := url.Values{}
+	form.Set("csrf", csrf)
+	form.Set("name", "echobot")
+	form.Set("source", `function on_message(ctx, ev) end`)
+	form.Set("enabled", "1")
+	pReq := httptest.NewRequest("POST", "/dashboard/bots", strings.NewReader(form.Encode()))
+	pReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	pReq.AddCookie(cookie)
+	pRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(pRec, pReq)
+	if pRec.Code != http.StatusSeeOther {
+		t.Fatalf("status %d body %s", pRec.Code, pRec.Body.String())
+	}
+	if len(bm.created) != 1 {
+		t.Fatalf("create count = %d, want 1", len(bm.created))
+	}
+	if bm.created[0].Name != "echobot" || !bm.created[0].Enabled {
+		t.Errorf("wrong bot persisted: %+v", bm.created[0])
+	}
+	// Sanity: the fake never touches the real store path.
+	bots, _ := store.Bots().List(context.Background())
+	if len(bots) != 0 {
+		t.Errorf("real store should be empty, got %d entries", len(bots))
+	}
+}
+
 func TestOperatorCreate_PersistsAndRedirects(t *testing.T) {
 	srv, store, _ := newPageServer(t)
 	cookie := loginCookie(t, srv, "admin", "secret")
