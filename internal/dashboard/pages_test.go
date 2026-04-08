@@ -266,6 +266,93 @@ func TestOperatorsPage_RendersOperator(t *testing.T) {
 	}
 }
 
+func TestOperatorCreate_PersistsAndRedirects(t *testing.T) {
+	srv, store, _ := newPageServer(t)
+	cookie := loginCookie(t, srv, "admin", "secret")
+
+	// Pull a CSRF from the operators page first.
+	gReq := httptest.NewRequest("GET", "/dashboard/operators", nil)
+	gReq.AddCookie(cookie)
+	gRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(gRec, gReq)
+	csrf := extractCSRF(t, gRec.Body.String())
+
+	form := url.Values{}
+	form.Set("csrf", csrf)
+	form.Set("name", "bob")
+	form.Set("password", "hunter2")
+	form.Set("flags", "kill,kline")
+	pReq := httptest.NewRequest("POST", "/dashboard/operators", strings.NewReader(form.Encode()))
+	pReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	pReq.AddCookie(cookie)
+	pRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(pRec, pReq)
+	if pRec.Code != http.StatusSeeOther {
+		t.Fatalf("status %d body %s", pRec.Code, pRec.Body.String())
+	}
+	got, err := store.Operators().Get(context.Background(), "bob")
+	if err != nil {
+		t.Fatalf("operator not persisted: %v", err)
+	}
+	if len(got.Flags) != 2 {
+		t.Errorf("flags = %v, want [kill kline]", got.Flags)
+	}
+	if got.PasswordHash == "" || got.PasswordHash == "hunter2" {
+		t.Errorf("password not hashed: %q", got.PasswordHash)
+	}
+}
+
+func TestTokenMint_ShowsPlaintextOnce(t *testing.T) {
+	srv, store, _ := newPageServer(t)
+	cookie := loginCookie(t, srv, "admin", "secret")
+
+	gReq := httptest.NewRequest("GET", "/dashboard/tokens", nil)
+	gReq.AddCookie(cookie)
+	gRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(gRec, gReq)
+	csrf := extractCSRF(t, gRec.Body.String())
+
+	form := url.Values{}
+	form.Set("csrf", csrf)
+	form.Set("label", "ci-runner")
+	pReq := httptest.NewRequest("POST", "/dashboard/tokens", strings.NewReader(form.Encode()))
+	pReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	pReq.AddCookie(cookie)
+	pRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(pRec, pReq)
+	if pRec.Code != 200 {
+		t.Fatalf("status %d body %s", pRec.Code, pRec.Body.String())
+	}
+	body := pRec.Body.String()
+	if !strings.Contains(body, "minted: ircat_") {
+		t.Errorf("plaintext not surfaced in flash: %s", body)
+	}
+	tokens, _ := store.APITokens().List(context.Background())
+	if len(tokens) != 1 {
+		t.Fatalf("token persisted count = %d, want 1", len(tokens))
+	}
+	if tokens[0].Label != "ci-runner" || tokens[0].Hash == "" {
+		t.Errorf("persisted token wrong shape: %+v", tokens[0])
+	}
+}
+
+// extractCSRF pulls the first csrf input value out of an HTML
+// body. The shared test helpers use this enough that it earns
+// a tiny dedicated function.
+func extractCSRF(t *testing.T, body string) string {
+	t.Helper()
+	idx := strings.Index(body, `name="csrf" value="`)
+	if idx < 0 {
+		t.Fatal("no csrf input in body")
+	}
+	rest := body[idx+len(`name="csrf" value="`):]
+	end := strings.Index(rest, `"`)
+	if end < 0 {
+		t.Fatal("malformed csrf input")
+	}
+	return rest[:end]
+}
+
 func TestChannelDetailPage_RendersChannelWithMembers(t *testing.T) {
 	srv, _, world := newPageServer(t)
 	alice, _ := world.AddUser(&state.User{Nick: "alice", User: "alice", Host: "h", Registered: true})

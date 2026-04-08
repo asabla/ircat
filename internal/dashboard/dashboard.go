@@ -243,6 +243,11 @@ func (s *Server) registerRoutes(api http.Handler) {
 	s.mux.HandleFunc("POST /dashboard/channels/{name}/topic", s.requireSession(s.handleChannelTopicPost))
 	s.mux.HandleFunc("GET /dashboard/federation", s.requireSession(s.handleFederationPage))
 	s.mux.HandleFunc("GET /dashboard/operators", s.requireSession(s.handleOperatorsPage))
+	s.mux.HandleFunc("POST /dashboard/operators", s.requireSession(s.handleOperatorCreate))
+	s.mux.HandleFunc("POST /dashboard/operators/{name}/delete", s.requireSession(s.handleOperatorDelete))
+	s.mux.HandleFunc("GET /dashboard/tokens", s.requireSession(s.handleTokensPage))
+	s.mux.HandleFunc("POST /dashboard/tokens", s.requireSession(s.handleTokenCreate))
+	s.mux.HandleFunc("POST /dashboard/tokens/{id}/delete", s.requireSession(s.handleTokenDelete))
 	s.mux.HandleFunc("GET /dashboard/events", s.requireSession(s.handleEventsPage))
 
 	if api != nil {

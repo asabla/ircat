@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/asabla/ircat/internal/auth"
@@ -423,6 +424,221 @@ func (s *Server) handleUserDetailPage(sess *session, w http.ResponseWriter, r *h
 		data.UserDetail = detail
 	}
 	s.renderPage(w, "user_detail", data)
+}
+
+// handleOperatorCreate handles POST /dashboard/operators. The
+// password is hashed via internal/auth using the configured
+// hash algorithm (argon2id by default) before being persisted,
+// so the plaintext never lives in the database. Flags are
+// taken as a comma-separated list because the dashboard form
+// is a single text input — operators with no special flags
+// can leave it empty.
+func (s *Server) handleOperatorCreate(sess *session, w http.ResponseWriter, r *http.Request) {
+	if s.pages == nil || s.pages.Store == nil {
+		http.Error(w, "operators not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if !s.checkCSRF(sess, r.PostForm.Get("csrf")) {
+		http.Error(w, "bad csrf token", http.StatusForbidden)
+		return
+	}
+	name := strings.TrimSpace(r.PostForm.Get("name"))
+	password := r.PostForm.Get("password")
+	if name == "" || password == "" {
+		s.renderOperatorsWithFlash(sess, w, r, "name and password are required")
+		return
+	}
+	hash, err := auth.Hash(auth.AlgorithmArgon2id, password, auth.Argon2idParams{})
+	if err != nil {
+		s.renderOperatorsWithFlash(sess, w, r, "hash failed: "+err.Error())
+		return
+	}
+	op := &storage.Operator{
+		Name:         name,
+		HostMask:     strings.TrimSpace(r.PostForm.Get("host_mask")),
+		PasswordHash: hash,
+		Flags:        splitCSV(r.PostForm.Get("flags")),
+	}
+	if err := s.pages.Store.Operators().Create(r.Context(), op); err != nil {
+		if errors.Is(err, storage.ErrConflict) {
+			s.renderOperatorsWithFlash(sess, w, r, "operator already exists")
+			return
+		}
+		s.renderOperatorsWithFlash(sess, w, r, "create failed: "+err.Error())
+		return
+	}
+	http.Redirect(w, r, "/dashboard/operators", http.StatusSeeOther)
+}
+
+// handleOperatorDelete removes an operator entry. The bootstrap
+// initial admin can be deleted via this path too — if you do
+// that and have no other admins, you have locked yourself out
+// of the dashboard, so the form button has the danger class on
+// the operators page.
+func (s *Server) handleOperatorDelete(sess *session, w http.ResponseWriter, r *http.Request) {
+	if s.pages == nil || s.pages.Store == nil {
+		http.Error(w, "operators not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if !s.checkCSRF(sess, r.PostForm.Get("csrf")) {
+		http.Error(w, "bad csrf token", http.StatusForbidden)
+		return
+	}
+	name := r.PathValue("name")
+	if err := s.pages.Store.Operators().Delete(r.Context(), name); err != nil {
+		s.logger.Warn("dashboard operator delete failed", "name", name, "error", err)
+		http.Error(w, "delete failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/dashboard/operators", http.StatusSeeOther)
+}
+
+// renderOperatorsWithFlash re-renders the operators page with
+// an error or status message in the Flash field. Used by the
+// create handler so a validation failure does not redirect
+// away from the form the operator was filling in.
+func (s *Server) renderOperatorsWithFlash(sess *session, w http.ResponseWriter, r *http.Request, flash string) {
+	data := s.newPageData(sess, "operators", "operators")
+	data.Flash = flash
+	if s.pages != nil && s.pages.Store != nil {
+		ops, err := s.pages.Store.Operators().List(r.Context())
+		if err == nil {
+			for _, op := range ops {
+				data.Operators = append(data.Operators, operatorPayload{
+					Name:      op.Name,
+					HostMask:  op.HostMask,
+					Flags:     op.Flags,
+					CreatedAt: op.CreatedAt.UTC().Format(time.RFC3339),
+				})
+			}
+		}
+	}
+	s.renderPage(w, "operators", data)
+}
+
+// handleTokensPage renders /dashboard/tokens with the list of
+// minted API tokens (id, label, last used). The mint form is
+// part of the same template; the plaintext is shown only on
+// the response to a successful mint.
+func (s *Server) handleTokensPage(sess *session, w http.ResponseWriter, r *http.Request) {
+	data := s.newPageData(sess, "tokens", "API tokens")
+	s.fillTokens(r.Context(), data)
+	s.renderPage(w, "tokens", data)
+}
+
+func (s *Server) fillTokens(ctx context.Context, data *pageData) {
+	if s.pages == nil || s.pages.Store == nil {
+		return
+	}
+	tokens, err := s.pages.Store.APITokens().List(ctx)
+	if err != nil {
+		s.logger.Warn("dashboard list tokens failed", "error", err)
+		return
+	}
+	for _, t := range tokens {
+		row := tokenPayload{
+			ID:        t.ID,
+			Label:     t.Label,
+			CreatedAt: t.CreatedAt.UTC().Format(time.RFC3339),
+		}
+		if !t.LastUsedAt.IsZero() {
+			row.LastUsedAt = t.LastUsedAt.UTC().Format(time.RFC3339)
+		}
+		data.Tokens = append(data.Tokens, row)
+	}
+	sort.Slice(data.Tokens, func(i, j int) bool { return data.Tokens[i].ID < data.Tokens[j].ID })
+}
+
+// handleTokenCreate mints a new API token, persists the hash,
+// and re-renders the tokens page with the plaintext in the
+// Flash field. The plaintext is shown exactly once — refreshing
+// the page or coming back later only shows the metadata.
+func (s *Server) handleTokenCreate(sess *session, w http.ResponseWriter, r *http.Request) {
+	if s.pages == nil || s.pages.Store == nil {
+		http.Error(w, "tokens not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if !s.checkCSRF(sess, r.PostForm.Get("csrf")) {
+		http.Error(w, "bad csrf token", http.StatusForbidden)
+		return
+	}
+	label := strings.TrimSpace(r.PostForm.Get("label"))
+	if label == "" {
+		http.Error(w, "label required", http.StatusBadRequest)
+		return
+	}
+	minted, err := auth.GenerateAPIToken()
+	if err != nil {
+		s.logger.Warn("token mint failed", "error", err)
+		http.Error(w, "mint failed", http.StatusInternalServerError)
+		return
+	}
+	rec := &storage.APIToken{
+		ID:    minted.ID,
+		Label: label,
+		Hash:  minted.Hash,
+	}
+	if err := s.pages.Store.APITokens().Create(r.Context(), rec); err != nil {
+		s.logger.Warn("token persist failed", "error", err)
+		http.Error(w, "persist failed", http.StatusInternalServerError)
+		return
+	}
+	data := s.newPageData(sess, "tokens", "API tokens")
+	data.Flash = "minted: " + minted.Plaintext + " — copy this now, it cannot be retrieved later"
+	s.fillTokens(r.Context(), data)
+	s.renderPage(w, "tokens", data)
+}
+
+func (s *Server) handleTokenDelete(sess *session, w http.ResponseWriter, r *http.Request) {
+	if s.pages == nil || s.pages.Store == nil {
+		http.Error(w, "tokens not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if !s.checkCSRF(sess, r.PostForm.Get("csrf")) {
+		http.Error(w, "bad csrf token", http.StatusForbidden)
+		return
+	}
+	id := r.PathValue("id")
+	if err := s.pages.Store.APITokens().Delete(r.Context(), id); err != nil {
+		s.logger.Warn("dashboard token delete failed", "id", id, "error", err)
+		http.Error(w, "delete failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/dashboard/tokens", http.StatusSeeOther)
+}
+
+// splitCSV splits a comma-separated input field into a trimmed
+// slice. Empty input returns nil so the resulting operator
+// flags slice does not contain a stray empty entry.
+func splitCSV(s string) []string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // handleKickUserPage is the dashboard form post that mirrors the
