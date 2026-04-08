@@ -59,10 +59,35 @@ bots:
   enabled: true
   max_bots: 100
 
-federation:
-  enabled: false
-  my_server_name: irc.example.org
-  links: []
+# Federation is opt-in. Most operators run a single ircat node
+# and the federation block is dead weight on a standalone box,
+# so the entire section is commented out by default. Uncomment
+# the block below and edit it to enable server-to-server links.
+#
+# federation:
+#   enabled: true
+#   my_server_name: irc.example.org
+#   # Listen for inbound peer connections. Omit listen_address
+#   # entirely if this node only dials outbound.
+#   listen_address: "0.0.0.0:7000"
+#   # Optional in-process TLS for the inbound listener. Both
+#   # paths must be set to enable TLS.
+#   listen_cert_file: /etc/ircat/fed-cert.pem
+#   listen_key_file: /etc/ircat/fed-key.pem
+#   # broadcast_mode: subscription is the v1.1+ default and
+#   # is strictly better than fanout in every measured case.
+#   # The fanout fallback is documented for removal in v1.3.
+#   broadcast_mode: subscription
+#   links:
+#     - name: irc.peer.org
+#       accept: true       # accept inbound connections from this peer
+#       connect: true      # also dial them outbound (mesh both ways)
+#       host: 10.0.0.2
+#       port: 7000
+#       password_in_env: IRCAT_LINK_PEER_IN
+#       password_out_env: IRCAT_LINK_PEER_OUT
+#       tls: true                            # dial peer over TLS
+#       tls_fingerprint: "sha256:abcdef..."  # pin the peer leaf cert
 
 logging:
   level: info
