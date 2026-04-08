@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"errors"
+	"html/template"
 	"net/http"
 	"sort"
 	"time"
@@ -84,8 +85,8 @@ type overviewPayload struct {
 type cardPayload struct {
 	Title string
 	Value string
-	Delta string // optional caption beneath the value
-	Spark string // SVG fragment for the inline sparkline
+	Delta string        // optional caption beneath the value
+	Spark template.HTML // inline SVG fragment, not HTML-escaped
 }
 
 type userPayload struct {
@@ -430,20 +431,19 @@ func (s *Server) renderPage(w http.ResponseWriter, name string, data any) {
 
 // buildOverviewCards turns the live MetricsSource into a slice
 // of stat cards rendered on the overview page. The sparkline
-// SVG is filled in by the M13 follow-up that adds the
-// per-metric rolling sample buffer; for now we render a flat
-// dash to keep the layout stable.
+// SVG comes from the rolling per-metric sample buffer that
+// startSampleLoop fills in the background.
 func (s *Server) buildOverviewCards() []cardPayload {
 	if s.metrics == nil {
 		return nil
 	}
 	out := []cardPayload{
-		{Title: "users", Value: itoa(s.metrics.UserCount())},
-		{Title: "channels", Value: itoa(s.metrics.ChannelCount())},
-		{Title: "federation links", Value: itoa(s.metrics.FederationLinkCount())},
-		{Title: "bots", Value: itoa(s.metrics.BotCount())},
-		{Title: "messages in", Value: u64toa(s.metrics.MessagesIn())},
-		{Title: "messages out", Value: u64toa(s.metrics.MessagesOut())},
+		{Title: "users", Value: itoa(s.metrics.UserCount()), Spark: s.renderSparkline("users")},
+		{Title: "channels", Value: itoa(s.metrics.ChannelCount()), Spark: s.renderSparkline("channels")},
+		{Title: "federation links", Value: itoa(s.metrics.FederationLinkCount()), Spark: s.renderSparkline("federation links")},
+		{Title: "bots", Value: itoa(s.metrics.BotCount()), Spark: s.renderSparkline("bots")},
+		{Title: "messages in", Value: u64toa(s.metrics.MessagesIn()), Spark: s.renderSparkline("messages in")},
+		{Title: "messages out", Value: u64toa(s.metrics.MessagesOut()), Spark: s.renderSparkline("messages out")},
 	}
 	return out
 }

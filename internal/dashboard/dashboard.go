@@ -68,6 +68,7 @@ type Server struct {
 	sessions *sessionStore
 	tmpl     *templates
 	metrics  MetricsSource
+	series   *metricSeriesSet
 }
 
 // New constructs a Server. It does not bind any sockets.
@@ -184,6 +185,12 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	s.logger.Info("dashboard listener bound", "address", ln.Addr().String(), "tls", tlsCfg.Enabled)
+
+	// Spin up the metric sample loop now that the listener is
+	// up. The loop ticks every sparklineInterval and stops when
+	// ctx is cancelled, so it dies cleanly with the rest of the
+	// server.
+	s.startSampleLoop(ctx)
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- s.httpServer.Serve(ln) }()
