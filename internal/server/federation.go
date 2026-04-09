@@ -351,6 +351,12 @@ func (s *Server) DeliverLocal(msg *protocol.Message) {
 		// they apply to every channel the sender is in. Fan out
 		// to every local member of every shared channel.
 		s.deliverPerUserChannels(msg)
+	case "WALLOPS":
+		// Operator broadcast (RFC 2812 §4.7). Fan out to every
+		// local +w user. Federation re-forwarding is handled at
+		// the originating node, so DeliverLocal must NOT echo
+		// the message back onto its links.
+		s.deliverWallopsLocal(msg)
 	}
 }
 

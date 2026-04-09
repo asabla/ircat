@@ -46,14 +46,11 @@ func TestAdmin_EmitsAllFourReplies(t *testing.T) {
 	c.Write([]byte("NICK alice\r\nUSER alice 0 * :Alice\r\n"))
 	expectNumeric(t, c, r, "422", time.Now().Add(2*time.Second))
 	c.Write([]byte("ADMIN\r\n"))
-	got := map[string]string{}
-	for code := range map[string]bool{"256": true, "257": true, "258": true, "259": true} {
-		got[code] = expectNumeric(t, c, r, code, time.Now().Add(2*time.Second))
-	}
+	// Read sequentially in the order the server emits them so the
+	// expectNumeric helper does not skip past lines while hunting
+	// for an out-of-order code.
 	for _, code := range []string{"256", "257", "258", "259"} {
-		if got[code] == "" {
-			t.Errorf("missing %s reply", code)
-		}
+		expectNumeric(t, c, r, code, time.Now().Add(2*time.Second))
 	}
 }
 
