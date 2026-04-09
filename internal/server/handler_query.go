@@ -147,10 +147,16 @@ func (c *Conn) sendWhoReply(channel string, u *state.User, mem state.Membership)
 //
 //	WHOIS [<server>] <nick>{,<nick>}
 //
-// Server-specific routing is M7 work; for M2 we only resolve local
-// nicks. Each nick produces RPL_WHOISUSER + RPL_WHOISSERVER
-// + RPL_WHOISCHANNELS (if applicable) + RPL_WHOISIDLE (placeholder)
-// + RPL_ENDOFWHOIS, with ERR_NOSUCHNICK for missing targets.
+// We answer from the local World, which is the union of every
+// federated node's burst plus runtime announces — so a WHOIS for a
+// remote user already returns the right nick/user/host/realname.
+// For remote users we report the user's HomeServer in 312
+// RPL_WHOISSERVER instead of our own name, and idle time falls
+// back to zero because we do not track per-message activity for
+// non-local connections. Each nick produces RPL_WHOISUSER +
+// RPL_WHOISSERVER + RPL_WHOISCHANNELS (if applicable) +
+// RPL_WHOISOPERATOR (if +o) + RPL_WHOISIDLE + RPL_ENDOFWHOIS,
+// with ERR_NOSUCHNICK for missing targets.
 func (c *Conn) handleWhois(m *protocol.Message) {
 	if c.user == nil || !c.user.Registered {
 		c.send(protocol.NumericReply(c.server.cfg.Server.Name, c.starOrNick(),
@@ -184,8 +190,20 @@ func (c *Conn) sendWhois(name string) {
 	}
 	c.send(protocol.NumericReply(srv, nick, protocol.RPL_WHOISUSER,
 		u.Nick, userOrNick(u), hostOrUnknown(u), "*", u.Realname))
+	// 312: report the user's home node so a federated WHOIS does
+	// not lie about which server actually owns the connection.
+	homeServer := srv
+	homeDesc := c.server.cfg.Server.Description
+	if u.IsRemote() {
+		homeServer = u.HomeServer
+		homeDesc = "ircat federation peer"
+	}
 	c.send(protocol.NumericReply(srv, nick, protocol.RPL_WHOISSERVER,
-		u.Nick, srv, c.server.cfg.Server.Description))
+		u.Nick, homeServer, homeDesc))
+	if strings.ContainsRune(u.Modes, 'o') {
+		c.send(protocol.NumericReply(srv, nick, protocol.RPL_WHOISOPERATOR,
+			u.Nick, "is an IRC operator"))
+	}
 	// Channel membership: build the list with op/voice prefixes.
 	chans := c.server.world.UserChannels(u.ID)
 	if len(chans) > 0 {
@@ -201,10 +219,14 @@ func (c *Conn) sendWhois(name string) {
 	}
 	// Idle time: placeholder until we track per-conn last-message
 	// timestamps in M2 flood control. Reports the time since
-	// connect for now.
-	idle := int(time.Since(u.ConnectAt).Seconds())
-	if idle < 0 {
-		idle = 0
+	// connect for local users; remote users always report 0
+	// because we do not see their per-message activity.
+	idle := 0
+	if !u.IsRemote() {
+		idle = int(time.Since(u.ConnectAt).Seconds())
+		if idle < 0 {
+			idle = 0
+		}
 	}
 	c.send(protocol.NumericReply(srv, nick, protocol.RPL_WHOISIDLE,
 		u.Nick, itoaPositive(idle), itoaPositive(int(u.ConnectAt.Unix())), "seconds idle, signon time"))
