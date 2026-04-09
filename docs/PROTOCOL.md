@@ -119,7 +119,7 @@ all modes work normally on the canonical `!IDshort` name.
 per MODE command: advertise `MODES=4` in ISUPPORT. The full
 CHANMODES advertisement is `CHANMODES=beIq,k,l,aimnpst`.
 
-### User modes (v1)
+### User modes
 
 | Mode | Meaning |
 |------|---------|
@@ -127,6 +127,7 @@ CHANMODES advertisement is `CHANMODES=beIq,k,l,aimnpst`.
 | `+w` | Receives wallops |
 | `+o` | IRC operator (set by OPER, never by user) |
 | `+s` | Receives server notices |
+| `+r` | Restricted (RFC 2812 §3.1.5) — server-set; blocks NICK changes and OPER attempts. Cannot be set or unset by the user. |
 
 ## Numerics we emit
 
@@ -168,6 +169,9 @@ following RFC 2812 verbs (and where they live):
 | CONNECT | §3.4.7 | Operator-only, requires a wired `Connector` host hook. |
 | REHASH, DIE, RESTART | §4.2-4 | Operator-only, host hooks. REHASH drives the same reloader the SIGHUP loop uses. |
 | OPER, KILL | §3.1.4, §3.7.1 | Store-backed operator accounts. |
+| SERVICE | §3.1.6 | Service registration form. Creates a `state.User` with Service=true. Reserved fields ignored per the RFC. |
+| SQUERY | §3.3.3 | Service-targeted message variant of PRIVMSG. Returns 408 if the target is not a registered service, even if a regular user with that nick exists. |
+| SERVLIST | §3.5.1 | Lists registered services as 234 RPL_SERVLIST + 235 RPL_SERVLISTEND. Optional `<mask>` and `<type>` filters. |
 | PING, PONG | §3.7.2-3 | Read-loop ping driver + client-issued PING. |
 
 ## Encoder canonical form
@@ -193,6 +197,31 @@ prefer the bare form. If a specific client compatibility issue
 forces the change, the right move is to add an explicit
 "force-middle for last param" flag on Message rather than reverting
 to per-byte heuristics.
+
+## Federation handshake
+
+Each link follows the RFC 2813 §4.1.1-§4.1.3 sequence in strict
+order. The dispatcher will not transition the link out of
+`Handshaking` state until every step has succeeded:
+
+1. **PASS** — `<password> <version> <flags> <description>`. The
+   `version` and `flags` fields (RFC 2813 §4.1.1) are parsed and
+   stashed on the conn even though we do not yet act on them; the
+   federation Link will need them when the v2.0 capability work
+   ships.
+2. **SERVER** — `<name> <hopcount> <token> :<info>`. The peer name
+   is matched against the configured `PeerName` if any.
+3. **SVINFO** — `<TS_VERSION> <TS_MIN> 0 :<unix-ts>`. We send TS6
+   on both fields and refuse any peer offering a TS version below
+   3. The receive of SVINFO is what triggers the burst — both
+   sides must have exchanged it before any state crosses the link.
+4. **Burst** — Servers → Users → Channels (RFC 2813 §5.2 burst
+   order). For each channel we emit one JOIN per local member, the
+   topic, and a MODE line carrying the full mode word.
+
+A failure at any step closes the link cleanly; partial state is
+never accepted. Loss of the SVINFO step in particular is the gate
+that prevents an incompatible peer from poisoning the local World.
 
 ## Open interpretation points
 

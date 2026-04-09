@@ -18,20 +18,34 @@ const (
 	// MemberVoice grants the right to speak in a +m channel
 	// (the "+" prefix).
 	MemberVoice
+	// MemberCreator marks the user as the creator of a safe (!)
+	// channel per RFC 2811 §4.3.5. The creator status implies +o
+	// (operator privileges) and is granted only at channel
+	// creation time. It cannot be removed by anyone — including
+	// other operators — and is the gate that prevents an attacker
+	// from racing to op themselves on netsplit recovery. The
+	// rendered prefix is "!".
+	MemberCreator
 )
 
-// IsOp reports whether m has operator status.
-func (m Membership) IsOp() bool { return m&MemberOp != 0 }
+// IsOp reports whether m has operator status. Creators are
+// implicitly ops as well per RFC 2811 §4.3.5.
+func (m Membership) IsOp() bool { return m&MemberOp != 0 || m&MemberCreator != 0 }
 
 // IsVoice reports whether m has voice status.
 func (m Membership) IsVoice() bool { return m&MemberVoice != 0 }
 
+// IsCreator reports whether m carries the safe-channel creator flag.
+func (m Membership) IsCreator() bool { return m&MemberCreator != 0 }
+
 // Prefix returns the highest visible status prefix character per
-// RFC 2812 §3.5: "@" for ops, "+" for voiced, "" otherwise. Servers
-// that advertise multi-prefix in CAP can render multiple, but ircat
-// does not advertise it in M2.
+// RFC 2811 §4.3.5 / RFC 2812 §3.5: "!" for safe-channel creators,
+// "@" for ops, "+" for voiced, "" otherwise. Servers that advertise
+// multi-prefix in CAP can render multiple, but ircat does not yet.
 func (m Membership) Prefix() string {
 	switch {
+	case m.IsCreator():
+		return "!"
 	case m.IsOp():
 		return "@"
 	case m.IsVoice():
@@ -214,10 +228,15 @@ func (c *Channel) MemberIDs() map[UserID]Membership {
 }
 
 // addMember adds id with the given membership flags. The first user
-// to join a fresh channel is automatically opped — that's how IRC
-// channel ownership has worked since 1990 — except on modeless
-// channels (RFC 2811 §4.2.1, the '+' prefix), which have no
-// operators by definition.
+// to join a fresh channel gets a status flag depending on the
+// channel prefix:
+//
+//   - '+'  modeless channels: no flag (no operators by definition)
+//   - '!'  safe channels: MemberCreator (RFC 2811 §4.3.5 — the
+//          immortal creator status that implies +o and cannot be
+//          removed)
+//   - '#' / '&' standard channels: MemberOp (the regular auto-op
+//          first joiner has had since 1990)
 //
 // Returns true if id was newly added, false if it was already a
 // member (in which case the membership is not modified).
@@ -228,8 +247,15 @@ func (c *Channel) addMember(id UserID, isFirst bool) (Membership, bool) {
 		return existing, false
 	}
 	var m Membership
-	if isFirst && !(len(c.name) > 0 && c.name[0] == '+') {
-		m = MemberOp
+	if isFirst && len(c.name) > 0 {
+		switch c.name[0] {
+		case '+':
+			// no flag
+		case '!':
+			m = MemberCreator
+		default:
+			m = MemberOp
+		}
 	}
 	c.members[id] = m
 	return m, true
@@ -272,7 +298,10 @@ func (c *Channel) AddMembership(id UserID, flags Membership) (Membership, bool) 
 }
 
 // RemoveMembership clears flags from the member. Returns the new
-// membership and true on success.
+// membership and true on success. The MemberCreator flag is masked
+// off the request because RFC 2811 §4.3.5 explicitly forbids
+// removing the creator status from a safe-channel founder; the
+// caller cannot bypass this even with intent.
 func (c *Channel) RemoveMembership(id UserID, flags Membership) (Membership, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -280,6 +309,7 @@ func (c *Channel) RemoveMembership(id UserID, flags Membership) (Membership, boo
 	if !ok {
 		return 0, false
 	}
+	flags &^= MemberCreator
 	c.members[id] = cur &^ flags
 	return c.members[id], true
 }

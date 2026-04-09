@@ -141,7 +141,7 @@ func (s *Server) buildISupport() [][]string {
 		fmt.Sprintf("AWAYLEN=%d", limits.AwayLength),
 		fmt.Sprintf("KICKLEN=%d", limits.KickReasonLength),
 		"CHANTYPES=#&+!",
-		"PREFIX=(ov)@+",
+		"PREFIX=(Oov)!@+",
 		"CHANMODES=beIq,k,l,aimnpst",
 		"MODES=4",
 		"EXCEPTS=e",

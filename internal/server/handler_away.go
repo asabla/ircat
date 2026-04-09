@@ -1,6 +1,8 @@
 package server
 
 import (
+	"strings"
+
 	"github.com/asabla/ircat/internal/protocol"
 )
 
@@ -35,6 +37,11 @@ func (c *Conn) handleAway(m *protocol.Message) {
 	}
 	if away == "" {
 		c.user.Away = ""
+		// Clear the user-mode 'a' away marker (RFC 2812
+		// §3.1.5). The away mode is set automatically by the
+		// AWAY command and cleared by the same when the user
+		// returns; clients can read it via MODE <nick>.
+		c.user.Modes = stripModeChar(c.user.Modes, 'a')
 		c.send(protocol.NumericReply(srv, nick, protocol.RPL_UNAWAY,
 			"You are no longer marked as being away"))
 		return
@@ -46,6 +53,24 @@ func (c *Conn) handleAway(m *protocol.Message) {
 		away = away[:maxLen]
 	}
 	c.user.Away = away
+	if !strings.ContainsRune(c.user.Modes, 'a') {
+		c.user.Modes += "a"
+	}
 	c.send(protocol.NumericReply(srv, nick, protocol.RPL_NOWAWAY,
 		"You have been marked as being away"))
+}
+
+// stripModeChar removes every occurrence of m from modes. The
+// result preserves the original ordering of the remaining bytes.
+func stripModeChar(modes string, m byte) string {
+	if !strings.ContainsRune(modes, rune(m)) {
+		return modes
+	}
+	out := make([]byte, 0, len(modes))
+	for i := 0; i < len(modes); i++ {
+		if modes[i] != m {
+			out = append(out, modes[i])
+		}
+	}
+	return string(out)
 }
