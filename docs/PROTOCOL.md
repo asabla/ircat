@@ -156,7 +156,7 @@ following RFC 2812 verbs (and where they live):
 | Command | RFC | Notes |
 |---------|-----|-------|
 | PASS, NICK, USER | §3.1 | Registration burst. PASS gates registration when `Server.ClientPassword` is set; the federation form parses version and flags fields. |
-| CAP | IRCv3 | LS/REQ/END negotiation. Advertises `message-tags`, `server-time`, `echo-message`, `multi-prefix`; per-conn `capsAccepted` set tracks negotiated caps and gates the per-recipient send-time wrappers. |
+| CAP | IRCv3 | LS/REQ/END negotiation. Advertises `message-tags`, `server-time`, `echo-message`, `multi-prefix`, `userhost-in-names`, `away-notify`, `invite-notify`; per-conn `capsAccepted` set tracks negotiated caps and gates the per-recipient send-time wrappers. |
 | QUIT | §3.1.7 | Broadcasts QUIT to shared-channel members; sends ERROR before disconnect. |
 | JOIN, PART | §3.2.1-2 | Including +i/+k/+l/+b/+e/+I/+q gates. JOIN supports `!!short` (create safe channel) and `!short` (resolve existing). |
 | MODE | §3.2.3-4 | Channel + user, list-form `b`/`e`/`I`/`q`. Modeless (`+`) channels reject MODE mutations. |
@@ -219,6 +219,9 @@ re-parsing the conn state on every line.
 | `server-time` | `Conn.send` wraps every outbound message via `protocol.Message.WithTag` | Attaches `@time=<ISO8601>` to every line for the negotiating client. Per-recipient copy so a broadcast Message stays clean for non-negotiating peers. |
 | `echo-message` | `deliverOneTarget` | Bounces a sender's own PRIVMSG / NOTICE back to them so the client renders outgoing messages from the wire. Channel form sets `includeSelf=true` on the broadcast; user-target form sends an extra copy to the sender. |
 | `multi-prefix` | `sendNamesReply`, `sendWhoReply` | Renders every applicable status prefix (`!`, `@`, `+`) instead of only the highest. Driven by `Membership.MultiPrefix()`. |
+| `userhost-in-names` | `sendNamesReply` | Renders each NAMES entry as the full `prefix nick!user@host` triplet instead of `prefix nick`, so the requester does not need a follow-up WHO. |
+| `away-notify` | `handler_away.notifyAway` | Pushes `:nick!u@h AWAY :reason` (and the bare `AWAY` form on return) to every shared-channel member with the cap when AWAY toggles. Members deduplicated across shared channels so a peer in two channels with the away user receives one notification, not two. |
+| `invite-notify` | `handler_channels.handleInvite` | Pushes `:inviter!u@h INVITE target #chan` to every channel operator with the cap when an INVITE happens. Restricted to ops (the spec allows either "all members" or "ops only"; ops-only matches charybdis / inspircd). |
 
 `CAP REQ` is atomic per the IRCv3 spec: any unknown capability in
 the request causes the whole batch to be NAKed. The `-name` removal

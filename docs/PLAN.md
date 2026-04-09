@@ -36,19 +36,31 @@ coherent batch is shippable.
 
 ### W1 — IRCv3 catch-up
 
-The four caps shipped in v1.0 are the table-stakes set. The next
-tier are also widely deployed and are valuable for modern client
-UX.
+The four caps shipped in v1.0 are the table-stakes set
+(`message-tags`, `server-time`, `echo-message`, `multi-prefix`).
+Three more independent caps shipped on top of v1.0 in this
+workstream: `userhost-in-names`, `away-notify`, `invite-notify`.
+The remaining tier needs prerequisites.
+
+Shipped post-v1.0:
+
+- ✅ **`userhost-in-names`** — NAMES renders the full
+  `nick!user@host` triplet for negotiating clients so a
+  follow-up WHO is unnecessary.
+- ✅ **`away-notify`** — pushes `:nick!u@h AWAY :reason`
+  (and the bare `AWAY` form on return) to every shared-channel
+  member with the cap when AWAY toggles.
+- ✅ **`invite-notify`** — pushes `:inviter!u@h INVITE target
+  #chan` to every channel operator with the cap when an
+  INVITE happens.
+
+Still pending:
 
 - **`chghost`** — notifies channel members when a user's host
   changes. Today the host is captured at registration and never
   rewritten, so this is a near-no-op until the cloak / vhost
-  work lands. Wire the cap negotiation now and emit on the
-  forthcoming MODE +x cloak path.
-- **`away-notify`** — emits a `:nick!u@h AWAY :reason` /
-  `:nick!u@h AWAY` to channel members when a user toggles AWAY.
-  Channel members with the cap negotiated see real-time presence
-  changes instead of having to PRIVMSG to discover they are away.
+  work lands. Wire the cap negotiation when the forthcoming
+  MODE +x cloak path appears.
 - **`account-tag`** — attaches `@account=<name>` on every
   message from a logged-in account. Requires the account
   framework (W4) to be useful.
@@ -60,9 +72,9 @@ UX.
   instead of streaming. Cheap to add and useful as soon as the
   history work begins.
 
-**Exit:** all five caps appear in `CAP LS`, ACK on REQ, and have
-focused tests in `internal/server/`. Each one wires through to
-its consumer where applicable.
+**Exit:** all the unblocked caps shipped (✅ above). The
+remaining four are tracked under W4 (services / accounts) and
+the cloak follow-up.
 
 ---
 
