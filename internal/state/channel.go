@@ -212,7 +212,9 @@ func (c *Channel) MemberIDs() map[UserID]Membership {
 
 // addMember adds id with the given membership flags. The first user
 // to join a fresh channel is automatically opped — that's how IRC
-// channel ownership has worked since 1990.
+// channel ownership has worked since 1990 — except on modeless
+// channels (RFC 2811 §4.2.1, the '+' prefix), which have no
+// operators by definition.
 //
 // Returns true if id was newly added, false if it was already a
 // member (in which case the membership is not modified).
@@ -223,7 +225,7 @@ func (c *Channel) addMember(id UserID, isFirst bool) (Membership, bool) {
 		return existing, false
 	}
 	var m Membership
-	if isFirst {
+	if isFirst && !(len(c.name) > 0 && c.name[0] == '+') {
 		m = MemberOp
 	}
 	c.members[id] = m

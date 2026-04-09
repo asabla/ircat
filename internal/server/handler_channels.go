@@ -491,8 +491,9 @@ func (c *Conn) handleTopic(m *protocol.Message) {
 }
 
 // validChannelName enforces the loose RFC 2812 channel name grammar:
-// must start with '#' or '&', up to maxLen bytes, no SPACE/CR/LF/NUL,
-// no comma, no bell.
+// must start with '#', '&', or '+' (the modeless prefix from
+// RFC 2811 §2.1), up to maxLen bytes, no SPACE/CR/LF/NUL, no comma,
+// no bell.
 func validChannelName(s string, maxLen int) bool {
 	if maxLen <= 0 {
 		maxLen = 50
@@ -500,7 +501,7 @@ func validChannelName(s string, maxLen int) bool {
 	if len(s) < 2 || len(s) > maxLen {
 		return false
 	}
-	if s[0] != '#' && s[0] != '&' {
+	if s[0] != '#' && s[0] != '&' && s[0] != '+' {
 		return false
 	}
 	for i := 1; i < len(s); i++ {
@@ -510,6 +511,15 @@ func validChannelName(s string, maxLen int) bool {
 		}
 	}
 	return true
+}
+
+// isModelessChannel reports whether name starts with the '+'
+// prefix that RFC 2811 §4.2.1 reserves for modeless channels.
+// MODE-changing commands (MODE, KICK, INVITE, TOPIC under +t)
+// are silently rejected on these channels because the channel
+// has no operators and no boolean modes that can be set.
+func isModelessChannel(name string) bool {
+	return len(name) > 0 && name[0] == '+'
 }
 
 // itoaPositive is a tiny stdlib-free integer-to-string for the cases

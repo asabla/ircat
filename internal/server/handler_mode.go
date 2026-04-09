@@ -57,6 +57,14 @@ func (c *Conn) handleChannelMode(name string, params []string) {
 		return
 	}
 
+	// Modeless channels (RFC 2811 §4.2.1, '+' prefix) reject every
+	// mutation MODE. Bare-list queries above are still answered.
+	if isModelessChannel(ch.Name()) {
+		c.send(protocol.NumericReply(srv, nick, protocol.ERR_CHANOPRIVSNEEDED,
+			ch.Name(), "Channel does not support modes"))
+		return
+	}
+
 	// Special case: a bare list query for +b, +e, +I (e.g.
 	// "MODE #x +b" with no mask). Treated as a list dump rather than
 	// a mutation.

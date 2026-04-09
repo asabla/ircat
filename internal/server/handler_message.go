@@ -197,8 +197,14 @@ func (c *Conn) deliverOneTarget(target, text, command string, emitErrors bool) {
 // isChannelName reports whether s looks like a channel target. We
 // look only at the first byte; full validation lives in
 // validChannelName for places that need it.
+//
+// The '+' prefix is only treated as a channel target when followed
+// by at least one more byte — bare "+" is the modeless prefix on
+// its own and not a valid name. The deliverOneTarget caller has
+// already split off "$mask" / "#hostmask" before reaching here, so
+// we do not need to disambiguate those.
 func isChannelName(s string) bool {
-	return len(s) > 0 && (s[0] == '#' || s[0] == '&')
+	return len(s) > 0 && (s[0] == '#' || s[0] == '&' || (s[0] == '+' && len(s) > 1))
 }
 
 // deliverMaskBroadcast handles the operator-only $servermask /
