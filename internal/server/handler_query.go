@@ -146,7 +146,20 @@ func (c *Conn) handleWho(m *protocol.Message) {
 		return
 	}
 
-	if u := c.server.world.FindByNick(mask); u != nil {
+	// Non-channel form. RFC 2812 §3.6.1 says the mask is a glob
+	// matched against the user's hostmask. We support the same
+	// '*' / '?' wildcards the +b/+e/+I list-mode matchers use.
+	// A literal nick still works because a nick has no wildcards
+	// and the matcher reduces to an exact compare.
+	if state.HasGlobWildcard(mask) {
+		for _, snap := range c.server.world.Snapshot() {
+			snap := snap
+			if state.GlobMatchHost(mask, snap.Hostmask()) ||
+				state.GlobMatchHost(mask, snap.Nick) {
+				c.sendWhoReply("*", &snap, 0)
+			}
+		}
+	} else if u := c.server.world.FindByNick(mask); u != nil {
 		c.sendWhoReply("*", u, 0)
 	}
 	c.send(protocol.NumericReply(srv, nick, protocol.RPL_ENDOFWHO, mask, "End of WHO list"))

@@ -551,6 +551,18 @@ func GlobMatchHost(pattern, s string) bool {
 	return globMatch(strings.ToLower(pattern), strings.ToLower(s))
 }
 
+// HasGlobWildcard reports whether s contains any of the simple
+// IRC glob wildcards ('*' or '?'). Used by callers that want a
+// fast-path literal lookup when no wildcards are present.
+func HasGlobWildcard(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] == '*' || s[i] == '?' {
+			return true
+		}
+	}
+	return false
+}
+
 // globMatch implements the simple IRC glob algorithm with '*' and
 // '?' wildcards. Returns true if pattern matches s end-to-end.
 func globMatch(pattern, s string) bool {
