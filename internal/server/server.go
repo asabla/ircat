@@ -21,6 +21,7 @@ package server
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -329,6 +330,50 @@ func (s *Server) broadcastToChannel(ch *state.Channel, msg *protocol.Message, ex
 // anonymousMask is the canonical hostmask used as the prefix on
 // every message originating from a +a channel (RFC 2811 §4.2.1).
 const anonymousMask = "anonymous!anonymous@anonymous."
+
+// newSafeChannelID generates a fresh 5-character RFC 2811 §3 safe
+// channel ID. The character set is uppercase letters and digits.
+// We use crypto/rand because the search space (36^5 = 60M) is
+// large enough that any collision is essentially impossible, but
+// we still re-roll on the off chance an existing channel happens
+// to share the suffix.
+func (s *Server) newSafeChannelID() string {
+	for attempt := 0; attempt < 8; attempt++ {
+		var raw [safeChannelIDLen]byte
+		if _, err := cryptorand.Read(raw[:]); err != nil {
+			// Should never happen on a working OS; fall back
+			// to a low-entropy time-derived ID rather than
+			// crashing.
+			now := s.now().UnixNano()
+			for i := 0; i < safeChannelIDLen; i++ {
+				raw[i] = byte(now >> (i * 8))
+			}
+		}
+		var buf [safeChannelIDLen]byte
+		for i := 0; i < safeChannelIDLen; i++ {
+			buf[i] = safeChannelIDAlphabet[int(raw[i])%len(safeChannelIDAlphabet)]
+		}
+		id := string(buf[:])
+		// Reject if any existing safe channel already uses this
+		// exact ID, regardless of suffix.
+		clash := false
+		for _, ch := range s.world.ChannelsSnapshot() {
+			n := ch.Name()
+			if isSafeChannel(n) && len(n) > 1+safeChannelIDLen && n[1:1+safeChannelIDLen] == id {
+				clash = true
+				break
+			}
+		}
+		if !clash {
+			return id
+		}
+	}
+	// Astronomically unlikely. Fall through with the last buf;
+	// the resulting channel will share an ID with another, which
+	// the resolveSafeChannel suffix lookup arbitrates by first
+	// match.
+	return "AAAAA"
+}
 
 // Run binds every configured listener and serves until ctx is
 // cancelled. On shutdown it stops accepting, closes all listeners,

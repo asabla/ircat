@@ -104,6 +104,17 @@ func (c *Conn) deliverOneTarget(target, text, command string, emitErrors bool) {
 
 	if isChannelName(target) {
 		ch := c.server.world.FindChannel(target)
+		if ch == nil && isSafeChannel(target) {
+			// "!short" PRIVMSG/NOTICE: resolve the short
+			// suffix to a canonical "!IDshort" before giving
+			// up. The double-bang form is meaningless on
+			// PRIVMSG (it would create a channel via a
+			// message), so only the single-bang short form
+			// is supported here.
+			if resolved, ok := c.resolveSafeChannel(target); ok {
+				ch = c.server.world.FindChannel(resolved)
+			}
+		}
 		if ch == nil {
 			if emitErrors {
 				c.send(protocol.NumericReply(srv, nick, protocol.ERR_NOSUCHNICK,
@@ -217,7 +228,16 @@ func (c *Conn) deliverOneTarget(target, text, command string, emitErrors bool) {
 // already split off "$mask" / "#hostmask" before reaching here, so
 // we do not need to disambiguate those.
 func isChannelName(s string) bool {
-	return len(s) > 0 && (s[0] == '#' || s[0] == '&' || (s[0] == '+' && len(s) > 1))
+	if len(s) == 0 {
+		return false
+	}
+	switch s[0] {
+	case '#', '&':
+		return true
+	case '+', '!':
+		return len(s) > 1
+	}
+	return false
 }
 
 // deliverMaskBroadcast handles the operator-only $servermask /

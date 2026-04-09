@@ -67,6 +67,29 @@ func (c *Conn) joinOne(name, key string) {
 		return
 	}
 
+	// Safe channels (RFC 2811 §2.1) need extra resolution before
+	// the standard join machinery kicks in:
+	//
+	//   "!!short" — create a brand new safe channel by generating
+	//               a fresh 5-character ID. The on-the-wire name
+	//               becomes "!IDshort" from this point on.
+	//   "!short"  — join the existing safe channel with this
+	//               short suffix. We resolve "!short" against the
+	//               world's channel set; if no match exists,
+	//               return ERR_NOSUCHCHANNEL.
+	//
+	// After resolution, name is the canonical "!IDshort" form and
+	// the rest of the join path treats it like any other channel.
+	if isSafeChannel(name) {
+		resolved, ok := c.resolveSafeChannel(name)
+		if !ok {
+			c.send(protocol.NumericReply(srv, nick, protocol.ERR_NOSUCHCHANNEL,
+				name, "No such channel"))
+			return
+		}
+		name = resolved
+	}
+
 	// Check the door before knocking. We re-check after the join
 	// because the channel state could have changed in between, but
 	// the early-out gives correct error numerics for the common
@@ -500,9 +523,9 @@ func (c *Conn) handleTopic(m *protocol.Message) {
 }
 
 // validChannelName enforces the loose RFC 2812 channel name grammar:
-// must start with '#', '&', or '+' (the modeless prefix from
-// RFC 2811 §2.1), up to maxLen bytes, no SPACE/CR/LF/NUL, no comma,
-// no bell.
+// must start with '#', '&', '+' (modeless prefix from RFC 2811
+// §2.1), or '!' (safe channel prefix from RFC 2811 §2.1), up to
+// maxLen bytes, no SPACE/CR/LF/NUL, no comma, no bell.
 func validChannelName(s string, maxLen int) bool {
 	if maxLen <= 0 {
 		maxLen = 50
@@ -510,12 +533,93 @@ func validChannelName(s string, maxLen int) bool {
 	if len(s) < 2 || len(s) > maxLen {
 		return false
 	}
-	if s[0] != '#' && s[0] != '&' && s[0] != '+' {
+	if s[0] != '#' && s[0] != '&' && s[0] != '+' && s[0] != '!' {
 		return false
 	}
 	for i := 1; i < len(s); i++ {
 		switch s[i] {
 		case ' ', ',', '\x07', '\r', '\n', 0:
+			return false
+		}
+	}
+	return true
+}
+
+// isSafeChannel reports whether name has the '!' prefix that
+// RFC 2811 §2.1 reserves for safe (timestamped) channels.
+func isSafeChannel(name string) bool {
+	return len(name) > 0 && name[0] == '!'
+}
+
+// safeChannelIDLen is the canonical 5-character ID length from
+// RFC 2811 §3. The ID is uppercase letters and digits and is
+// generated server-side; clients never see a "!short" with no ID
+// on the wire.
+const safeChannelIDLen = 5
+
+// safeChannelIDAlphabet is the character set the RFC permits for
+// the generated ID: uppercase letters A-Z and digits 0-9.
+const safeChannelIDAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+// resolveSafeChannel converts a client-supplied "!short" or "!!short"
+// JOIN target into the canonical "!IDshort" form.
+//
+//   - "!!short" always allocates a fresh ID and returns
+//     "!IDshort". The new channel does not yet exist in the world;
+//     EnsureChannel will create it on the subsequent JoinChannel.
+//   - "!short" walks the world looking for any existing safe
+//     channel whose suffix (after the 5-char ID) equals "short".
+//     Returns the first match. If no match exists, ok is false.
+//   - "!IDshort" (already canonical, with a 5-char ID) is returned
+//     unchanged.
+//
+// We never reject the JOIN here for shape; validChannelName has
+// already done that.
+func (c *Conn) resolveSafeChannel(name string) (string, bool) {
+	if len(name) >= 2 && name[1] == '!' {
+		// "!!short" — generate a fresh ID. The result is
+		// "!IDshort"; the second '!' is consumed.
+		short := name[2:]
+		if short == "" {
+			return "", false
+		}
+		id := c.server.newSafeChannelID()
+		return "!" + id + short, true
+	}
+	// Plain "!..." — could already be the canonical "!IDshort"
+	// (if the rest is at least 5 chars and the first 5 chars are
+	// alphanumeric uppercase) or a short form "!short" the
+	// client wants us to resolve.
+	rest := name[1:]
+	if len(rest) > safeChannelIDLen && isSafeChannelID(rest[:safeChannelIDLen]) {
+		// Looks already canonical. Accept it as-is so a client
+		// that copy-pastes "!ABCDEchat" works.
+		return name, true
+	}
+	// Resolve "!short" against the world by suffix match.
+	for _, ch := range c.server.world.ChannelsSnapshot() {
+		n := ch.Name()
+		if !isSafeChannel(n) || len(n) <= 1+safeChannelIDLen {
+			continue
+		}
+		suffix := n[1+safeChannelIDLen:]
+		if suffix == rest {
+			return n, true
+		}
+	}
+	return "", false
+}
+
+// isSafeChannelID reports whether s is exactly a 5-character
+// uppercase-alphanumeric token, i.e. a valid generated safe-channel
+// ID per RFC 2811 §3.
+func isSafeChannelID(s string) bool {
+	if len(s) != safeChannelIDLen {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
 			return false
 		}
 	}
