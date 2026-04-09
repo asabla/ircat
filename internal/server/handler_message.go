@@ -134,6 +134,19 @@ func (c *Conn) deliverOneTarget(target, text, command string, emitErrors bool) {
 				return
 			}
 		}
+		// +q quiet list: a user matching any quiet mask cannot
+		// speak. +o and +v override the gag — operators and
+		// voiced members can talk over a quiet, mirroring how
+		// charybdis and inspircd handle the conflict.
+		mem := ch.Membership(c.user.ID)
+		if !mem.IsOp() && !mem.IsVoice() &&
+			ch.MatchesQuiet(c.user.Hostmask(), c.server.world.CaseMapping().Fold) {
+			if emitErrors {
+				c.send(protocol.NumericReply(srv, nick, protocol.ERR_CANNOTSENDTOCHAN,
+					ch.Name(), "Cannot send to channel (+q)"))
+			}
+			return
+		}
 
 		msg := &protocol.Message{
 			Prefix:  c.user.Hostmask(),

@@ -158,8 +158,12 @@ type ChannelRecord struct {
 	// they live in.
 	Exceptions []BanRecord
 	Invexes    []BanRecord
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	// Quiets is the +q quiet list (charybdis convention). Users
+	// matching a quiet mask cannot speak in the channel but can
+	// still join.
+	Quiets    []BanRecord
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // BanRecord is one channel ban entry.

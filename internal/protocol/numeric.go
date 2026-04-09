@@ -92,6 +92,10 @@ const (
 	RPL_BANLIST         = "367" // "<channel> <banmask>"
 	RPL_ENDOFBANLIST    = "368" // "<channel> :End of channel ban list"
 
+	// --- Quiet list (charybdis convention) ---
+	RPL_QUIETLIST      = "728" // "<channel> q <mask>"
+	RPL_ENDOFQUIETLIST = "729" // "<channel> q :End of channel quiet list"
+
 	// --- WHO (352) ---
 	RPL_WHOREPLY = "352" // "<channel> <user> <host> <server> <nick> <flags> :<hopcount> <real name>"
 

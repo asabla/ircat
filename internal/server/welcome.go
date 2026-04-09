@@ -142,7 +142,7 @@ func (s *Server) buildISupport() [][]string {
 		fmt.Sprintf("KICKLEN=%d", limits.KickReasonLength),
 		"CHANTYPES=#&+",
 		"PREFIX=(ov)@+",
-		"CHANMODES=beI,k,l,imnpst",
+		"CHANMODES=beIq,k,l,aimnpst",
 		"MODES=4",
 		"EXCEPTS=e",
 		"INVEX=I",

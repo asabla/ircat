@@ -48,6 +48,11 @@ func (s *channelStore) hydrateLists(ctx context.Context, rec *storage.ChannelRec
 		return err
 	}
 	rec.Invexes = invexes
+	quiets, err := s.loadList(ctx, "channel_quiets", rec.Name)
+	if err != nil {
+		return err
+	}
+	rec.Quiets = quiets
 	return nil
 }
 
@@ -162,6 +167,9 @@ func (s *channelStore) Upsert(ctx context.Context, rec *storage.ChannelRecord) e
 		return err
 	}
 	if err := pgReplaceList(ctx, tx, "channel_invexes", rec.Name, rec.Invexes, now); err != nil {
+		return err
+	}
+	if err := pgReplaceList(ctx, tx, "channel_quiets", rec.Name, rec.Quiets, now); err != nil {
 		return err
 	}
 

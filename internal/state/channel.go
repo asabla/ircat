@@ -63,6 +63,7 @@ type Channel struct {
 	bans       map[string]time.Time // mask -> set time
 	exceptions map[string]time.Time // ban exception masks
 	invexes    map[string]time.Time // invite exception masks
+	quiets     map[string]time.Time // +q quiet masks (no speech, can still join)
 	invites    map[UserID]struct{}  // pending one-shot invites for +i bypass
 }
 
@@ -89,6 +90,7 @@ func newChannel(name string, now time.Time) *Channel {
 		bans:       make(map[string]time.Time),
 		exceptions: make(map[string]time.Time),
 		invexes:    make(map[string]time.Time),
+		quiets:     make(map[string]time.Time),
 	}
 }
 
@@ -515,6 +517,56 @@ func (c *Channel) MatchesInvex(hostmask string, fold func(string) string) bool {
 	return false
 }
 
+// AddQuiet adds mask to the +q quiet list. A user matching a quiet
+// mask cannot send PRIVMSG/NOTICE to the channel but can still
+// join, see the topic, and receive messages. This mirrors the
+// charybdis/inspircd convention rather than the older "+q owner"
+// dialect from unrealircd.
+func (c *Channel) AddQuiet(mask string, at time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.quiets[mask]; ok {
+		return false
+	}
+	c.quiets[mask] = at
+	return true
+}
+
+// RemoveQuiet drops mask from the +q quiet list.
+func (c *Channel) RemoveQuiet(mask string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.quiets[mask]; !ok {
+		return false
+	}
+	delete(c.quiets, mask)
+	return true
+}
+
+// Quiets returns a snapshot of the +q quiet list.
+func (c *Channel) Quiets() map[string]time.Time {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make(map[string]time.Time, len(c.quiets))
+	for k, v := range c.quiets {
+		out[k] = v
+	}
+	return out
+}
+
+// MatchesQuiet reports whether hostmask matches any +q mask.
+func (c *Channel) MatchesQuiet(hostmask string, fold func(string) string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	folded := fold(hostmask)
+	for mask := range c.quiets {
+		if globMatch(fold(mask), folded) {
+			return true
+		}
+	}
+	return false
+}
+
 // AddInvite records that a user is allowed to bypass +i for one
 // JOIN. The invite is consumed by [ConsumeInvite] when the matching
 // JOIN arrives. Returns true if the invite was new.
@@ -647,9 +699,9 @@ func (c *Channel) ModeString() (modes string, params []string) {
 // hydrate channels from PersistentChannelStore. Members are NOT
 // restored — they reconnect on their own.
 //
-// The bans / exceptions / invexes maps may be nil; nil is treated
-// as empty.
-func (c *Channel) RestoreState(topic, topicSetBy string, topicSetAt time.Time, modeWord, key string, limit int, bans, exceptions, invexes map[string]time.Time) {
+// The bans / exceptions / invexes / quiets maps may be nil; nil is
+// treated as empty.
+func (c *Channel) RestoreState(topic, topicSetBy string, topicSetAt time.Time, modeWord, key string, limit int, bans, exceptions, invexes, quiets map[string]time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.topic = topic
@@ -690,6 +742,10 @@ func (c *Channel) RestoreState(topic, topicSetBy string, topicSetAt time.Time, m
 	c.invexes = make(map[string]time.Time, len(invexes))
 	for k, v := range invexes {
 		c.invexes[k] = v
+	}
+	c.quiets = make(map[string]time.Time, len(quiets))
+	for k, v := range quiets {
+		c.quiets[k] = v
 	}
 }
 

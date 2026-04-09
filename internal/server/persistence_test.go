@@ -253,3 +253,37 @@ func TestPersistence_ExceptionsAndInvexesSurviveRestart(t *testing.T) {
 		return extractNumeric(l) == "347"
 	})
 }
+
+func TestPersistence_QuietsSurviveRestart(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "ircat.db")
+
+	addr, teardown := startTestServerWithStore(t, dbPath)
+	c, r := register(t, addr, "alice")
+	c.Write([]byte("JOIN #q\r\n"))
+	readUntil(t, c, r, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "366"
+	})
+	c.Write([]byte("MODE #q +q *!*@gag.example\r\n"))
+	readUntil(t, c, r, time.Now().Add(2*time.Second), func(l string) bool {
+		return strings.Contains(l, "+q") && strings.Contains(l, "gag.example")
+	})
+	c.Close()
+	teardown()
+
+	addr2, teardown2 := startTestServerWithStore(t, dbPath)
+	defer teardown2()
+	c2, r2 := register(t, addr2, "alice")
+	defer c2.Close()
+	c2.Write([]byte("JOIN #q\r\n"))
+	readUntil(t, c2, r2, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "366"
+	})
+	c2.Write([]byte("MODE #q +q\r\n"))
+	readUntil(t, c2, r2, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "728" && strings.Contains(l, "gag.example")
+	})
+	readUntil(t, c2, r2, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "729"
+	})
+}

@@ -287,6 +287,27 @@ func (c *Conn) applyChannelModes(ch *state.Channel, params []string) (applied, [
 					out.params = append(out.params, mask)
 				}
 			}
+		case 'q':
+			// Quiet list (charybdis/inspircd convention). A user
+			// matching a +q mask cannot speak in the channel but
+			// can still join. List-form like +b/+e/+I.
+			mask, ok := popArg()
+			if !ok || mask == "" {
+				continue
+			}
+			if dir == '+' {
+				if ch.AddQuiet(mask, c.server.now()) {
+					flushDir(dir)
+					dirOut = append(dirOut, mc)
+					out.params = append(out.params, mask)
+				}
+			} else {
+				if ch.RemoveQuiet(mask) {
+					flushDir(dir)
+					dirOut = append(dirOut, mc)
+					out.params = append(out.params, mask)
+				}
+			}
 		default:
 			badChars = append(badChars, mc)
 		}
@@ -296,10 +317,11 @@ func (c *Conn) applyChannelModes(ch *state.Channel, params []string) (applied, [
 }
 
 // isListQueryMode reports whether s is a bare "+b" / "+e" / "+I"
-// (or the same without the leading "+") signalling a list dump.
+// / "+q" (or the same without the leading "+") signalling a list
+// dump.
 func isListQueryMode(s string) bool {
 	switch s {
-	case "+b", "b", "+e", "e", "+I", "I":
+	case "+b", "b", "+e", "e", "+I", "I", "+q", "q":
 		return true
 	}
 	return false
@@ -327,6 +349,16 @@ func (c *Conn) sendChannelListMode(ch *state.Channel, mode string) {
 		}
 		c.send(protocol.NumericReply(srv, nick, protocol.RPL_ENDOFINVITELIST,
 			ch.Name(), "End of channel invite list"))
+	case "q":
+		// 728 RPL_QUIETLIST / 729 RPL_ENDOFQUIETLIST are the
+		// numerics charybdis uses; we mirror them so dashboards
+		// and standard clients render the list correctly.
+		for mask := range ch.Quiets() {
+			c.send(protocol.NumericReply(srv, nick, protocol.RPL_QUIETLIST,
+				ch.Name(), "q", mask))
+		}
+		c.send(protocol.NumericReply(srv, nick, protocol.RPL_ENDOFQUIETLIST,
+			ch.Name(), "q", "End of channel quiet list"))
 	}
 }
 
