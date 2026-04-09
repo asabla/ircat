@@ -389,7 +389,15 @@ func (c *Conn) pingLoop() {
 
 // send queues a message for delivery. If the queue is full the
 // connection is killed (the historical "SendQ exceeded" behaviour).
+//
+// IRCv3 capability gating: when the recipient has negotiated
+// server-time, we attach a fresh @time tag to a copy of m before
+// queuing. The copy is per-recipient so a broadcast Message can be
+// reused across many conns without leaking tags between them.
 func (c *Conn) send(m *protocol.Message) {
+	if c.capsAccepted["server-time"] {
+		m = m.WithTag("time", c.server.now().UTC().Format("2006-01-02T15:04:05.000Z"))
+	}
 	select {
 	case c.out <- m:
 	default:

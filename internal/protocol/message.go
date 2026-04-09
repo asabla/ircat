@@ -110,6 +110,24 @@ func (m *Message) Trailing() (string, bool) {
 	return m.Params[len(m.Params)-1], true
 }
 
+// WithTag returns a shallow copy of m with the named IRCv3 tag set
+// to value. The returned message is safe to mutate without affecting
+// the original. Used by per-conn server-time / account-tag /
+// echo-message paths where the same broadcast Message needs a
+// recipient-specific tag.
+func (m *Message) WithTag(key, value string) *Message {
+	if m == nil {
+		return nil
+	}
+	out := *m
+	out.Tags = make(map[string]string, len(m.Tags)+1)
+	for k, v := range m.Tags {
+		out.Tags[k] = v
+	}
+	out.Tags[key] = value
+	return &out
+}
+
 // String returns the wire form of m. It panics if encoding fails;
 // callers that care about the error should use [Message.Bytes].
 func (m *Message) String() string {

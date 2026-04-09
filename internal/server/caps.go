@@ -11,6 +11,11 @@ var supportedCapList = []string{
 	// round-trips them; this just tells the client we will not
 	// strip them.
 	"message-tags",
+	// server-time attaches an @time tag to every outbound
+	// message so the client renders accurate timestamps for
+	// backlog and history. Wired in Conn.send when the
+	// capability is in capsAccepted.
+	"server-time",
 }
 
 // supportedCaps returns the space-separated cap list as it appears
