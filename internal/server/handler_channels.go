@@ -215,12 +215,35 @@ func (c *Conn) handleInvite(m *protocol.Message) {
 
 	// RPL_INVITING (341) to the inviter, INVITE message to the target.
 	c.send(protocol.NumericReply(srv, nick, protocol.RPL_INVITING, channelName, target.Nick))
+	inviteMsg := &protocol.Message{
+		Prefix:  c.user.Hostmask(),
+		Command: "INVITE",
+		Params:  []string{target.Nick, channelName},
+	}
 	if dest := c.server.connFor(target.ID); dest != nil {
-		dest.send(&protocol.Message{
-			Prefix:  c.user.Hostmask(),
-			Command: "INVITE",
-			Params:  []string{target.Nick, channelName},
-		})
+		dest.send(inviteMsg)
+	}
+
+	// IRCv3 invite-notify: when the channel exists, fan an INVITE
+	// notification out to every channel operator that has the cap
+	// negotiated, so the operator UI shows pending invites in
+	// real time. We restrict to ops rather than every member
+	// (the spec allows either) — most ircds and most operator
+	// workflows expect ops-only.
+	if ch != nil {
+		for id, mem := range ch.MemberIDs() {
+			if id == c.user.ID || id == target.ID {
+				continue
+			}
+			if !mem.IsOp() {
+				continue
+			}
+			peer := c.server.connFor(id)
+			if peer == nil || !peer.capsAccepted["invite-notify"] {
+				continue
+			}
+			peer.send(inviteMsg)
+		}
 	}
 }
 

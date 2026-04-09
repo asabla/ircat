@@ -36,6 +36,11 @@ var supportedCapList = []string{
 	// who has the cap, so clients track presence in real time
 	// without polling. Wired in handler_away.notifyAway.
 	"away-notify",
+	// invite-notify pushes ":inviter!u@h INVITE target #chan"
+	// to every channel operator that has the cap when an
+	// INVITE happens, so the operator UI shows pending invites
+	// in real time. Wired in handler_channels.handleInvite.
+	"invite-notify",
 }
 
 // supportedCaps returns the space-separated cap list as it appears
