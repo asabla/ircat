@@ -35,6 +35,15 @@ func (c *Conn) handleNames(m *protocol.Message) {
 			c.send(protocol.NumericReply(srv, nick, protocol.RPL_ENDOFNAMES, name, "End of NAMES list"))
 			continue
 		}
+		// RFC 2811 §4.2.6 / 4.2.7: a non-member must not see the
+		// member list of a +s (secret) or +p (private) channel.
+		// We send only the 366 terminator so the requester gets a
+		// well-formed reply but no member information.
+		_, _, _, priv, secret, _, _, _ := ch.Modes()
+		if (secret || priv) && !ch.IsMember(c.user.ID) {
+			c.send(protocol.NumericReply(srv, nick, protocol.RPL_ENDOFNAMES, name, "End of NAMES list"))
+			continue
+		}
 		c.sendNamesReply(ch)
 	}
 }
@@ -106,6 +115,16 @@ func (c *Conn) handleWho(m *protocol.Message) {
 	if isChannelName(mask) {
 		ch := c.server.world.FindChannel(mask)
 		if ch != nil {
+			// RFC 2811 §4.2.6 / 4.2.7: a non-member must not see
+			// the membership list of a +s (secret) or +p (private)
+			// channel. We silently emit only the 315 terminator
+			// in that case so the requester cannot even probe for
+			// existence.
+			_, _, _, priv, secret, _, _, _ := ch.Modes()
+			if (secret || priv) && !ch.IsMember(c.user.ID) {
+				c.send(protocol.NumericReply(srv, nick, protocol.RPL_ENDOFWHO, mask, "End of WHO list"))
+				return
+			}
 			for id, mem := range ch.MemberIDs() {
 				u := c.server.world.FindByID(id)
 				if u == nil {
@@ -127,7 +146,15 @@ func (c *Conn) handleWho(m *protocol.Message) {
 func (c *Conn) sendWhoReply(channel string, u *state.User, mem state.Membership) {
 	srv := c.server.cfg.Server.Name
 	nick := c.user.Nick
-	flags := "H" // "H" = here (we do not implement AWAY in M2 -> always here)
+	// "H" = here, "G" = gone (away). RFC 2812 §3.6.1.
+	flags := "H"
+	if u.Away != "" {
+		flags = "G"
+	}
+	// "*" appended marks the user as an IRC operator (+o).
+	if strings.ContainsRune(u.Modes, 'o') {
+		flags += "*"
+	}
 	if mem.IsOp() {
 		flags += "@"
 	} else if mem.IsVoice() {
