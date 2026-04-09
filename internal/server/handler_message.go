@@ -169,7 +169,15 @@ func (c *Conn) deliverOneTarget(target, text, command string, emitErrors bool) {
 		// every production ircd). The sender knows what they sent.
 		// We use the federation-aware variant so the broadcast
 		// also reaches any remote members via their peer links.
-		c.server.broadcastToChannelFederated(ch, msg, c.user.ID, false)
+		//
+		// IRCv3 echo-message: when negotiated, the sender DOES
+		// see their own line on the wire so the client can
+		// render its outgoing message from the same source as
+		// every other peer. We achieve this with includeSelf=true
+		// rather than removing the except parameter, because the
+		// federation broadcast path interprets except differently.
+		includeSelf := c.capsAccepted["echo-message"]
+		c.server.broadcastToChannelFederated(ch, msg, c.user.ID, includeSelf)
 		return
 	}
 
@@ -201,6 +209,12 @@ func (c *Conn) deliverOneTarget(target, text, command string, emitErrors bool) {
 	// Human target: deliver to the registered Conn.
 	if destConn := c.server.connFor(u.ID); destConn != nil {
 		destConn.send(msg)
+		// IRCv3 echo-message: also bounce the message back to
+		// the sender so their own client renders it from the
+		// wire instead of optimistically.
+		if c.capsAccepted["echo-message"] {
+			c.send(msg)
+		}
 		return
 	}
 	// Bot target: deliver via the virtual BotDeliverer. The bot's
@@ -208,6 +222,9 @@ func (c *Conn) deliverOneTarget(target, text, command string, emitErrors bool) {
 	// for DMs so ctx:say(event.channel, ...) replies to the human.
 	if destBot := c.server.botFor(u.ID); destBot != nil {
 		destBot.Deliver(msg)
+		if c.capsAccepted["echo-message"] {
+			c.send(msg)
+		}
 		return
 	}
 	// User is in the world but neither a conn nor a bot — mid

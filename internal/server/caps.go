@@ -16,6 +16,11 @@ var supportedCapList = []string{
 	// backlog and history. Wired in Conn.send when the
 	// capability is in capsAccepted.
 	"server-time",
+	// echo-message bounces a sender's own PRIVMSG / NOTICE
+	// back to them so their client can render outgoing
+	// messages from the wire instead of optimistically.
+	// Wired in handler_message deliverOneTarget.
+	"echo-message",
 }
 
 // supportedCaps returns the space-separated cap list as it appears
