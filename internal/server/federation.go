@@ -527,8 +527,27 @@ func (s *Server) forwardChannelToSubscribed(ch *state.Channel, msg *protocol.Mes
 // world. The eight-param shape matches what sendBurst emits at
 // link-up time, including the TS so collision resolution works
 // for users that registered after the burst.
+//
+// Services use the SERVICE form per RFC 2813 §4.1.5 instead of NICK
+// so the receiving side knows to mark them as services. Both shapes
+// flow through forwardToAllLinks.
 func (s *Server) announceUserToFederation(u *state.User) {
 	if u == nil {
+		return
+	}
+	if u.Service {
+		distribution := u.ServiceDistribution
+		if distribution == "" {
+			distribution = "*"
+		}
+		s.forwardToAllLinks(&protocol.Message{
+			Prefix:  s.cfg.Server.Name,
+			Command: "SERVICE",
+			Params: []string{
+				u.Nick, "1", distribution, u.ServiceType, "1",
+				u.Realname,
+			},
+		})
 		return
 	}
 	msg := &protocol.Message{

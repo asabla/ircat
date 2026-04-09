@@ -300,6 +300,8 @@ func (l *Link) dispatch(msg *protocol.Message) {
 		l.handleSvinfo(msg)
 	case "NICK":
 		l.handleRemoteNick(msg)
+	case "SERVICE":
+		l.handleRemoteService(msg)
 	case "QUIT":
 		l.handleRemoteQuit(msg)
 	case "PRIVMSG", "NOTICE":
@@ -442,6 +444,26 @@ func (l *Link) sendBurst() {
 	}
 	for _, u := range world.Snapshot() {
 		if u.IsRemote() {
+			continue
+		}
+		// Services use the SERVICE burst form per RFC 2813
+		// §4.1.5 so the receiving side knows to mark them as
+		// services rather than regular users. The wire form is:
+		//   :<sender> SERVICE <name> <servertoken> <distribution>
+		//                     <type> <hopcount> :<info>
+		if u.Service {
+			distribution := u.ServiceDistribution
+			if distribution == "" {
+				distribution = "*"
+			}
+			l.Send(&protocol.Message{
+				Prefix:  l.localName,
+				Command: "SERVICE",
+				Params: []string{
+					u.Nick, "1", distribution, u.ServiceType, "1",
+					u.Realname,
+				},
+			})
 			continue
 		}
 		l.Send(&protocol.Message{
@@ -679,6 +701,55 @@ func (l *Link) handleRemoteNick(msg *protocol.Message) {
 		TS:         ts,
 	}); err != nil {
 		l.logger.Warn("remote nick add failed", "nick", nick, "error", err)
+	}
+}
+
+// handleRemoteService ingests a SERVICE burst line per RFC 2813
+// §4.1.5 and registers a remote service in the local world. The
+// wire form is:
+//
+//	:<sender> SERVICE <name> <servertoken> <distribution>
+//	                  <type> <hopcount> :<info>
+//
+// The local copy carries Service=true so SQUERY routes to it
+// rather than treating it as a regular user, and so SERVLIST
+// shows it under the right home server.
+func (l *Link) handleRemoteService(msg *protocol.Message) {
+	world := l.host.WorldState()
+	if world == nil || len(msg.Params) < 6 {
+		return
+	}
+	name := msg.Params[0]
+	distribution := msg.Params[2]
+	stype := msg.Params[3]
+	info := msg.Params[5]
+	remoteServer := senderFromPrefix(msg.Prefix)
+	if remoteServer == "" {
+		remoteServer = l.peerName
+	}
+	if existing := world.FindByNick(name); existing != nil {
+		// A name clash with an existing user is unrecoverable
+		// at this layer; log and drop the burst entry. The
+		// regular nick-collision machinery applies to NICK
+		// burst lines but services are intentionally outside
+		// that resolution because they are server-side
+		// records, not client connections.
+		l.logger.Warn("service burst name clash", "name", name, "peer", l.peerName)
+		return
+	}
+	if _, err := world.AddUser(&state.User{
+		Nick:                name,
+		User:                "service",
+		Host:                remoteServer,
+		Realname:            info,
+		Registered:          true,
+		Service:             true,
+		ServiceType:         stype,
+		ServiceDistribution: distribution,
+		HomeServer:          remoteServer,
+		TS:                  time.Now().UnixNano(),
+	}); err != nil {
+		l.logger.Warn("remote service add failed", "name", name, "error", err)
 	}
 }
 

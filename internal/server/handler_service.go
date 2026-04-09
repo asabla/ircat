@@ -77,6 +77,7 @@ func (c *Conn) handleService(m *protocol.Message) {
 	}
 	c.user = user
 	c.server.registerConn(c)
+	c.server.announceUserToFederation(user)
 	c.logger.Info("service registered", "nick", nick, "type", stype, "distribution", distribution)
 
 	// 383 RPL_YOURESERVICE: "You are service <name>"
