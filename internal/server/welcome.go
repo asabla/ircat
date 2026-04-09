@@ -106,7 +106,11 @@ func (c *Conn) sendWelcomeBurst() {
 // caller via NumericReply.
 func (s *Server) buildISupport() [][]string {
 	limits := s.cfg.Server.Limits
-	tokens := []string{
+	// Tokens are split into chunks small enough to fit under the
+	// RFC 2812 §2.3.1 15-parameter cap once the target nick and
+	// the ":are supported by this server" trailing are added by
+	// NumericReply. We pack 12 tokens per line to leave headroom.
+	all := []string{
 		"NETWORK=" + sanitizeISupport(s.cfg.Server.Network),
 		"CASEMAPPING=" + s.world.CaseMapping().String(),
 		fmt.Sprintf("NICKLEN=%d", limits.NickLength),
@@ -114,11 +118,30 @@ func (s *Server) buildISupport() [][]string {
 		fmt.Sprintf("TOPICLEN=%d", limits.TopicLength),
 		fmt.Sprintf("AWAYLEN=%d", limits.AwayLength),
 		fmt.Sprintf("KICKLEN=%d", limits.KickReasonLength),
-		fmt.Sprintf("CHANTYPES=#&"),
+		"CHANTYPES=#&",
 		"PREFIX=(ov)@+",
+		"CHANMODES=beI,k,l,imnpst",
 		"MODES=4",
+		"EXCEPTS=e",
+		"INVEX=I",
+		// TARGMAX advertises the per-command target list cap so
+		// clients know how many comma-separated targets are
+		// safe to pack into one PRIVMSG / NOTICE / JOIN / KICK
+		// before the server starts replying with 407
+		// ERR_TOOMANYTARGETS. The values mirror what production
+		// ircds advertise.
+		"TARGMAX=PRIVMSG:4,NOTICE:4,JOIN:10,PART:10,KICK:4",
 	}
-	return [][]string{tokens}
+	const perLine = 12
+	var out [][]string
+	for i := 0; i < len(all); i += perLine {
+		end := i + perLine
+		if end > len(all) {
+			end = len(all)
+		}
+		out = append(out, all[i:end])
+	}
+	return out
 }
 
 // sendMOTD streams the loaded MOTD lines to the client, framed by
