@@ -44,6 +44,7 @@ func (c *Conn) handleAway(m *protocol.Message) {
 		c.user.Modes = stripModeChar(c.user.Modes, 'a')
 		c.send(protocol.NumericReply(srv, nick, protocol.RPL_UNAWAY,
 			"You are no longer marked as being away"))
+		c.notifyAway("")
 		return
 	}
 
@@ -58,6 +59,39 @@ func (c *Conn) handleAway(m *protocol.Message) {
 	}
 	c.send(protocol.NumericReply(srv, nick, protocol.RPL_NOWAWAY,
 		"You have been marked as being away"))
+	c.notifyAway(away)
+}
+
+// notifyAway emits an IRCv3 away-notify line to every shared-channel
+// member who has the cap negotiated. reason is the away message
+// (empty for the "back" form). Members are deduplicated across
+// shared channels so a peer in two channels with c only receives
+// one AWAY line.
+//
+// The user themselves is excluded — they already received the
+// 305 / 306 confirmation reply.
+func (c *Conn) notifyAway(reason string) {
+	msg := &protocol.Message{
+		Prefix:  c.user.Hostmask(),
+		Command: "AWAY",
+	}
+	if reason != "" {
+		msg.Params = []string{reason}
+	}
+	seen := make(map[uint64]bool)
+	for _, ch := range c.server.world.UserChannels(c.user.ID) {
+		for id := range ch.MemberIDs() {
+			if id == c.user.ID || seen[uint64(id)] {
+				continue
+			}
+			seen[uint64(id)] = true
+			peer := c.server.connFor(id)
+			if peer == nil || !peer.capsAccepted["away-notify"] {
+				continue
+			}
+			peer.send(msg)
+		}
+	}
 }
 
 // stripModeChar removes every occurrence of m from modes. The

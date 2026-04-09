@@ -31,6 +31,11 @@ var supportedCapList = []string{
 	// a follow-up WHO to learn member identities. Wired in
 	// sendNamesReply.
 	"userhost-in-names",
+	// away-notify pushes ":nick!u@h AWAY :reason" (or the bare
+	// "AWAY" form on return) to every shared-channel member
+	// who has the cap, so clients track presence in real time
+	// without polling. Wired in handler_away.notifyAway.
+	"away-notify",
 }
 
 // supportedCaps returns the space-separated cap list as it appears
