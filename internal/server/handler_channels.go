@@ -118,8 +118,13 @@ func (c *Conn) joinOne(name, key string) {
 // channel is +i and the user has one — invites are one-shot.
 func checkJoinPolicy(c *Conn, ch *state.Channel, u *state.User, key string) string {
 	inviteOnly, _, _, _, _, _, chanKey, limit := ch.Modes()
-	if inviteOnly && !ch.ConsumeInvite(u.ID) {
-		return "+i"
+	fold := c.server.world.CaseMapping().Fold
+	mask := u.Hostmask()
+	if inviteOnly {
+		// +I mask match bypasses the per-user invite requirement.
+		if !ch.MatchesInvex(mask, fold) && !ch.ConsumeInvite(u.ID) {
+			return "+i"
+		}
 	}
 	if chanKey != "" && chanKey != key {
 		return "+k"
@@ -127,7 +132,7 @@ func checkJoinPolicy(c *Conn, ch *state.Channel, u *state.User, key string) stri
 	if limit > 0 && ch.MemberCount() >= limit {
 		return "+l"
 	}
-	if ch.MatchesBan(u.Hostmask(), c.server.world.CaseMapping().Fold) {
+	if ch.MatchesBan(mask, fold) && !ch.MatchesException(mask, fold) {
 		return "+b"
 	}
 	return ""

@@ -237,6 +237,48 @@ func (c *Conn) applyChannelModes(ch *state.Channel, params []string) (applied, [
 					out.params = append(out.params, mask)
 				}
 			}
+		case 'e':
+			// Ban-exception list (RFC 2811 §4.3.2). +e takes a
+			// hostmask the same shape as +b; matching exceptions
+			// override matching bans on the join check.
+			mask, ok := popArg()
+			if !ok || mask == "" {
+				continue
+			}
+			if dir == '+' {
+				if ch.AddException(mask, c.server.now()) {
+					flushDir(dir)
+					dirOut = append(dirOut, mc)
+					out.params = append(out.params, mask)
+				}
+			} else {
+				if ch.RemoveException(mask) {
+					flushDir(dir)
+					dirOut = append(dirOut, mc)
+					out.params = append(out.params, mask)
+				}
+			}
+		case 'I':
+			// Invite-exception list (RFC 2811 §4.3.3). Hosts
+			// matching an +I mask are allowed past +i without an
+			// explicit per-user invite.
+			mask, ok := popArg()
+			if !ok || mask == "" {
+				continue
+			}
+			if dir == '+' {
+				if ch.AddInvex(mask, c.server.now()) {
+					flushDir(dir)
+					dirOut = append(dirOut, mc)
+					out.params = append(out.params, mask)
+				}
+			} else {
+				if ch.RemoveInvex(mask) {
+					flushDir(dir)
+					dirOut = append(dirOut, mc)
+					out.params = append(out.params, mask)
+				}
+			}
 		default:
 			badChars = append(badChars, mc)
 		}
@@ -266,9 +308,15 @@ func (c *Conn) sendChannelListMode(ch *state.Channel, mode string) {
 		c.send(protocol.NumericReply(srv, nick, protocol.RPL_ENDOFBANLIST,
 			ch.Name(), "End of channel ban list"))
 	case "e":
+		for mask := range ch.Exceptions() {
+			c.send(protocol.NumericReply(srv, nick, protocol.RPL_EXCEPTLIST, ch.Name(), mask))
+		}
 		c.send(protocol.NumericReply(srv, nick, protocol.RPL_ENDOFEXCEPTLIST,
 			ch.Name(), "End of channel exception list"))
 	case "I":
+		for mask := range ch.Invexes() {
+			c.send(protocol.NumericReply(srv, nick, protocol.RPL_INVITELIST, ch.Name(), mask))
+		}
 		c.send(protocol.NumericReply(srv, nick, protocol.RPL_ENDOFINVITELIST,
 			ch.Name(), "End of channel invite list"))
 	}

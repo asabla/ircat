@@ -404,6 +404,102 @@ func (c *Channel) MatchesBan(hostmask string, fold func(string) string) bool {
 	return false
 }
 
+// AddException adds mask to the +e ban-exception list. Hosts whose
+// hostmask matches an exception are NOT considered banned even if
+// they also match a +b mask. Returns true if the mask was new.
+func (c *Channel) AddException(mask string, at time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.exceptions[mask]; ok {
+		return false
+	}
+	c.exceptions[mask] = at
+	return true
+}
+
+// RemoveException drops mask from the +e ban-exception list.
+func (c *Channel) RemoveException(mask string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.exceptions[mask]; !ok {
+		return false
+	}
+	delete(c.exceptions, mask)
+	return true
+}
+
+// Exceptions returns a snapshot of the +e exception list.
+func (c *Channel) Exceptions() map[string]time.Time {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make(map[string]time.Time, len(c.exceptions))
+	for k, v := range c.exceptions {
+		out[k] = v
+	}
+	return out
+}
+
+// MatchesException reports whether hostmask matches any +e mask.
+func (c *Channel) MatchesException(hostmask string, fold func(string) string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	folded := fold(hostmask)
+	for mask := range c.exceptions {
+		if globMatch(fold(mask), folded) {
+			return true
+		}
+	}
+	return false
+}
+
+// AddInvex adds mask to the +I invite-exception list. Hosts whose
+// hostmask matches an invex mask are allowed past +i without an
+// explicit per-user invite. Returns true if the mask was new.
+func (c *Channel) AddInvex(mask string, at time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.invexes[mask]; ok {
+		return false
+	}
+	c.invexes[mask] = at
+	return true
+}
+
+// RemoveInvex drops mask from the +I invite-exception list.
+func (c *Channel) RemoveInvex(mask string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.invexes[mask]; !ok {
+		return false
+	}
+	delete(c.invexes, mask)
+	return true
+}
+
+// Invexes returns a snapshot of the +I invite-exception list.
+func (c *Channel) Invexes() map[string]time.Time {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make(map[string]time.Time, len(c.invexes))
+	for k, v := range c.invexes {
+		out[k] = v
+	}
+	return out
+}
+
+// MatchesInvex reports whether hostmask matches any +I mask.
+func (c *Channel) MatchesInvex(hostmask string, fold func(string) string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	folded := fold(hostmask)
+	for mask := range c.invexes {
+		if globMatch(fold(mask), folded) {
+			return true
+		}
+	}
+	return false
+}
+
 // AddInvite records that a user is allowed to bypass +i for one
 // JOIN. The invite is consumed by [ConsumeInvite] when the matching
 // JOIN arrives. Returns true if the invite was new.
