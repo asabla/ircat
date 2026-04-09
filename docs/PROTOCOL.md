@@ -92,6 +92,7 @@ Advertised in ISUPPORT as `CHANTYPES=#&+!`.
 | `+k <key>` | yes (set) | Channel key |
 | `+l <n>` | yes (set) | User limit |
 | `+a` | no | Anonymous channel — every prefix rewritten to `anonymous!anonymous@anonymous.` (RFC 2811 §4.2.1) |
+| `+r` | no | Server reop — safe (`!`) channels only. When set, the channel survives going empty and the next rejoiner is auto-opped (RFC 2811 §4.2.5). Rejected with 472 on non-safe channels. |
 | `+i` | no | Invite-only |
 | `+m` | no | Moderated (only +v/+o can speak) |
 | `+n` | no | No external messages |
@@ -114,6 +115,13 @@ The match algorithm is the simple IRC glob (`*`, `?`,
 case-insensitive under the world's case mapping). Modeless (`+`)
 channels reject every MODE mutation with 482; on `!` safe channels
 all modes work normally on the canonical `!IDshort` name.
+
+The first joiner of a `!`-safe channel receives `MemberCreator`
+(rendered with the `!` NAMES prefix per RFC 2811 §4.3.5) instead
+of regular `MemberOp`. The creator status implies operator
+privileges and cannot be removed by anyone, including via
+`MODE -o` — the channel founder is immortal until the channel
+is destroyed. The full PREFIX advertisement is `PREFIX=(Oov)!@+`.
 
 `MODE #chan +o-v alice bob` must be supported (batched). Max modes
 per MODE command: advertise `MODES=4` in ISUPPORT. The full
