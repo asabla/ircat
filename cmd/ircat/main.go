@@ -41,6 +41,8 @@ func dispatch(args []string) error {
 			return runServer(args[1:])
 		case "healthcheck":
 			return runHealthcheck(args[1:])
+		case "operator":
+			return runOperator(args[1:])
 		case "version":
 			fmt.Printf("ircat %s (commit %s, built %s)\n", version, commit, date)
 			return nil
@@ -58,6 +60,7 @@ func printUsage(w *os.File) {
 subcommands:
   server         run the IRC server (default)
   healthcheck    HTTP probe used by container orchestration
+  operator       manage operator accounts (add, list, delete)
   version        print version and exit
   help           show this message
 
