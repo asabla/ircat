@@ -63,6 +63,8 @@ func (c *Conn) dispatch(m *protocol.Message) {
 		c.handleMotdCommand(m)
 	case "LUSERS":
 		c.handleLusers(m)
+	case "AWAY":
+		c.handleAway(m)
 	case "PING":
 		c.handlePing(m)
 	case "PONG":

@@ -45,6 +45,13 @@ type User struct {
 	// does not reset it) so the original-registration time
 	// remains the tiebreaker.
 	TS int64
+
+	// Away is the user's away message per RFC 2812 §4.1. Empty
+	// means "not away". When non-empty the server emits 301
+	// RPL_AWAY in response to every PRIVMSG aimed at this user
+	// (channel messages do not trigger the 301 — only direct
+	// PRIVMSGs).
+	Away string
 }
 
 // IsRemote reports whether the user lives on a different node.

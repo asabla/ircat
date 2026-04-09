@@ -139,6 +139,16 @@ func (c *Conn) deliverOneTarget(target, text, command string, emitErrors bool) {
 		}
 		return
 	}
+	// AWAY echo (RFC 2812 §4.1): when a PRIVMSG is aimed at a
+	// user who is currently away, the server replies with 301
+	// RPL_AWAY back to the SENDER carrying the away message.
+	// NOTICE deliberately does NOT trigger the 301 — that is
+	// the standard rule and the reason notices are used by
+	// scripts that do not want to clutter the away echo.
+	if command == "PRIVMSG" && u.Away != "" {
+		c.send(protocol.NumericReply(srv, nick, protocol.RPL_AWAY,
+			u.Nick, u.Away))
+	}
 	msg := &protocol.Message{
 		Prefix:  c.user.Hostmask(),
 		Command: command,
