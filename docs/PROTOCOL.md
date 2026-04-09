@@ -63,13 +63,23 @@ We advertise `CASEMAPPING=rfc1459` in `RPL_ISUPPORT`. Operators may switch to `a
 
 ## Channel rules
 
-- Prefix `#` (network-wide) or `&` (server-local). Other prefixes (`+`, `!`) not implemented in v1.
+All four RFC 2811 §2.1 channel-name prefixes are accepted:
+
+| Prefix | Scope | Notes |
+|--------|-------|-------|
+| `#` | network-wide | Standard channel; persisted, federated. |
+| `&` | server-local | Same machinery as `#` but never federated. |
+| `+` | modeless | RFC 2811 §4.2.1. Accepts all members, no operators, MODE mutations rejected with 482. |
+| `!` | safe (timestamped) | RFC 2811 §3. `JOIN !!short` allocates a fresh 5-char uppercase-alphanumeric ID; `JOIN !short` resolves an existing safe channel by suffix. The canonical wire form is always `!IDshort`. |
+
+Advertised in ISUPPORT as `CHANTYPES=#&+!`.
+
 - Max 50 characters (ISUPPORT `CHANNELLEN=50`).
 - Cannot contain SPACE, BELL (`\x07`), `,`, or `:`.
 
 ## Modes
 
-### Channel modes (v1)
+### Channel modes
 
 | Mode | Takes param | Meaning |
 |------|-------------|---------|
@@ -78,21 +88,36 @@ We advertise `CASEMAPPING=rfc1459` in `RPL_ISUPPORT`. Operators may switch to `a
 | `+b <mask>` | yes | Ban mask |
 | `+e <mask>` | yes | Ban exception (overrides matching `+b`) |
 | `+I <mask>` | yes | Invite exception (bypasses `+i`) |
+| `+q <mask>` | yes | Quiet (matched users cannot speak; +o/+v override) |
 | `+k <key>` | yes (set) | Channel key |
 | `+l <n>` | yes (set) | User limit |
+| `+a` | no | Anonymous channel — every prefix rewritten to `anonymous!anonymous@anonymous.` (RFC 2811 §4.2.1) |
 | `+i` | no | Invite-only |
 | `+m` | no | Moderated (only +v/+o can speak) |
 | `+n` | no | No external messages |
 | `+p` | no | Private (hidden from `LIST` to non-members) |
-| `+s` | no | Secret (hidden from `LIST` and `WHOIS`) |
+| `+s` | no | Secret (hidden from `LIST`, `NAMES`, `WHO`) |
 | `+t` | no | Topic settable only by ops |
 
-`+b`, `+e`, and `+I` are list-form: bare `MODE #chan +b` (or `+e` /
-`+I`) returns the corresponding list via 367+368, 348+349, or
-346+347. Match algorithm is the simple IRC glob (`*`, `?`,
-case-insensitive under the world's case mapping).
+`+b`, `+e`, `+I`, and `+q` are list-form: bare `MODE #chan +b` /
+`+e` / `+I` / `+q` returns the corresponding list via the
+appropriate numerics:
 
-`MODE #chan +o-v alice bob` must be supported (batched). Max modes per MODE command: advertise `MODES=4` in ISUPPORT.
+| List mode | Entry numeric | End numeric |
+|-----------|---------------|-------------|
+| `+b` | 367 RPL_BANLIST | 368 RPL_ENDOFBANLIST |
+| `+e` | 348 RPL_EXCEPTLIST | 349 RPL_ENDOFEXCEPTLIST |
+| `+I` | 346 RPL_INVITELIST | 347 RPL_ENDOFINVITELIST |
+| `+q` | 728 RPL_QUIETLIST | 729 RPL_ENDOFQUIETLIST |
+
+The match algorithm is the simple IRC glob (`*`, `?`,
+case-insensitive under the world's case mapping). Modeless (`+`)
+channels reject every MODE mutation with 482; on `!` safe channels
+all modes work normally on the canonical `!IDshort` name.
+
+`MODE #chan +o-v alice bob` must be supported (batched). Max modes
+per MODE command: advertise `MODES=4` in ISUPPORT. The full
+CHANMODES advertisement is `CHANMODES=beIq,k,l,aimnpst`.
 
 ### User modes (v1)
 
@@ -109,9 +134,10 @@ Tracked in `internal/protocol/numeric.go`. At minimum: 001–005,
 200–209, 211, 212, 219, 221, 242, 243, 251–255, 256–259, 262, 263,
 301, 302, 303, 305, 306, 311–319, 321–323, 324, 329, 331–333, 341,
 346, 347, 348, 349, 351, 352, 353, 364, 365, 366, 369, 371, 372,
-374, 375, 376, 381, 391, 401–404, 406, 407, 409, 411, 412, 421,
-422, 431, 432, 433, 436, 441, 442, 443, 451, 461, 462, 464, 465,
-471, 472, 473, 474, 475, 476, 481, 482, 483, 491, 501, 502.
+374, 375, 376, 381, 382, 391, 401–408, 411, 412, 416, 421, 422,
+431, 432, 433, 436, 437, 441, 442, 443, 445, 446, 451, 461, 462,
+464, 465, 471, 472, 473, 474, 475, 481, 482, 483, 484, 485, 491,
+501, 502, 728, 729.
 
 ## Implemented commands
 
@@ -120,28 +146,29 @@ following RFC 2812 verbs (and where they live):
 
 | Command | RFC | Notes |
 |---------|-----|-------|
-| PASS, NICK, USER | §3.1 | Registration burst |
-| CAP | IRCv3 | LS/REQ/END negotiation, no caps advertised |
-| QUIT | §3.1.7 | Broadcasts QUIT to shared-channel members |
-| JOIN, PART | §3.2.1-2 | Including +i/+k/+l/+b/+e/+I gates |
-| MODE | §3.2.3-4 | Channel + user, list-form `b`/`e`/`I` |
+| PASS, NICK, USER | §3.1 | Registration burst. PASS gates registration when `Server.ClientPassword` is set; the federation form parses version and flags fields. |
+| CAP | IRCv3 | LS/REQ/END negotiation. Advertises `message-tags`; per-conn `capsAccepted` set tracks negotiated caps. |
+| QUIT | §3.1.7 | Broadcasts QUIT to shared-channel members; sends ERROR before disconnect. |
+| JOIN, PART | §3.2.1-2 | Including +i/+k/+l/+b/+e/+I/+q gates. JOIN supports `!!short` (create safe channel) and `!short` (resolve existing). |
+| MODE | §3.2.3-4 | Channel + user, list-form `b`/`e`/`I`/`q`. Modeless (`+`) channels reject MODE mutations. |
 | TOPIC | §3.2.4 | 332/333 + RPL_TOPICWHOTIME |
-| NAMES, LIST, WHO | §3.2.5-6, §3.6 | Standard replies + +s/+p hiding |
-| WHOIS, WHOWAS | §3.6.2-3 | WHOIS honours remote home server; WHOWAS uses an in-memory ring |
-| INVITE, KICK | §3.2.7-8 | Op required where applicable |
-| PRIVMSG, NOTICE | §3.3 | Federation-aware delivery + AWAY echo |
-| AWAY | §4.1 | 305/306 confirmations + 301 echo on PRIVMSG |
-| USERHOST, ISON | §4.8-9 | Bulk lookups |
-| LUSERS, VERSION, TIME, ADMIN, INFO, MOTD | §3.4.1-3, §4.5 | Stat-query family |
-| WALLOPS | §4.7 | Operator-only +w broadcast, federated |
-| STATS | §3.4.4 | l/m/o/u, operator-only |
-| LINKS | §3.4.5 | Local view, open to all |
-| TRACE | §3.4.8 | Operator-only, local view |
-| SQUIT | §3.4.6 | Operator-only, drives existing recovery flow |
-| CONNECT | §3.4.7 | Operator-only, requires wired Connector |
-| REHASH, DIE, RESTART | §4.2-4 | Operator-only, host hooks |
-| OPER, KILL | §3.1.4, §3.7.1 | Store-backed operator accounts |
-| PING, PONG | §3.7.2-3 | Read-loop ping driver + client-issued PING |
+| NAMES, LIST, WHO | §3.2.5-6, §3.6 | +s/+p hiding for non-members; `+a` channels return synthetic anonymous entries. WHO supports glob masks. |
+| WHOIS, WHOWAS | §3.6.2-3 | WHOIS honours remote home server and reports time-since-last-PRIVMSG. WHOWAS uses an in-memory ring. |
+| INVITE, KICK | §3.2.7-8 | Op required where applicable. |
+| PRIVMSG, NOTICE | §3.3 | Federation-aware delivery + AWAY echo. Operator-only `$servermask` and `#hostmask` broadcast forms. |
+| AWAY | §4.1 | 305/306 confirmations + 301 echo on PRIVMSG. |
+| USERHOST, ISON | §4.8-9 | Bulk lookups. |
+| LUSERS, VERSION, TIME, ADMIN, INFO, MOTD | §3.4.1-3, §4.5 | Stat-query family. |
+| SUMMON, USERS | §4.5-6 | Disabled stubs returning 445 / 446 per the RFC. |
+| WALLOPS | §4.7 | Operator-only +w broadcast, federated. |
+| STATS | §3.4.4 | l/m/o/u, operator-only. |
+| LINKS | §3.4.5 | Local view, open to all. |
+| TRACE | §3.4.8 | Operator-only, local view. |
+| SQUIT | §3.4.6 | Operator-only, drives the federation recovery flow. |
+| CONNECT | §3.4.7 | Operator-only, requires a wired `Connector` host hook. |
+| REHASH, DIE, RESTART | §4.2-4 | Operator-only, host hooks. REHASH drives the same reloader the SIGHUP loop uses. |
+| OPER, KILL | §3.1.4, §3.7.1 | Store-backed operator accounts. |
+| PING, PONG | §3.7.2-3 | Read-loop ping driver + client-issued PING. |
 
 ## Encoder canonical form
 
