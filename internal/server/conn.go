@@ -106,8 +106,13 @@ type pending struct {
 	user     string
 	realname string
 	password string
-	nickSet  bool
-	userSet  bool
+	// passVersion / passFlags are the optional 2nd / 3rd params on
+	// PASS (RFC 2813 §4.1.1). Federation peers populate them on the
+	// outgoing handshake; client connections leave them empty.
+	passVersion string
+	passFlags   string
+	nickSet     bool
+	userSet     bool
 
 	// capNegotiating is true once we have seen CAP LS or CAP REQ from
 	// the client. While true, registration must wait for CAP END

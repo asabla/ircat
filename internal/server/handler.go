@@ -129,10 +129,22 @@ func (c *Conn) starOrNick() string {
 }
 
 // handlePass stores the supplied password for the registration step.
-// In M1 we accept it but never compare against anything — server-
-// side client passwords are a configurable feature on the M3+
-// roadmap. We still validate the parameter count so a malformed
-// PASS surfaces 461.
+//
+// RFC 2813 §4.1.1 form:
+//
+//	PASS <password> [ <version> [ <flags> [ <options> ] ] ]
+//
+// Client form (RFC 2812 §3.1.1) is just <password>. The extra
+// fields are populated by federation peers when they open an
+// outgoing link. We capture all of them so the federation handshake
+// path can read them, but client-form connections only ever set the
+// first param.
+//
+// We do not yet compare the password against any configured value;
+// gating client connections on a network password is a configurable
+// feature still tracked under the v1.3 plan. The version/flags
+// fields are stashed verbatim — no validation is performed because
+// they vary between ircd implementations.
 func (c *Conn) handlePass(m *protocol.Message) {
 	if c.user != nil && c.user.Registered {
 		c.send(protocol.NumericReply(c.server.cfg.Server.Name, c.user.Nick,
@@ -144,6 +156,12 @@ func (c *Conn) handlePass(m *protocol.Message) {
 		return
 	}
 	c.pending.password = m.Params[0]
+	if len(m.Params) >= 2 {
+		c.pending.passVersion = m.Params[1]
+	}
+	if len(m.Params) >= 3 {
+		c.pending.passFlags = m.Params[2]
+	}
 }
 
 func (c *Conn) handleNick(m *protocol.Message) {
