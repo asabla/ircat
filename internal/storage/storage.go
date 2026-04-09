@@ -151,6 +151,13 @@ type ChannelRecord struct {
 	Key        string
 	Limit      int
 	Bans       []BanRecord
+	// Exceptions and Invexes round-trip the +e ban-exception and
+	// +I invite-exception lists (RFC 2811 §4.3.2-§4.3.3). They
+	// share the BanRecord shape (mask, set_by, set_at) — there is
+	// no semantic difference at the storage layer, only the table
+	// they live in.
+	Exceptions []BanRecord
+	Invexes    []BanRecord
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 }

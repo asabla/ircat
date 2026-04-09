@@ -204,3 +204,52 @@ func TestPersistence_BansSurviveRestart(t *testing.T) {
 		return extractNumeric(l) == "368"
 	})
 }
+
+func TestPersistence_ExceptionsAndInvexesSurviveRestart(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "ircat.db")
+
+	// Phase 1: set +e and +I masks, then shut down.
+	addr, teardown := startTestServerWithStore(t, dbPath)
+	c, r := register(t, addr, "alice")
+	c.Write([]byte("JOIN #ei\r\n"))
+	readUntil(t, c, r, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "366"
+	})
+	c.Write([]byte("MODE #ei +e *!*@safe.example\r\n"))
+	readUntil(t, c, r, time.Now().Add(2*time.Second), func(l string) bool {
+		return strings.Contains(l, "+e") && strings.Contains(l, "safe.example")
+	})
+	c.Write([]byte("MODE #ei +I *!*@vip.example\r\n"))
+	readUntil(t, c, r, time.Now().Add(2*time.Second), func(l string) bool {
+		return strings.Contains(l, "+I") && strings.Contains(l, "vip.example")
+	})
+	c.Close()
+	teardown()
+
+	// Phase 2: restart and query both lists.
+	addr2, teardown2 := startTestServerWithStore(t, dbPath)
+	defer teardown2()
+	c2, r2 := register(t, addr2, "alice")
+	defer c2.Close()
+	c2.Write([]byte("JOIN #ei\r\n"))
+	readUntil(t, c2, r2, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "366"
+	})
+
+	c2.Write([]byte("MODE #ei +e\r\n"))
+	readUntil(t, c2, r2, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "348" && strings.Contains(l, "safe.example")
+	})
+	readUntil(t, c2, r2, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "349"
+	})
+
+	c2.Write([]byte("MODE #ei +I\r\n"))
+	readUntil(t, c2, r2, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "346" && strings.Contains(l, "vip.example")
+	})
+	readUntil(t, c2, r2, time.Now().Add(2*time.Second), func(l string) bool {
+		return extractNumeric(l) == "347"
+	})
+}

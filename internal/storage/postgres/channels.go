@@ -24,12 +24,31 @@ func (s *channelStore) Get(ctx context.Context, name string) (*storage.ChannelRe
 	if err != nil {
 		return nil, err
 	}
-	bans, err := s.loadBans(ctx, name)
-	if err != nil {
+	if err := s.hydrateLists(ctx, rec); err != nil {
 		return nil, err
 	}
-	rec.Bans = bans
 	return rec, nil
+}
+
+// hydrateLists fills Bans, Exceptions, and Invexes on rec by
+// querying the three list-mode tables.
+func (s *channelStore) hydrateLists(ctx context.Context, rec *storage.ChannelRecord) error {
+	bans, err := s.loadList(ctx, "channel_bans", rec.Name)
+	if err != nil {
+		return err
+	}
+	rec.Bans = bans
+	excepts, err := s.loadList(ctx, "channel_exceptions", rec.Name)
+	if err != nil {
+		return err
+	}
+	rec.Exceptions = excepts
+	invexes, err := s.loadList(ctx, "channel_invexes", rec.Name)
+	if err != nil {
+		return err
+	}
+	rec.Invexes = invexes
+	return nil
 }
 
 func (s *channelStore) scanOne(ctx context.Context, query, name string) (*storage.ChannelRecord, error) {
@@ -51,18 +70,20 @@ func (s *channelStore) scanOne(ctx context.Context, query, name string) (*storag
 	return &rec, nil
 }
 
-func (s *channelStore) loadBans(ctx context.Context, channelName string) ([]storage.BanRecord, error) {
+// loadList reads one list-mode table for a single channel. table is
+// a hardcoded literal at every call site.
+func (s *channelStore) loadList(ctx context.Context, table, channelName string) ([]storage.BanRecord, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT mask, set_by, set_at FROM channel_bans WHERE channel_name = $1`, channelName)
+		`SELECT mask, set_by, set_at FROM `+table+` WHERE channel_name = $1`, channelName)
 	if err != nil {
-		return nil, fmt.Errorf("channel_bans.Load: %w", err)
+		return nil, fmt.Errorf("%s.Load: %w", table, err)
 	}
 	defer rows.Close()
 	var out []storage.BanRecord
 	for rows.Next() {
 		var b storage.BanRecord
 		if err := rows.Scan(&b.Mask, &b.SetBy, &b.SetAt); err != nil {
-			return nil, fmt.Errorf("channel_bans scan: %w", err)
+			return nil, fmt.Errorf("%s scan: %w", table, err)
 		}
 		out = append(out, b)
 	}
@@ -94,11 +115,9 @@ func (s *channelStore) List(ctx context.Context) ([]storage.ChannelRecord, error
 		return nil, err
 	}
 	for i := range out {
-		bans, err := s.loadBans(ctx, out[i].Name)
-		if err != nil {
+		if err := s.hydrateLists(ctx, &out[i]); err != nil {
 			return nil, err
 		}
-		out[i].Bans = bans
 	}
 	return out, nil
 }
@@ -136,27 +155,42 @@ func (s *channelStore) Upsert(ctx context.Context, rec *storage.ChannelRecord) e
 		return fmt.Errorf("channels.Upsert insert: %w", err)
 	}
 
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM channel_bans WHERE channel_name = $1`, rec.Name); err != nil {
-		return fmt.Errorf("channels.Upsert clear bans: %w", err)
+	if err := pgReplaceList(ctx, tx, "channel_bans", rec.Name, rec.Bans, now); err != nil {
+		return err
 	}
-	for _, b := range rec.Bans {
-		setAt := b.SetAt
-		if setAt.IsZero() {
-			setAt = now
-		}
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO channel_bans(channel_name, mask, set_by, set_at) VALUES ($1, $2, $3, $4)`,
-			rec.Name, b.Mask, b.SetBy, setAt.UTC(),
-		); err != nil {
-			return fmt.Errorf("channels.Upsert ban %q: %w", b.Mask, err)
-		}
+	if err := pgReplaceList(ctx, tx, "channel_exceptions", rec.Name, rec.Exceptions, now); err != nil {
+		return err
+	}
+	if err := pgReplaceList(ctx, tx, "channel_invexes", rec.Name, rec.Invexes, now); err != nil {
+		return err
 	}
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("channels.Upsert commit: %w", err)
 	}
 	rec.UpdatedAt = now
+	return nil
+}
+
+// pgReplaceList wipes and rewrites one list-mode table for a single
+// channel inside the supplied transaction.
+func pgReplaceList(ctx context.Context, tx *sql.Tx, table, channel string, entries []storage.BanRecord, now time.Time) error {
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM `+table+` WHERE channel_name = $1`, channel); err != nil {
+		return fmt.Errorf("channels.Upsert clear %s: %w", table, err)
+	}
+	for _, e := range entries {
+		setAt := e.SetAt
+		if setAt.IsZero() {
+			setAt = now
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO `+table+`(channel_name, mask, set_by, set_at) VALUES ($1, $2, $3, $4)`,
+			channel, e.Mask, e.SetBy, setAt.UTC(),
+		); err != nil {
+			return fmt.Errorf("channels.Upsert %s %q: %w", table, e.Mask, err)
+		}
+	}
 	return nil
 }
 

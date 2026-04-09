@@ -616,7 +616,10 @@ func (c *Channel) ModeString() (modes string, params []string) {
 // (empty-membership) channel. Used by the server boot path to
 // hydrate channels from PersistentChannelStore. Members are NOT
 // restored — they reconnect on their own.
-func (c *Channel) RestoreState(topic, topicSetBy string, topicSetAt time.Time, modeWord, key string, limit int, bans map[string]time.Time) {
+//
+// The bans / exceptions / invexes maps may be nil; nil is treated
+// as empty.
+func (c *Channel) RestoreState(topic, topicSetBy string, topicSetAt time.Time, modeWord, key string, limit int, bans, exceptions, invexes map[string]time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.topic = topic
@@ -647,6 +650,14 @@ func (c *Channel) RestoreState(topic, topicSetBy string, topicSetAt time.Time, m
 	c.bans = make(map[string]time.Time, len(bans))
 	for k, v := range bans {
 		c.bans[k] = v
+	}
+	c.exceptions = make(map[string]time.Time, len(exceptions))
+	for k, v := range exceptions {
+		c.exceptions[k] = v
+	}
+	c.invexes = make(map[string]time.Time, len(invexes))
+	for k, v := range invexes {
+		c.invexes[k] = v
 	}
 }
 

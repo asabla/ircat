@@ -27,12 +27,32 @@ func (s *channelStore) Get(ctx context.Context, name string) (*storage.ChannelRe
 	if err != nil {
 		return nil, err
 	}
-	bans, err := s.loadBans(ctx, name)
-	if err != nil {
+	if err := s.hydrateLists(ctx, rec); err != nil {
 		return nil, err
 	}
-	rec.Bans = bans
 	return rec, nil
+}
+
+// hydrateLists fills Bans, Exceptions, and Invexes on rec by
+// querying the three list-mode tables. Used by both Get and List
+// so the N+1 logic stays in one place.
+func (s *channelStore) hydrateLists(ctx context.Context, rec *storage.ChannelRecord) error {
+	bans, err := s.loadList(ctx, "channel_bans", rec.Name)
+	if err != nil {
+		return err
+	}
+	rec.Bans = bans
+	excepts, err := s.loadList(ctx, "channel_exceptions", rec.Name)
+	if err != nil {
+		return err
+	}
+	rec.Exceptions = excepts
+	invexes, err := s.loadList(ctx, "channel_invexes", rec.Name)
+	if err != nil {
+		return err
+	}
+	rec.Invexes = invexes
+	return nil
 }
 
 func (s *channelStore) scanOne(ctx context.Context, query, name string) (*storage.ChannelRecord, error) {
@@ -54,18 +74,23 @@ func (s *channelStore) scanOne(ctx context.Context, query, name string) (*storag
 	return &rec, nil
 }
 
-func (s *channelStore) loadBans(ctx context.Context, channelName string) ([]storage.BanRecord, error) {
+// loadList reads one list-mode table (channel_bans / channel_exceptions
+// / channel_invexes) for a single channel. The three tables share an
+// identical column shape so this single helper covers all of them.
+func (s *channelStore) loadList(ctx context.Context, table, channelName string) ([]storage.BanRecord, error) {
+	// table is a hardcoded literal at every call site; no injection
+	// risk from user input.
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT mask, set_by, set_at FROM channel_bans WHERE channel_name = ?`, channelName)
+		`SELECT mask, set_by, set_at FROM `+table+` WHERE channel_name = ?`, channelName)
 	if err != nil {
-		return nil, fmt.Errorf("channel_bans.Load: %w", err)
+		return nil, fmt.Errorf("%s.Load: %w", table, err)
 	}
 	defer rows.Close()
 	var out []storage.BanRecord
 	for rows.Next() {
 		var b storage.BanRecord
 		if err := rows.Scan(&b.Mask, &b.SetBy, &b.SetAt); err != nil {
-			return nil, fmt.Errorf("channel_bans scan: %w", err)
+			return nil, fmt.Errorf("%s scan: %w", table, err)
 		}
 		out = append(out, b)
 	}
@@ -96,15 +121,14 @@ func (s *channelStore) List(ctx context.Context) ([]storage.ChannelRecord, error
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	// Hydrate bans for each row. The N+1 here is fine for the
-	// expected channel counts (a few hundred at most); we can
-	// switch to a join+grouping if it ever shows up in profiles.
+	// Hydrate the three list-mode tables for each row. The N+1
+	// here is fine for the expected channel counts (a few hundred
+	// at most); we can switch to a join+grouping if it ever shows
+	// up in profiles.
 	for i := range out {
-		bans, err := s.loadBans(ctx, out[i].Name)
-		if err != nil {
+		if err := s.hydrateLists(ctx, &out[i]); err != nil {
 			return nil, err
 		}
-		out[i].Bans = bans
 	}
 	return out, nil
 }
@@ -146,27 +170,43 @@ func (s *channelStore) Upsert(ctx context.Context, rec *storage.ChannelRecord) e
 		return fmt.Errorf("channels.Upsert insert: %w", err)
 	}
 
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM channel_bans WHERE channel_name = ?`, rec.Name); err != nil {
-		return fmt.Errorf("channels.Upsert clear bans: %w", err)
+	if err := replaceList(ctx, tx, "channel_bans", rec.Name, rec.Bans, now); err != nil {
+		return err
 	}
-	for _, b := range rec.Bans {
-		setAt := b.SetAt
-		if setAt.IsZero() {
-			setAt = now
-		}
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO channel_bans(channel_name, mask, set_by, set_at) VALUES (?, ?, ?, ?)`,
-			rec.Name, b.Mask, b.SetBy, setAt.UTC(),
-		); err != nil {
-			return fmt.Errorf("channels.Upsert ban %q: %w", b.Mask, err)
-		}
+	if err := replaceList(ctx, tx, "channel_exceptions", rec.Name, rec.Exceptions, now); err != nil {
+		return err
+	}
+	if err := replaceList(ctx, tx, "channel_invexes", rec.Name, rec.Invexes, now); err != nil {
+		return err
 	}
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("channels.Upsert commit: %w", err)
 	}
 	rec.UpdatedAt = now
+	return nil
+}
+
+// replaceList wipes and rewrites one list-mode table for a single
+// channel, inside the supplied transaction. table is a hardcoded
+// literal at every call site.
+func replaceList(ctx context.Context, tx *sql.Tx, table, channel string, entries []storage.BanRecord, now time.Time) error {
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM `+table+` WHERE channel_name = ?`, channel); err != nil {
+		return fmt.Errorf("channels.Upsert clear %s: %w", table, err)
+	}
+	for _, e := range entries {
+		setAt := e.SetAt
+		if setAt.IsZero() {
+			setAt = now
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO `+table+`(channel_name, mask, set_by, set_at) VALUES (?, ?, ?, ?)`,
+			channel, e.Mask, e.SetBy, setAt.UTC(),
+		); err != nil {
+			return fmt.Errorf("channels.Upsert %s %q: %w", table, e.Mask, err)
+		}
+	}
 	return nil
 }
 

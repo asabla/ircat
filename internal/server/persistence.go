@@ -26,6 +26,8 @@ func (s *Server) restorePersistentChannels(ctx context.Context) error {
 			rec.Topic, rec.TopicSetBy, rec.TopicSetAt,
 			rec.ModeWord, rec.Key, rec.Limit,
 			banRecordsToMap(rec.Bans),
+			banRecordsToMap(rec.Exceptions),
+			banRecordsToMap(rec.Invexes),
 		)
 		s.logger.Info("restored channel", "name", rec.Name, "modes", rec.ModeWord)
 	}
@@ -51,6 +53,8 @@ func (s *Server) persistChannel(ctx context.Context, ch *state.Channel) {
 		Key:        ch.Key(),
 		Limit:      ch.Limit(),
 		Bans:       banRecordsFromMap(ch.Bans()),
+		Exceptions: banRecordsFromMap(ch.Exceptions()),
+		Invexes:    banRecordsFromMap(ch.Invexes()),
 	}
 	if err := s.store.Channels().Upsert(ctx, rec); err != nil {
 		s.logger.Warn("persist channel failed", "channel", ch.Name(), "error", err)

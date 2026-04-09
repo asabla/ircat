@@ -139,6 +139,46 @@ func TestChannels_UpsertWithBans(t *testing.T) {
 	}
 }
 
+func TestChannels_RoundTripsExceptionsAndInvexes(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	rec := &storage.ChannelRecord{
+		Name:     "#fed",
+		Topic:    "",
+		ModeWord: "+nt",
+		Bans:       []storage.BanRecord{{Mask: "evil!*@*"}},
+		Exceptions: []storage.BanRecord{{Mask: "trusted!*@safe.example"}},
+		Invexes:    []storage.BanRecord{{Mask: "*!*@vip.example"}},
+	}
+	if err := s.Channels().Upsert(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Channels().Get(ctx, "#fed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Exceptions) != 1 || got.Exceptions[0].Mask != "trusted!*@safe.example" {
+		t.Errorf("exceptions round-trip failed: %+v", got.Exceptions)
+	}
+	if len(got.Invexes) != 1 || got.Invexes[0].Mask != "*!*@vip.example" {
+		t.Errorf("invexes round-trip failed: %+v", got.Invexes)
+	}
+
+	// Replace both lists and verify the old entries are gone.
+	rec.Exceptions = []storage.BanRecord{{Mask: "*!*@new-safe.example"}}
+	rec.Invexes = nil
+	if err := s.Channels().Upsert(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	got2, _ := s.Channels().Get(ctx, "#fed")
+	if len(got2.Exceptions) != 1 || got2.Exceptions[0].Mask != "*!*@new-safe.example" {
+		t.Errorf("exception replace failed: %+v", got2.Exceptions)
+	}
+	if len(got2.Invexes) != 0 {
+		t.Errorf("invex clear failed: %+v", got2.Invexes)
+	}
+}
+
 func TestEvents_AppendAndList(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
