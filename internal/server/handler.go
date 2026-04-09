@@ -25,6 +25,10 @@ func (c *Conn) dispatch(m *protocol.Message) {
 		c.handleUser(m)
 	case "SERVICE":
 		c.handleService(m)
+	case "SQUERY":
+		c.handleSquery(m)
+	case "SERVLIST":
+		c.handleServlist(m)
 	case "JOIN":
 		c.handleJoin(m)
 	case "PART":
