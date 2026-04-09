@@ -26,6 +26,11 @@ var supportedCapList = []string{
 	// of only the highest. Wired in sendNamesReply and
 	// sendWhoReply.
 	"multi-prefix",
+	// userhost-in-names renders each NAMES entry as the full
+	// nick!user@host triplet so the requester does not need
+	// a follow-up WHO to learn member identities. Wired in
+	// sendNamesReply.
+	"userhost-in-names",
 }
 
 // supportedCaps returns the space-separated cap list as it appears

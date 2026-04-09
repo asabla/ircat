@@ -280,6 +280,7 @@ func (c *Conn) sendNamesReply(ch *state.Channel) {
 		flush()
 	} else {
 		multiPrefix := c.capsAccepted["multi-prefix"]
+		userhostInNames := c.capsAccepted["userhost-in-names"]
 		for id, mem := range members {
 			u := c.server.world.FindByID(id)
 			if u == nil {
@@ -298,7 +299,17 @@ func (c *Conn) sendNamesReply(ch *state.Channel) {
 			} else {
 				prefix = mem.Prefix()
 			}
-			token := prefix + u.Nick
+			// IRCv3 userhost-in-names: render the full
+			// nick!user@host triplet so the requester gets
+			// every member's identity without a follow-up WHO.
+			// Without the cap we keep the legacy bare-nick
+			// form for compatibility with non-IRCv3 clients.
+			var token string
+			if userhostInNames {
+				token = prefix + u.Hostmask()
+			} else {
+				token = prefix + u.Nick
+			}
 			if line.Len()+1+len(token) > lineSoftCap {
 				flush()
 			}
