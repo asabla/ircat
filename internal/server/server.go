@@ -131,6 +131,10 @@ type Server struct {
 	// process-management glue.
 	shutdown func(reason string)
 
+	// connector is the optional runtime federation dialer the
+	// operator CONNECT command drives. Wired in by the host.
+	connector Connector
+
 	// shuttingDown is set to 1 once Run begins its drain. New accepts
 	// observe it and refuse cleanly instead of racing the close.
 	shuttingDown atomic.Bool
@@ -188,6 +192,20 @@ type Reloader interface {
 // changes without restarting the process.
 func WithReloader(r Reloader) Option {
 	return func(s *Server) { s.reloader = r }
+}
+
+// Connector is the small surface the operator CONNECT command uses
+// to ask the host to dial a federation peer at runtime. Optional —
+// when nil, CONNECT returns a NOTICE explaining the no-op.
+type Connector interface {
+	Connect(ctx context.Context, target string, port int) error
+}
+
+// WithConnector wires a runtime federation dialer so the operator
+// CONNECT command can bring up new peer links without restarting
+// the daemon.
+func WithConnector(c Connector) Option {
+	return func(s *Server) { s.connector = c }
 }
 
 // WithShutdown installs a callback the DIE/RESTART operator commands

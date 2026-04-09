@@ -77,6 +77,12 @@ func (c *Conn) dispatch(m *protocol.Message) {
 		c.handleDie(m)
 	case "RESTART":
 		c.handleRestart(m)
+	case "LINKS":
+		c.handleLinks(m)
+	case "SQUIT":
+		c.handleSquit(m)
+	case "CONNECT":
+		c.handleConnect(m)
 	case "USERHOST":
 		c.handleUserhost(m)
 	case "ISON":
