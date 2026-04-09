@@ -426,6 +426,13 @@ func (c *Conn) handleUserMode(target string, params []string) {
 			if dir == '-' {
 				delMode(mc)
 			}
+		case 'r':
+			// +r restricted (RFC 2812 §3.1.5). Only the server
+			// itself can set or unset this; user attempts to
+			// touch it are silently ignored. We never reach this
+			// branch from a server-internal path because the
+			// server poke into u.Modes directly bypasses
+			// handleUserMode.
 		default:
 			// Unknown user modes are silently ignored per RFC 2812
 			// section 3.1.5.

@@ -34,6 +34,15 @@ func (c *Conn) handleOper(m *protocol.Message) {
 	}
 	srv := c.server.cfg.Server.Name
 	nick := c.user.Nick
+	// RFC 2812 §3.1.5: a +r restricted user cannot become an
+	// operator. Reject before even running the password compare
+	// so we don't double as an oper-name oracle for restricted
+	// connections.
+	if strings.ContainsRune(c.user.Modes, 'r') {
+		c.send(protocol.NumericReply(srv, nick,
+			protocol.ERR_RESTRICTED, "Your connection is restricted!"))
+		return
+	}
 	name := m.Params[0]
 	password := m.Params[1]
 

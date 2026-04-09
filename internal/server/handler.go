@@ -184,6 +184,14 @@ func (c *Conn) handleNick(m *protocol.Message) {
 	// the *old* hostmask as the prefix so receivers can match the
 	// announcement to whatever they had on file.
 	if c.user != nil && c.user.Registered {
+		// RFC 2812 §3.1.5: +r restricted users may not change
+		// their nick. The mode is server-set and meant to gag a
+		// problematic user without disconnecting them.
+		if strings.ContainsRune(c.user.Modes, 'r') {
+			c.send(protocol.NumericReply(c.server.cfg.Server.Name, c.user.Nick,
+				protocol.ERR_RESTRICTED, "Your connection is restricted!"))
+			return
+		}
 		oldMask := c.user.Hostmask()
 		// Snapshot the pre-rename identity for WHOWAS so a later
 		// lookup of the old nick still resolves to who they were.
