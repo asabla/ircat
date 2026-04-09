@@ -1,21 +1,21 @@
-# PLAN — ircat v1.2.0 (historical)
+# PLAN — ircat v0.3.0 (historical)
 
-> **This is the historical record for the v1.2.0 release.** Every
-> milestone below shipped to main and is tagged as `v1.2.0`. The
-> active forward plan lives in [`PLAN.md`](PLAN.md). The v1.0
-> historical record is in [`PLAN-v1.0.md`](PLAN-v1.0.md), the
-> v1.1 historical record in [`PLAN-v1.1.md`](PLAN-v1.1.md).
+> **This is the historical record for the v0.3.0 release.** Every
+> milestone below shipped to main and is tagged as `v0.3.0`. The
+> active forward plan lives in [`PLAN.md`](PLAN.md). The v0.1
+> historical record is in [`PLAN-v0.1.md`](PLAN-v0.1.md), the v0.2
+> historical record in [`PLAN-v0.2.md`](PLAN-v0.2.md).
 
-The v1.1.0 release tightened the federation transport, hardened
+The v0.2.0 release tightened the federation transport, hardened
 the Lua sandbox, replaced "conservative defaults" with measured
 numbers, and shipped the polish + release plumbing. See
-[`PLAN-v1.1.md`](PLAN-v1.1.md) for the historical record of M9
-→ M12, and [`PLAN-v1.0.md`](PLAN-v1.0.md) for M0 → M8.
+[`PLAN-v0.2.md`](PLAN-v0.2.md) for the historical record of M9
+→ M12, and [`PLAN-v0.1.md`](PLAN-v0.1.md) for M0 → M8.
 
-v1.2.0 is the **operator experience** release. The headline is
+v0.3.0 is the **operator experience** release. The headline is
 that the dashboard stops being a row of read-only HTML tables
 and starts being a thing operators actually want to use. The
-secondary theme is closing the items v1.1 explicitly deferred:
+secondary theme is closing the items v0.2 explicitly deferred:
 the equal-TS collision case, channel TS collision behaviour,
 ban-list propagation, the soak / Postgres benchmarks at scale,
 and a real per-allocation Lua memory hook if gopher-lua exposes
@@ -24,7 +24,7 @@ one in time.
 ## Theme
 
 > "Make the operator dashboard a place you actually open. Close
-> the v1.1 deferred list. Don't add new wire protocols."
+> the v0.2 deferred list. Don't add new wire protocols."
 
 ## Milestones
 
@@ -53,7 +53,7 @@ JS for the SSE wiring.
   "drop link" button that calls into the supervisor.
 - **Bot panel** with full CRUD via forms instead of API-only.
   List bots, toggle enabled/disabled, view source, view kv
-  state, restart. Reuses `BotManager` already wired in v1.0.
+  state, restart. Reuses `BotManager` already wired in v0.1.
 - **Channel detail page.** Click a channel name from the list
   to see members (with op/voice prefixes), modes, current
   topic, ban list. Forms for: edit topic, toggle mode, kick
@@ -92,22 +92,22 @@ htmx vendored under `/dashboard/static/htmx.min.js`.
 
 ### M14 — Federation correctness loose ends
 
-**Goal:** close the items v1.1 documented as deferred under
+**Goal:** close the items v0.2 documented as deferred under
 "Federation correctness". None of these are headline features;
 they exist to make the federation transport correct under
 adversarial timing.
 
-- **Equal-TS nick collision (RFC 2813 §5.2).** v1.1 keeps the
+- **Equal-TS nick collision (RFC 2813 §5.2).** v0.2 keeps the
   existing record on equal TS, which is conservative but rare
   at nanosecond resolution. The RFC says kill both. Implement
   the kill-both branch and add a regression test that drives
   matching TS values into both sides of a link.
-- **Channel TS collision behaviour.** v1.1 propagates the
+- **Channel TS collision behaviour.** v0.2 propagates the
   channel TS via `AdoptOlderTS` but does not yet drop op
   state on a peer's older claim. Wire `AdoptOlderTS` into the
   membership reset path so the older anchor wins consistently
   on every node.
-- **Ban list (+b) propagation.** v1.1 drops `+b` toggles in
+- **Ban list (+b) propagation.** v0.2 drops `+b` toggles in
   `applyRemoteChannelMode`. Add a per-channel ban map to the
   burst (one `:server BAN #chan mask ts setby` line per ban)
   and re-apply on the receiver via the existing
@@ -119,7 +119,7 @@ adversarial timing.
   expires after 5 seconds, sufficient to break a fan-out
   loop.
 
-**Exit:** the same three-node integration test the v1.1 plan
+**Exit:** the same three-node integration test the v0.2 plan
 called for, now actually present in `internal/server/`. Drives
 collisions, channel TS resets, ban propagation, and a SQUIT
 storm; all four scenarios converge to the same state on every
@@ -129,33 +129,33 @@ node within 500 ms.
 
 ### M15 — Operational validation at scale
 
-**Goal:** turn the v1.1 soak / benchmark *capability* into
+**Goal:** turn the v0.2 soak / benchmark *capability* into
 soak / benchmark *results*.
 
 - **Nightly soak job.** Schedule the existing
   `tests/soak` harness against a real ircat instance via a
   GitHub Actions cron. Targets:
   - 5 000 concurrent connections, 500 channels, 1 hour, 0.1 %
-    drop rate ceiling. (Smaller than the v1.1 reference
+    drop rate ceiling. (Smaller than the v0.2 reference
     target, large enough to find regressions.)
   - The job uploads the per-run summary as a workflow
     artefact and posts a comment on the latest commit if
     drops exceed the ceiling.
 - **24h reference soak.** Manual trigger of the harness
-  against the reference Hetzner box for the v1.1 reference
+  against the reference Hetzner box for the v0.2 reference
   target (10k conns, 1k channels, 24 h). Document the result
   and the host config in `docs/OPERATIONS.md`. This is the
-  one v1.1 was missing — the harness was there, the run was
+  one v0.2 was missing — the harness was there, the run was
   not.
 - **Postgres benchmark on tuned hardware.** Same idea — the
   benchmark Skips cleanly without `IRCAT_TEST_POSTGRES_DSN`,
-  so v1.1 had no published Postgres numbers. Run it against a
+  so v0.2 had no published Postgres numbers. Run it against a
   real RDS-class box and put the result in
   `docs/OPERATIONS.md` next to the SQLite numbers.
 - **Federation latency on real loopback.** Re-run
   `BenchmarkFederation_PrivmsgRoundtrip` against actual TCP
   loopback (and ideally a 1 ms / 10 ms / 100 ms LAN
-  emulation via `tc qdisc`). v1.1's number is from
+  emulation via `tc qdisc`). v0.2's number is from
   `net.Pipe`; document the realistic ones in
   `docs/FEDERATION.md`.
 
@@ -171,7 +171,7 @@ green for at least one full week before tagging.
 expose the right hooks.
 
 - **True per-allocation memory cap.** If gopher-lua has added
-  an allocator hook by the time v1.2 enters dev (track the
+  an allocator hook by the time v0.3 enters dev (track the
   upstream project quarterly), wire `Budget.RegistryBytes`
   through to it. If not, document why the registry slot cap
   is the closest we can get and pin the gopher-lua version we
@@ -190,29 +190,29 @@ expose the right hooks.
 **Exit:** the SECURITY.md "what the sandbox does and does not
 cover" section loses the partial-cap caveats, OR the doc
 explicitly pins the gopher-lua version we have validated and
-the v1.3 plan inherits the open items.
+the v0.4 plan inherits the open items.
 
 ---
 
 ### M17 — Release polish
 
-**Goal:** v1.2 ships with v1.1 → v1.2 migration guidance and
-the v1.2 release pipeline produces the same shape of artefacts
-as v1.1.
+**Goal:** v0.3 ships with v0.2 → v0.3 migration guidance and
+the v0.3 release pipeline produces the same shape of artefacts
+as v0.2.
 
-- **Migration guide v1.1 → v1.2.** Mostly empty unless M14 or
+- **Migration guide v0.2 → v0.3.** Mostly empty unless M14 or
   M16 introduces a behaviour change that needs operator
   attention. The dashboard polish in M13 is additive — no
   upgrade action needed.
-- **Release notes generator.** Today the v1.0.0 and v1.1.0
+- **Release notes generator.** Today the v0.1.0 and v0.2.0
   release notes are hand-written annotated tag messages.
   Switch to the goreleaser changelog generator + a small
   prelude template so the next major does not need a
   hand-typed wall of text.
 
-**Exit:** `git tag v1.2.0` produces a release with the same
-GitHub Actions pipeline as v1.1.0, plus the dashboard images
-visible at `https://github.com/asabla/ircat/releases/tag/v1.2.0`.
+**Exit:** `git tag v0.3.0` produces a release with the same
+GitHub Actions pipeline as v0.2.0, plus the dashboard images
+visible at `https://github.com/asabla/ircat/releases/tag/v0.3.0`.
 
 ---
 
@@ -221,16 +221,16 @@ visible at `https://github.com/asabla/ircat/releases/tag/v1.2.0`.
 - Conventional Commits, same as every prior milestone.
 - Every new dashboard page ships with at least one HTTP-level
   test that drives the form / handler end-to-end. The TLS test
-  pattern from v1.1 is the template.
+  pattern from v0.2 is the template.
 - `docs/PROTOCOL.md`, `docs/CONFIG.md`, `docs/DASHBOARD.md` get
   updated in the same commit as the change.
 - The `gocyclo` / `staticcheck` CI gates stay in place — no
   drop in code quality is acceptable for the dashboard work.
 
-## Out of scope for v1.2
+## Out of scope for v0.3
 
 These were considered and explicitly cut. They live in a
-future v1.3+ plan.
+future v0.4+ plan.
 
 - A real chat surface in the dashboard (operators can use a
   regular IRC client; the dashboard is for moderation, not

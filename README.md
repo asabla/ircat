@@ -1,25 +1,33 @@
 # ircat
 
-A modern, portable IRC server written in Go with a built-in htmx dashboard, Lua bots, and an admin API. Aims for full RFC 1459 / RFC 2810–2813 compliance including server-to-server federation, while staying pleasant to run in 2026.
+A modern, portable IRC server written in Go with a built-in htmx dashboard, Lua bots, and an admin API. Implements the full IRC RFC family (1459 / 2810 / 2811 / 2812 / 2813) plus the most-used IRCv3 capabilities, while staying pleasant to run in 2026.
 
 ## Highlights
 
-- **Full IRC protocol** — RFC 1459 core + RFC 2810/2811/2812/2813 federation. IRCv3 extensions on the roadmap.
+- **100% RFC compliance** — every command, mode, prefix, and numeric the RFC family defines is implemented and tested. All four channel-name prefixes (`#`, `&`, `+`, `!`), every channel mode (`+i +m +n +p +s +t +k +l +o +v +b +e +I +q +a +O +r`), all six user modes, all 46 RFC 2812 commands, and the full RFC 2813 server-to-server handshake (PASS → SERVER → SVINFO → burst).
+- **IRCv3 modern client support** — `message-tags`, `server-time`, `echo-message`, `multi-prefix` negotiated via standard `CAP REQ`.
 - **Single binary** — Go stdlib first; minimal external dependencies.
-- **Built-in dashboard** — htmx + server-sent events, live log streaming, chat, settings, user/channel admin.
-- **Pluggable storage** — SQLite (default, zero-config) or PostgreSQL, selected via config.
+- **Built-in dashboard** — htmx + server-sent events, live log streaming, channel/user/operator admin, federation panel.
+- **Pluggable storage** — SQLite (default, zero-config) or PostgreSQL, selected via config. Channel state, bans, exceptions, invexes, and quiets all round-trip across restart.
 - **Admin API** — HTTP/JSON, token-authenticated, usable for automation and external tooling.
 - **Lua bots** — sandboxed bot runtime with an event API (messages, joins, commands).
 - **Event export** — webhooks and raw JSONL sinks built in; additional transports can land as drop-in sinks later.
+- **Federation** — full RFC 2813 server-to-server with TLS, fingerprint pinning, SVINFO version negotiation, TS-based nick collision resolution, and runtime channel-mode propagation.
 - **Config flexibility** — JSON *or* YAML, same schema.
 - **Container-first** — devcontainer for development, multi-stage Dockerfile, dev and production Compose stacks.
 
 ## Status
 
-v1.2.0 tagged. See [`docs/PLAN.md`](docs/PLAN.md) for what's
-next, [`docs/PLAN-v1.2.md`](docs/PLAN-v1.2.md) for the v1.2
-historical record, and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-for the design.
+**v1.0.0 tagged** — the RFC-complete release. See the v1.0.0 tag
+annotation for the full catalog of what's implemented and
+[`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the wire-level reference.
+
+The pre-1.0 development arc shipped under the v0.x tags. For
+what's next see [`docs/PLAN.md`](docs/PLAN.md). For historical
+context see [`docs/PLAN-v0.1.md`](docs/PLAN-v0.1.md),
+[`docs/PLAN-v0.2.md`](docs/PLAN-v0.2.md), and
+[`docs/PLAN-v0.3.md`](docs/PLAN-v0.3.md). For the design see
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Quick start
 
@@ -51,7 +59,7 @@ docker compose -f docker-compose.dev.yml up
 
 - [Quickstart](docs/QUICKSTART.md) — five-minute first-boot walkthrough
 - [Architecture](docs/ARCHITECTURE.md)
-- [Implementation plan](docs/PLAN.md) (v1.3 forward plan)
+- [Implementation plan](docs/PLAN.md) (post-v1.0 forward plan)
 - [Operations](docs/OPERATIONS.md) — day-2 surface, metrics, backup, soak
 - [Security](docs/SECURITY.md) — trust boundaries, Lua sandbox audit
 - [Contributing & commit convention](docs/CONTRIBUTING.md)
@@ -63,8 +71,9 @@ docker compose -f docker-compose.dev.yml up
 - [Lua bots](docs/BOTS.md)
 - [Event export](docs/EVENTS.md)
 - [Testing strategy](docs/TESTING.md)
-- [Upgrade v1.0 → v1.1](docs/UPGRADE-v1.0-to-v1.1.md)
-- [Upgrade v1.1 → v1.2](docs/UPGRADE-v1.1-to-v1.2.md)
+- [Pre-1.0 plans](docs/PLAN-v0.1.md), [v0.2](docs/PLAN-v0.2.md), [v0.3](docs/PLAN-v0.3.md)
+- [Upgrade v0.1 → v0.2](docs/UPGRADE-v0.1-to-v0.2.md)
+- [Upgrade v0.2 → v0.3](docs/UPGRADE-v0.2-to-v0.3.md)
 
 ## License
 

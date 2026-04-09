@@ -1,117 +1,167 @@
-# PLAN — ircat v1.3.0
+# PLAN — ircat post-v1.0
 
-The v1.2.0 release closed the operator-experience gap (the
-dashboard became a real console) and the federation
-correctness loose ends from v1.1 (equal-TS kill-both, channel
-TS reset, ban list propagation, SQUIT loop guard). See
-[`PLAN-v1.2.md`](PLAN-v1.2.md) for the historical record of
-M13 → M17, [`PLAN-v1.1.md`](PLAN-v1.1.md) for M9 → M12, and
-[`PLAN-v1.0.md`](PLAN-v1.0.md) for M0 → M8.
+The v1.0.0 release is the RFC-complete milestone. Every command,
+mode, prefix, and numeric the IRC RFC family (1459, 2810, 2811,
+2812, 2813) defines is implemented and tested, plus four IRCv3
+capabilities (`message-tags`, `server-time`, `echo-message`,
+`multi-prefix`). See the v1.0.0 tag annotation for the full
+catalog and the historical pre-1.0 plans for the development arc:
 
-v1.3.0 is a **stabilisation + small-scope cleanup** release.
-There are no headline new features. The themes are:
+- [`PLAN-v0.1.md`](PLAN-v0.1.md) — original feature-complete release (M0 → M8)
+- [`PLAN-v0.2.md`](PLAN-v0.2.md) — federation hardening + lua sandbox (M9 → M12)
+- [`PLAN-v0.3.md`](PLAN-v0.3.md) — dashboard polish + federation correctness (M13 → M17)
 
-1. Drop the v1.2 deprecations (`federation.broadcast_mode:
-   fanout`).
-2. Wire the gopher-lua follow-ups if upstream has shipped the
-   hooks; if not, vendor the patch ourselves so v1.3 actually
-   delivers a true memory cap.
-3. Fix the test-cleanup deadlock that the M14 three-node
-   integration test surfaced (the SQUIT-during-cleanup hang).
-4. Pick up whatever audit findings the nightly soak job
-   uncovered between v1.2.0 and v1.3 cut.
+This document is the **post-v1.0 forward plan**. The themes are:
+
+1. Round out IRCv3 with the remaining commonly-negotiated caps.
+2. Sharpen federation: fix the M14 cleanup deadlock and add
+   stress coverage for a real three-node mesh under load.
+3. Pay down the gopher-lua memory-hook story now that v1.0
+   shipped without the upstream API.
+4. Build a real services daemon on top of the SERVICE framework.
+5. Operational hardening: soak findings, perf bumps, optional
+   Postgres-on-RDS numbers.
+
+There is no fixed minor-version cadence beyond v1.0. Items will
+land in whatever order they're ready, and a tag goes out when a
+coherent batch is shippable.
 
 ## Theme
 
-> "Pay down the small things, finish the upstream-blocked
-> sandbox work, and ship a release that mostly tells operators
-> nothing new is required."
+> "v1.0 closed the RFC chapter. Post-v1.0 closes the IRCv3
+> chapter, sharpens federation, and builds the things on top
+> that the RFC compliance work made possible."
 
-## Milestones
+## Workstreams
 
-### M18 — Cleanup
+### W1 — IRCv3 catch-up
 
-- **Drop `federation.broadcast_mode: fanout`.** Documented
-  for one minor cycle in v1.1; removed in v1.3 per the
-  deprecation note. The default `subscription` mode has been
-  green in every measured case so the safety net can go.
-- **Fix the SQUIT-during-cleanup deadlock.** The M14
-  integration test for the three-node SQUIT scenario was
-  scoped down because the cleanup sequence (drop one link,
-  fan SQUIT, defers tear down the rest) caused a flaky
-  shutdown deadlock. The deadlock is in the test harness, not
-  the production path, but the harness should not have it
-  either.
-- **Audit + remove every `// silence unused` placeholder.**
-  Several files still carry leftover `var _ = fmt.Sprintf`
-  bridges from M0 / M1 scaffolding. Clean them out.
+The four caps shipped in v1.0 are the table-stakes set. The next
+tier are also widely deployed and are valuable for modern client
+UX.
 
-**Exit:** `git grep "broadcast_mode" docs/` returns empty,
-the three-node SQUIT scenario re-enters the integration test
-suite, and `git grep "silence unused"` returns empty too.
+- **`chghost`** — notifies channel members when a user's host
+  changes. Today the host is captured at registration and never
+  rewritten, so this is a near-no-op until the cloak / vhost
+  work lands. Wire the cap negotiation now and emit on the
+  forthcoming MODE +x cloak path.
+- **`away-notify`** — emits a `:nick!u@h AWAY :reason` /
+  `:nick!u@h AWAY` to channel members when a user toggles AWAY.
+  Channel members with the cap negotiated see real-time presence
+  changes instead of having to PRIVMSG to discover they are away.
+- **`account-tag`** — attaches `@account=<name>` on every
+  message from a logged-in account. Requires the account
+  framework (W4) to be useful.
+- **`extended-join`** — adds the account name and realname as
+  extra params on JOIN broadcasts so a client knows who someone
+  is the moment they join. Same prerequisite as account-tag.
+- **`batch`** — frames related messages (history replay, NAMES
+  burst, WHO replay) so a client can render them as a unit
+  instead of streaming. Cheap to add and useful as soon as the
+  history work begins.
 
----
-
-### M19 — Lua sandbox upstream catch-up
-
-- **Per-allocation memory cap (if upstream).** Track
-  gopher-lua quarterly. If a stable allocator hook has
-  shipped by the time v1.3 enters dev, wire
-  `Budget.RegistryBytes` through to it and update
-  `docs/SECURITY.md` to drop the partial-cap caveat. If not,
-  vendor the smallest possible patch — the hook surface is
-  about 30 lines of Go in the upstream `_state.go` — and
-  pin our fork in `go.mod` via a `replace` directive.
-- **Per-call instruction count via `Sethook`.** Same gating.
-  If upstream has the hook API, attach a real instruction
-  counter that decrements on the count mask and trips the
-  context-cancel exit path. The wallclock proxy stays as the
-  outer envelope.
-- **Ship a vendored fork if necessary.** The v1.2 plan
-  considered this and decided against it; v1.3 commits to
-  doing it if upstream still has not moved.
-
-**Exit:** the `SECURITY.md` "what the sandbox does and does
-not cover" section drops the partial-cap caveats. Both items
-are tested via new sandbox tests that exercise the
-allocation-overrun and instruction-overrun paths and assert
-the runtime exits cleanly.
+**Exit:** all five caps appear in `CAP LS`, ACK on REQ, and have
+focused tests in `internal/server/`. Each one wires through to
+its consumer where applicable.
 
 ---
 
-### M20 — Operational follow-ups
+### W2 — Federation sharpening
 
-- **Triage findings from the v1.2 nightly soak.** The job
-  runs every night against the v1.2 main; whatever
-  regressions or rate cliffs it surfaces between v1.2.0 and
-  v1.3 cut land here.
+- **Three-node mesh stress test.** The M14 (now v0.3.0)
+  integration test was scoped down because the SQUIT-during-
+  cleanup teardown caused a flaky shutdown deadlock in the test
+  harness. Fix the harness, re-enable the test, and add a
+  brand-new soak harness that drives a real three-node mesh
+  under sustained load (100s of users, dozens of channels,
+  scripted netsplit / netjoin cycles).
+- **Per-link byte counter dashboard panel.** v1.0 shipped the
+  STATS l counters on the wire; surface them on the dashboard
+  federation panel too so an operator does not need to OPER +
+  STATS to see link throughput.
+- **Burst compression (`zip` flag).** RFC 2813 mentions zlib-
+  compressed bursts as an option. Useful on slow links carrying
+  large channel state, optional for everything else.
+- **Operator account federation.** A user OPER'd on node A is
+  not OPER'd on node B today. The store is local. A small
+  RPC over the link should let an OPER decision propagate so
+  KILL / WALLOPS / DIE work consistently across the mesh.
+
+**Exit:** three-node test back in `internal/server/`,
+dashboard fed panel shows live byte counts, optional zlib
+fanout exposed via config flag.
+
+---
+
+### W3 — Lua sandbox upstream catch-up
+
+Carried over from the v0.3.0 plan. gopher-lua has not yet shipped
+the per-allocation memory hook or the per-call instruction
+counter API. The v1.0 release ships the same partial-cap
+caveats v0.3 documented.
+
+- **Track upstream.** Quarterly check on the gopher-lua release
+  notes. If the hooks land, wire them up.
+- **Vendored fork if upstream stalls again.** v0.3 considered
+  this and decided against it; post-v1.0 commits to actually
+  doing it if upstream still hasn't moved within two quarterly
+  checks.
+
+**Exit:** `docs/SECURITY.md`'s "what the sandbox does and does
+not cover" section drops the partial-cap caveats. New tests
+cover the allocation-overrun and instruction-overrun paths.
+
+---
+
+### W4 — Services daemon
+
+The SERVICE / SQUERY / SERVLIST framework shipped in v1.0
+accepts service registrations from any connecting client. There
+is no in-tree service implementation. A first-party services
+daemon would let operators run a usable network without bringing
+their own ChanServ.
+
+- **Account framework.** Per-user accounts with password,
+  email, and SASL PLAIN auth at registration time. This is the
+  precondition for everything else in W4 and most of W1's
+  account-aware caps.
+- **NickServ.** Reserves nicks against an account, kicks
+  imposters, lets the owner claim back a stolen nick.
+- **ChanServ.** Channel registration, founder restoration after
+  empty, op grants on join for known accounts, ban-on-disconnect
+  rules.
+- **MemoServ.** Offline messages forwarded the next time the
+  recipient connects.
+
+These are large pieces and will likely span multiple tagged
+releases. The minimum useful subset is the account framework
+plus NickServ.
+
+**Exit:** `ircat services` is a real subcommand that brings up
+ChanServ + NickServ on the local node, registered with the
+SERVICE form, persisting accounts to the same store.
+
+---
+
+### W5 — Operational hardening
+
+- **Triage v0.3 nightly soak findings.** The job has been
+  running against `main` since v0.3.0 cut. Fold any surfaced
+  regressions into the post-v1.0 work.
 - **Refresh the measured envelope** in `docs/OPERATIONS.md`
-  if any benchmark numbers shifted by more than 5 % between
-  v1.2 and v1.3 (driven by upstream Go bumps, sqlite version
-  bumps, or our own changes).
-- **Optional: Postgres benchmark on a real RDS instance.**
-  v1.2 documented the drill but did not run it. v1.3 ships
-  the numbers if the operator has access to a tuned managed
-  Postgres. Skipped without prejudice if not.
+  if benchmark numbers shifted by more than 5 % between v0.3
+  and the next tag.
+- **Postgres-on-RDS benchmark.** Documented in v0.3 but never
+  run for real. Post-v1.0 ships the numbers if a tuned managed
+  Postgres is reachable.
+- **Per-handler unit-test files.** `handler_message`,
+  `handler_query`, and `handler_mode` are integration-tested
+  but lack focused unit suites. Add them so the inner-loop
+  regression detection is faster.
 
-**Exit:** the measured envelope tables in `OPERATIONS.md`
-match the latest reality, and any soak-surfaced regression
-has either been fixed or has its own dedicated issue.
-
----
-
-### M21 — Release polish
-
-- **Migration guide v1.2 → v1.3.** Will be short — v1.3 is a
-  stabilisation release. The main thing operators need to
-  know is the `broadcast_mode: fanout` removal; everything
-  else is invisible.
-- **Tag `v1.3.0`** with the same release pipeline as v1.1 /
-  v1.2 (goreleaser, syft, cosign keyless).
-
-**Exit:** `git tag v1.3.0` produces signed cross-platform
-archives, a multi-arch container image on ghcr.io, and a
-GitHub release whose body points at the migration guide.
+**Exit:** measured envelope tables in `OPERATIONS.md` reflect
+current reality; the three large handlers each have their own
+`_test.go` file.
 
 ---
 
@@ -119,23 +169,21 @@ GitHub release whose body points at the migration guide.
 
 - Conventional Commits as always.
 - Every change still ships with at least one test.
-- The CI fuzz job from M16 stays at 5 minutes per PR; v1.3
-  is the cycle where we evaluate whether to bump it to
-  10 minutes if the corpus has stabilised.
+- The CI fuzz job stays at 5 minutes per PR; the corpus has
+  stabilised so a bump to 10 minutes is on the table once W3
+  lands.
+- The compile-time `iface_check_test.go` pattern from v1.0
+  (federation/server boundary) is the template for any other
+  cross-package interface dance.
 
-## Out of scope for v1.3
+## Out of scope for the immediate post-v1.0 work
 
-These were considered and explicitly cut. They live in a
-v2.0 plan if anywhere.
+These remain on the longer horizon:
 
-- IRCv3 capabilities beyond `CAP END` (`message-tags`,
-  `account-tag`, `chghost`, ...).
-- SERVICE pseudo-server.
+- TS6 SID routing — pure-name federation works fine for the
+  expected mesh size; SID routing is a power-user feature.
 - Multi-DC federation routing tables.
-- Webhook v2 event payload schema (the v1 jsonl payload
-  stays compatible for the whole 1.x line).
-- Operator account federation across nodes.
-- A real chat surface in the dashboard.
-- TS6 SID routing.
-- Burst compression (`zip` flag).
 - Web push notifications for audit events.
+- A real chat surface in the dashboard.
+- IRCv3 batched-history replay (`+chathistory`) — depends on
+  W4 (storage) and `batch` (W1).

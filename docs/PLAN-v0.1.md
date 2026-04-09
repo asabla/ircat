@@ -1,7 +1,7 @@
-# Implementation Plan — v1.0.0 (historical)
+# Implementation Plan — v0.1.0 (historical)
 
-> **This is the historical record for the v1.0.0 release.** Every
-> milestone below shipped to main and is tagged as `v1.0.0`. The
+> **This is the historical record for the v0.1.0 release.** Every
+> milestone below shipped to main and is tagged as `v0.1.0`. The
 > active forward plan lives in [`PLAN.md`](PLAN.md).
 
 Milestones are ordered. Do not start milestone N+1 until N's exit criteria are met. Each milestone should be shippable — the server runs, tests pass, something useful works.
@@ -199,7 +199,7 @@ Deferred to post-1.0:
   the container memory cap to bound a runaway).
 
 **Exit:** every M8 deliverable above is in main with tests; the
-remaining items are tracked but do not block tagging v1.0.0.
+remaining items are tracked but do not block tagging v0.1.0.
 
 ---
 

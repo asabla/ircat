@@ -1,22 +1,22 @@
-# Upgrading from v1.1 to v1.2
+# Upgrading from v0.2 to v0.3
 
-This guide walks through every change a v1.1 operator will see
-when they upgrade to v1.2. The headline up front: **in-place
-upgrade, no config changes required, no migrations**. v1.2 is
+This guide walks through every change a v0.2 operator will see
+when they upgrade to v0.3. The headline up front: **in-place
+upgrade, no config changes required, no migrations**. v0.3 is
 an operator-experience release: the dashboard becomes a real
-console, the federation transport closes its v1.1 deferred
+console, the federation transport closes its v0.2 deferred
 correctness items, and the operational story gets a nightly
 soak job and a TCP-loopback latency benchmark to go with the
 existing measured envelope.
 
 ## Compatibility
 
-| Surface | v1.1 → v1.2 status |
+| Surface | v0.2 → v0.3 status |
 |---|---|
 | Config schema | Backward-compatible. No new required fields. |
 | Persistent SQLite databases | No migration. Existing databases load unchanged. |
 | Persistent Postgres databases | Same. No migration. |
-| Federation wire protocol | Backward-compatible with v1.1 peers. New burst lines (channel modes, ban list, +o/+v per-member, channel TS) are additive — v1.1 receivers ignore the parts they do not understand. |
+| Federation wire protocol | Backward-compatible with v0.2 peers. New burst lines (channel modes, ban list, +o/+v per-member, channel TS) are additive — v0.2 receivers ignore the parts they do not understand. |
 | Lua bot API surface | Backward-compatible. Same sandbox, same gopher-lua pin. |
 | Admin API endpoints | Additive. No removals. |
 | Metrics endpoint | Unchanged. Same metric names and labels. |
@@ -39,8 +39,8 @@ That's it.
 
 ### Operator dashboard becomes a real console (M13)
 
-The single biggest visible change. The v1.1 dashboard was five
-read-only HTML tables with a single kick action. The v1.2
+The single biggest visible change. The v0.2 dashboard was five
+read-only HTML tables with a single kick action. The v0.3
 dashboard ships with:
 
 - **Sidebar nav** with active-page highlighting (overview,
@@ -79,16 +79,16 @@ the first GET after the restart.
 
 ### Federation correctness loose ends (M14)
 
-Four items v1.1 documented as deferred and that v1.2 closes:
+Four items v0.2 documented as deferred and that v0.3 closes:
 
-1. **Equal-TS nick collision (RFC 2813 §5.2 kill-both).** v1.1
-   kept the existing record on equal TS. v1.2 implements the
+1. **Equal-TS nick collision (RFC 2813 §5.2 kill-both).** v0.2
+   kept the existing record on equal TS. v0.3 implements the
    RFC kill-both branch — both copies disappear and a KILL
    line goes back to the peer. Vanishingly rare in practice
    at nanosecond resolution but the gap was real.
-2. **Channel TS reset wired into membership.** v1.1
+2. **Channel TS reset wired into membership.** v0.2
    propagated `AdoptOlderTS` but did not drop op state on a
-   peer's older claim. v1.2 strips per-member flags
+   peer's older claim. v0.3 strips per-member flags
    (`ResetMembershipFlags`) when the older anchor wins so the
    bursted MODE +o / +v lines that follow are authoritative.
 3. **Ban list propagation.** `+b` masks now ride along in the
@@ -110,11 +110,11 @@ chicken-and-egg gap where a follow-up MODE would not route
 back through `forwardChannelToSubscribed` because the local
 node had no record of the peer knowing the channel.
 
-The wire format changes are additive — a v1.1 peer that
+The wire format changes are additive — a v0.2 peer that
 receives the new burst lines (TOPIC, MODE word, MODE +b
 masks, per-member +o/+v, channel TS) just delivers them to
 local clients without re-applying. **No action required**;
-the improvement happens automatically on the v1.2 side of any
+the improvement happens automatically on the v0.3 side of any
 link.
 
 ### Operational validation at scale (M15)
@@ -124,11 +124,11 @@ link.
   day at 03:00 UTC. 5 000 conns / 500 channels / 1 hour /
   0.1 % drop ceiling. Logs and the soak summary are uploaded
   as workflow artefacts on every run.
-- **TCP loopback federation latency benchmark.** v1.1's
+- **TCP loopback federation latency benchmark.** v0.2's
   number was measured against `net.Pipe` — the floor of what
-  the broadcast logic itself costs. v1.2 adds a real TCP
+  the broadcast logic itself costs. v0.3 adds a real TCP
   loopback variant that captures the kernel cost. Reference
-  numbers on the v1.1 reference box: `~38 µs net.Pipe` vs
+  numbers on the v0.2 reference box: `~38 µs net.Pipe` vs
   `~51 µs TCP loopback`, so the kernel adds ~13 µs mean / ~26
   µs p99. See `docs/FEDERATION.md` for the side-by-side
   table.
@@ -137,21 +137,21 @@ link.
   for the 24h reference run (10k conns / 1k channels /
   0.05 % drop ceiling, real hardware) and the Postgres
   audit-event benchmark (against a tuned managed instance via
-  `IRCAT_TEST_POSTGRES_DSN`). The v1.1 plan asked for both;
-  the v1.1 release shipped the harness but not the doc.
+  `IRCAT_TEST_POSTGRES_DSN`). The v0.2 plan asked for both;
+  the v0.2 release shipped the harness but not the doc.
 
 ### Lua sandbox follow-ups (M16)
 
 - **CI fuzz job.** A new GitHub Actions matrix entry runs
   `FuzzSandboxNeverPanics` for 5 minutes on every PR against
-  the pinned `gopher-lua v1.1.2`. The seed corpus already
-  ran as a regression test in v1.1; v1.2 adds real fuzzing
+  the pinned `gopher-lua v0.2.2`. The seed corpus already
+  ran as a regression test in v0.2; v0.3 adds real fuzzing
   coverage without waiting for a manual nightly trigger.
 - **Pinned upstream documentation.** `docs/SECURITY.md`
   gains a Pinned upstream section explaining that the
   per-allocation memory hook and the `Sethook`-based
   instruction count remain upstream-blocked at gopher-lua
-  v1.1.2, what the fallback bounds are
+  v0.2.2, what the fallback bounds are
   (`Budget.RegistrySlots`, the wallclock proxy), and which
   test coverage validates the close-out at this version. The
   upgrade to those features lands when upstream gopher-lua
@@ -162,11 +162,11 @@ CI; the documentation is a read-only update.
 
 ## What you can opt into
 
-Nothing new in v1.2 requires opt-in. Every behaviour change
+Nothing new in v0.3 requires opt-in. Every behaviour change
 is on by default and additive. The federation
-`broadcast_mode: fanout` knob from v1.1 still exists for one
+`broadcast_mode: fanout` knob from v0.2 still exists for one
 more cycle as a regression fallback but is documented as
-**deprecated** — it will be removed in v1.3.
+**deprecated** — it will be removed in v0.4.
 
 ## Removed
 
@@ -174,8 +174,8 @@ Nothing.
 
 ## Deprecated
 
-- `federation.broadcast_mode: fanout` — still works in v1.2,
-  removed in v1.3. The default `subscription` mode is strictly
+- `federation.broadcast_mode: fanout` — still works in v0.3,
+  removed in v0.4. The default `subscription` mode is strictly
   better in every measured case.
 
 ## Need help
@@ -185,4 +185,4 @@ Nothing.
 - `docs/SECURITY.md` for the Lua sandbox audit notes.
 - `docs/FEDERATION.md` for the new TCP-loopback latency
   numbers and the side-by-side table.
-- Open an issue if a v1.2 default surprises you in a bad way.
+- Open an issue if a v0.3 default surprises you in a bad way.

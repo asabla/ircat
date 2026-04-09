@@ -156,7 +156,7 @@ following RFC 2812 verbs (and where they live):
 | Command | RFC | Notes |
 |---------|-----|-------|
 | PASS, NICK, USER | §3.1 | Registration burst. PASS gates registration when `Server.ClientPassword` is set; the federation form parses version and flags fields. |
-| CAP | IRCv3 | LS/REQ/END negotiation. Advertises `message-tags`; per-conn `capsAccepted` set tracks negotiated caps. |
+| CAP | IRCv3 | LS/REQ/END negotiation. Advertises `message-tags`, `server-time`, `echo-message`, `multi-prefix`; per-conn `capsAccepted` set tracks negotiated caps and gates the per-recipient send-time wrappers. |
 | QUIT | §3.1.7 | Broadcasts QUIT to shared-channel members; sends ERROR before disconnect. |
 | JOIN, PART | §3.2.1-2 | Including +i/+k/+l/+b/+e/+I/+q gates. JOIN supports `!!short` (create safe channel) and `!short` (resolve existing). |
 | MODE | §3.2.3-4 | Channel + user, list-form `b`/`e`/`I`/`q`. Modeless (`+`) channels reject MODE mutations. |
@@ -170,7 +170,7 @@ following RFC 2812 verbs (and where they live):
 | LUSERS, VERSION, TIME, ADMIN, INFO, MOTD | §3.4.1-3, §4.5 | Stat-query family. |
 | SUMMON, USERS | §4.5-6 | Disabled stubs returning 445 / 446 per the RFC. |
 | WALLOPS | §4.7 | Operator-only +w broadcast, federated. |
-| STATS | §3.4.4 | l/m/o/u, operator-only. |
+| STATS | §3.4.4 | l/m/o/u, operator-only. STATS l reports real per-link sent/recv message and kbyte counters plus the time-since-link-active. |
 | LINKS | §3.4.5 | Local view, open to all. |
 | TRACE | §3.4.8 | Operator-only, local view. |
 | SQUIT | §3.4.6 | Operator-only, drives the federation recovery flow. |
@@ -205,6 +205,24 @@ prefer the bare form. If a specific client compatibility issue
 forces the change, the right move is to add an explicit
 "force-middle for last param" flag on Message rather than reverting
 to per-byte heuristics.
+
+## IRCv3 capabilities
+
+The server advertises a fixed allowlist via `CAP LS` and ACKs
+matching `CAP REQ` requests atomically. The accepted set is stored
+per-conn so handlers can branch on a particular capability without
+re-parsing the conn state on every line.
+
+| Capability | Wired in | Effect |
+|------------|----------|--------|
+| `message-tags` | parser already round-trips `@key=value` blocks | Tells the client we will not strip tags from messages it sends. Required for any other tag-bearing capability. |
+| `server-time` | `Conn.send` wraps every outbound message via `protocol.Message.WithTag` | Attaches `@time=<ISO8601>` to every line for the negotiating client. Per-recipient copy so a broadcast Message stays clean for non-negotiating peers. |
+| `echo-message` | `deliverOneTarget` | Bounces a sender's own PRIVMSG / NOTICE back to them so the client renders outgoing messages from the wire. Channel form sets `includeSelf=true` on the broadcast; user-target form sends an extra copy to the sender. |
+| `multi-prefix` | `sendNamesReply`, `sendWhoReply` | Renders every applicable status prefix (`!`, `@`, `+`) instead of only the highest. Driven by `Membership.MultiPrefix()`. |
+
+`CAP REQ` is atomic per the IRCv3 spec: any unknown capability in
+the request causes the whole batch to be NAKed. The `-name` removal
+prefix is supported.
 
 ## Federation handshake
 

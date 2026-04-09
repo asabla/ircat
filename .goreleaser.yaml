@@ -58,7 +58,7 @@ archives:
       - LICENSE*
       - README.md
       - docs/OPERATIONS.md
-      - docs/UPGRADE-v1.0-to-v1.1.md
+      - docs/PROTOCOL.md
       - docker/default-config.yaml
 
 checksum:
@@ -169,8 +169,9 @@ release:
   header: |
     ircat {{ .Version }}
 
-    See [`docs/UPGRADE-v1.0-to-v1.1.md`](https://github.com/asabla/ircat/blob/main/docs/UPGRADE-v1.0-to-v1.1.md)
-    if you are coming from v1.0.
+    See [`docs/PROTOCOL.md`](https://github.com/asabla/ircat/blob/main/docs/PROTOCOL.md)
+    for the wire-level reference and [`docs/PLAN.md`](https://github.com/asabla/ircat/blob/main/docs/PLAN.md)
+    for what's next.
 
     Verify the release artefacts:
 

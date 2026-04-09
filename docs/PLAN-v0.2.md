@@ -1,27 +1,27 @@
-# PLAN — ircat v1.1.0 (historical)
+# PLAN — ircat v0.2.0 (historical)
 
-> **This is the historical record for the v1.1.0 release.** Every
-> milestone below shipped to main and is tagged as `v1.1.0`. The
-> active forward plan lives in [`PLAN.md`](PLAN.md). The v1.0
-> historical record is in [`PLAN-v1.0.md`](PLAN-v1.0.md).
+> **This is the historical record for the v0.2.0 release.** Every
+> milestone below shipped to main and is tagged as `v0.2.0`. The
+> active forward plan lives in [`PLAN.md`](PLAN.md). The v0.1
+> historical record is in [`PLAN-v0.1.md`](PLAN-v0.1.md).
 
-The v1.0.0 release shipped a feature-complete IRC server: full
+The v0.1.0 release shipped a feature-complete IRC server: full
 client surface (RFC 1459/2812), persistent operators and channels,
 htmx dashboard, admin API, sandboxed Lua bots, jsonl + webhook
 event sinks, two-node federation with TLS, and a hardened
-production compose stack. See [`PLAN-v1.0.md`](PLAN-v1.0.md) for
+production compose stack. See [`PLAN-v0.1.md`](PLAN-v0.1.md) for
 the historical record of M0 → M8.
 
-v1.1.0 picks up the items that were explicitly deferred from v1.0
-plus the polish work that the v1.0 audit surfaced. The cuts are
-deliberately small — v1.1 is a hardening + polish release, not a
+v0.2.0 picks up the items that were explicitly deferred from v0.1
+plus the polish work that the v0.1 audit surfaced. The cuts are
+deliberately small — v0.2 is a hardening + polish release, not a
 new-feature release. New surfaces (IRCv3 caps beyond CAP END,
-SERVICE pseudo-server, full SQUIT recovery) live in v1.2+.
+SERVICE pseudo-server, full SQUIT recovery) live in v0.3+.
 
 ## Theme
 
-> "Make the v1.0 surface boring to operate at scale, and close the
-> obvious follow-ups from the v1.0 federation MVP."
+> "Make the v0.1 surface boring to operate at scale, and close the
+> obvious follow-ups from the v0.1 federation MVP."
 
 ## Milestones
 
@@ -39,7 +39,7 @@ Shipped:
   `Server.HandleSquit` walks the world, removes every user
   homed on the dropped peer, fans synthetic QUITs to local
   channel members, and forwards SQUIT to remaining links.
-- Subscription-aware channel routing with the v1.0 fanout
+- Subscription-aware channel routing with the v0.1 fanout
   available behind `federation.broadcast_mode`. Subscriptions
   are tracked explicitly via `Server.SubscribePeerToChannel`,
   populated by `sendBurst` (when we tell a peer about a
@@ -53,15 +53,15 @@ Shipped:
   node so >2-node meshes do not loop.
 - TS-based nick collision resolution per RFC 2813. Burst NICK
   shape carries TS as a positional param (with backward-
-  compatible v1.0 sniffing); incoming-lower wins, incoming-
+  compatible v0.1 sniffing); incoming-lower wins, incoming-
   higher gets KILL'd back to the peer. Channel JOIN burst lines
   carry channel TS and `AdoptOlderTS` lowers the local anchor.
 
-Deferred to v1.2:
+Deferred to v0.3:
 - Equal-TS nick collision (RFC says kill both — current code
   keeps the existing record on equal TS, which is conservative
   but rare at nanosecond resolution).
-- Channel TS collision *behaviour* — v1.1 propagates the TS but
+- Channel TS collision *behaviour* — v0.2 propagates the TS but
   does not yet drop op state on a peer's older claim. The next
   cycle wires AdoptOlderTS into the membership reset path.
 - Ban list (+b) propagation across links.
@@ -112,7 +112,7 @@ Shipped:
   (369k executions, 215 new corpus entries, zero failures).
   Doubles as a regression test in CI via the seed corpus.
 
-Deferred to v1.2:
+Deferred to v0.3:
 - True per-allocation memory hook (waiting on a gopher-lua
   release that exposes one).
 - Soak fuzz beyond 60s as part of the M11 nightly job.
@@ -150,7 +150,7 @@ Shipped:
   reader; reports sent / received / drops / rate; exits
   non-zero when the drop rate exceeds the configurable
   threshold (default 1%). Smoke test with `go run ./tests/soak`
-  takes < 10s on a dev box; the v1.1 reference soak (10k conns
+  takes < 10s on a dev box; the v0.2 reference soak (10k conns
   / 1k channels / 24h) is documented in `docs/OPERATIONS.md`.
 
 The required helper refactor moved `dialClient`, `expectNumeric`,
@@ -158,7 +158,7 @@ The required helper refactor moved `dialClient`, `expectNumeric`,
 `testing.TB` so the federation latency benchmark could share
 them with the integration tests. Production code is unchanged.
 
-Deferred to v1.2:
+Deferred to v0.3:
 - A 24h reference soak run on a dedicated box and a CI nightly
   job that gates merges on its result. The harness exists; the
   schedule is the missing piece.
@@ -169,7 +169,7 @@ Deferred to v1.2:
 
 ### M12 — Polish & release plumbing
 
-**Goal:** clean up everything that v1.0 left scuffed.
+**Goal:** clean up everything that v0.1 left scuffed.
 
 Shipped:
 - **Dashboard in-process TLS termination.** Wires the existing
@@ -188,8 +188,8 @@ Shipped:
   triggers. A misconfigured reload leaves the previous state
   intact and surfaces the parse error in both the response body
   and the audit log.
-- **Migration guide.** `docs/UPGRADE-v1.0-to-v1.1.md` walks
-  through every change a v1.0 operator will see, organised by
+- **Migration guide.** `docs/UPGRADE-v0.1-to-v0.2.md` walks
+  through every change a v0.1 operator will see, organised by
   what changes automatically vs what they can opt into. The
   headline message: in-place upgrade, no config changes
   required, no migrations.
@@ -208,7 +208,7 @@ Shipped:
   job runs the just-published install.sh inside an alpine
   container so a broken release script surfaces immediately.
 
-**Exit:** `git tag v1.1.0` cuts a release whose pipeline
+**Exit:** `git tag v0.2.0` cuts a release whose pipeline
 produces signed cross-platform archives, a multi-arch container
 image on ghcr.io, syft SBOMs, and a cosign keyless signature
 over checksums.txt and the container manifest. ✅
@@ -226,10 +226,10 @@ over checksums.txt and the container manifest. ✅
 - `docs/CONFIG.md` is updated in the same commit as any new
   config field.
 
-## Out of scope for v1.1
+## Out of scope for v0.2
 
 These were considered and explicitly cut. They live in a future
-v1.2+ plan.
+v0.3+ plan.
 
 - IRCv3 capabilities beyond `CAP END` (`message-tags`,
   `account-tag`, `chghost`, ...).

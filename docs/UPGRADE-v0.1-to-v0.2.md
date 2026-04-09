@@ -1,20 +1,20 @@
-# Upgrading from v1.0 to v1.1
+# Upgrading from v0.1 to v0.2
 
 This guide walks through everything that changes when you move
-an existing v1.0 ircat deployment to v1.1. The summary up
+an existing v0.1 ircat deployment to v0.2. The summary up
 front: **most installs need no config changes**. The defaults
 ship with safer values, the federation transport learns a few
-new tricks while staying wire-compatible with v1.0 peers, and
+new tricks while staying wire-compatible with v0.1 peers, and
 operators get more knobs but no removals.
 
 ## Compatibility
 
-| Surface | v1.0 → v1.1 status |
+| Surface | v0.1 → v0.2 status |
 |---|---|
 | Config schema | Backward-compatible. New fields are optional with safe defaults. |
 | Persistent SQLite databases | No migration required. Existing audit logs and operator tables read unchanged. |
 | Persistent Postgres databases | Same. No migration required. |
-| Federation wire protocol | Backward-compatible. v1.1 peers happily speak to v1.0 peers, with some new features (mode burst, TS collision, KILL routing) gracefully degrading on the v1.0 side. |
+| Federation wire protocol | Backward-compatible. v0.2 peers happily speak to v0.1 peers, with some new features (mode burst, TS collision, KILL routing) gracefully degrading on the v0.1 side. |
 | Lua bot API surface | Backward-compatible. `string.dump` was removed (it was already supposed to be), `string.format` is now bounded but accepts all reasonable inputs. |
 | Admin API endpoints | Additive. The new `POST /api/v1/config/reload` does not affect existing routes. |
 | Metrics endpoint | Unchanged. Same metric names and labels. |
@@ -38,14 +38,14 @@ the hood and why you might want to opt into a new feature.
 ### SQLite audit-log throughput (~46x faster)
 
 The default SQLite DSN was using WAL mode with the implicit
-`synchronous=FULL` setting, which fsync'd every commit. v1.1
+`synchronous=FULL` setting, which fsync'd every commit. v0.2
 switches to the upstream-recommended WAL pairing
 `synchronous=NORMAL`, which fsyncs at WAL checkpoint
 boundaries instead.
 
 Measured improvement on a typical ext4 host:
 
-| | v1.0 | v1.1 |
+| | v0.1 | v0.2 |
 |---|---|---|
 | Serial Append (1 writer) | 8.4 ms | 183 µs |
 | Parallel Append (b.RunParallel) | 9.4 ms | 73 µs |
@@ -62,10 +62,10 @@ up the new pragma on the next startup.
 
 ### Federation channel mode burst
 
-In v1.0 federation peers exchanged user state and channel
+In v0.1 federation peers exchanged user state and channel
 membership at link-up but did not exchange channel modes. A
 remote peer's view of `+t`/`+i`/`+k` could drift from the home
-server. v1.1 fixes this:
+server. v0.2 fixes this:
 
 - The link burst now carries TOPIC, the canonical mode word
   (`+ntk key`), and per-member `+o`/`+v` lines for every
@@ -74,16 +74,16 @@ server. v1.1 fixes this:
   `applyRemoteChannelMode`, so a `MODE #x +i` on node A is
   reflected in node B's channel state immediately.
 
-Both directions are wire-compatible with v1.0 peers — a v1.0
+Both directions are wire-compatible with v0.1 peers — a v0.1
 peer that receives a mode line just delivers it to local
-clients without re-applying, which is the v1.0 behaviour.
+clients without re-applying, which is the v0.1 behaviour.
 
 **No action required.** The improvement happens automatically
 on link-up.
 
 ### Federation routing: subscription instead of fanout
 
-v1.0 fanned every channel event to every federation peer. v1.1
+v0.1 fanned every channel event to every federation peer. v0.2
 switches to a per-channel subscription set: a peer receives
 events for channel X only if it has been told about X (via
 burst or via a runtime JOIN). JOINs themselves still fan out to
@@ -94,7 +94,7 @@ This is a strict efficiency improvement: peers without members
 in a channel no longer see PRIVMSGs for it. The behaviour is
 identical at the IRC layer; only the wire traffic changes.
 
-If you hit a regression and need the v1.0 behaviour back, set:
+If you hit a regression and need the v0.1 behaviour back, set:
 
 ```yaml
 federation:
@@ -102,7 +102,7 @@ federation:
 ```
 
 This knob is documented to live for one minor cycle (it will be
-removed in v1.2). Please file an issue if you actually use it.
+removed in v0.3). Please file an issue if you actually use it.
 
 ### TS-based nick collision resolution
 
@@ -112,19 +112,19 @@ position 8). When two users on different nodes claim the same
 nick, the lower TS wins per RFC 2813 §5.2: the higher-TS user
 gets killed.
 
-v1.0 peers omit the TS, in which case v1.1 falls back to the
+v0.1 peers omit the TS, in which case v0.2 falls back to the
 legacy 7-param parse and treats the missing TS as zero — the
-incoming claim wins by default, which is the v1.0 behaviour.
+incoming claim wins by default, which is the v0.1 behaviour.
 
 **No action required.** The improvement happens automatically
-on the v1.1 side of any link.
+on the v0.2 side of any link.
 
 ### Lua sandbox tightening
 
 Three changes, all on the safer side:
 
 1. `string.dump` is now stripped from the sandbox. It was
-   already supposed to be unreachable but the v1.0 audit found
+   already supposed to be unreachable but the v0.1 audit found
    it was still exposed by gopher-lua's `OpenString`. Bots that
    tried to call it (which would have been a bug anyway) now
    get a "nil value" error.
@@ -174,8 +174,8 @@ effect.
 
 ### Dashboard in-process TLS termination
 
-v1.0's recommended dashboard deployment fronted the listener
-with a reverse proxy (caddy/nginx/cloudflare). v1.1 also lets
+v0.1's recommended dashboard deployment fronted the listener
+with a reverse proxy (caddy/nginx/cloudflare). v0.2 also lets
 ircat terminate TLS in-process via the existing `dashboard.tls`
 config block:
 
@@ -195,8 +195,8 @@ false.
 
 ### Federation TLS listener
 
-v1.0 supported outbound federation over TLS via `links[].tls`
-plus optional fingerprint pinning. v1.1 adds the inbound
+v0.1 supported outbound federation over TLS via `links[].tls`
+plus optional fingerprint pinning. v0.2 adds the inbound
 counterpart via two new `federation` config fields:
 
 ```yaml
@@ -217,18 +217,18 @@ empty.
 
 ## Removed
 
-Nothing. v1.0 → v1.1 has no removals.
+Nothing. v0.1 → v0.2 has no removals.
 
 ## Deprecated
 
 `federation.broadcast_mode: fanout` is documented to live for
-one minor cycle (until v1.2). The v1.1 default is
+one minor cycle (until v0.3). The v0.2 default is
 `subscription`, which is strictly better in every measured
 case.
 
 ## Need help
 
 - Check `docs/OPERATIONS.md` for the day-2 surface, including the
-  measured envelope numbers from the v1.1 benchmark suites.
+  measured envelope numbers from the v0.2 benchmark suites.
 - Check `docs/SECURITY.md` for the Lua sandbox audit notes.
-- Open an issue if a v1.1 default surprises you in a bad way.
+- Open an issue if a v0.2 default surprises you in a bad way.

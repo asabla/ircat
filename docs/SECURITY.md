@@ -60,7 +60,7 @@ globals individually:
 The sandbox lives on top of [`gopher-lua`](https://github.com/yuin/gopher-lua)
 **v1.1.2**, which is the version every guarantee in this
 document was validated against. The pin is in `go.mod`. Two
-follow-ups documented in the v1.2 plan are still
+follow-ups documented in the v0.3 plan are still
 **upstream-blocked** at this version:
 
 - **Per-allocation memory hook.** gopher-lua does not expose a
@@ -103,7 +103,7 @@ regression net.
    strings or userdata outside the registry. The compose stack
    pins ircat to 1 GiB (`deploy.resources.limits.memory`) so a
    pathological string-only bot kills the container instead of
-   the host. A v1.2 follow-up tracks moving to a real
+   the host. A post-v1.0 follow-up tracks moving to a real
    per-allocation hook once gopher-lua adds one.
 3. **`string.format` width and arg bounds.** The default
    gopher-lua `string.format` delegates to `fmt.Sprintf` which

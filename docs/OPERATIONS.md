@@ -114,7 +114,7 @@ SQUIT needed.
 
 ## Measured envelope
 
-Numbers below come from the v1.1 benchmark suites and were
+Numbers below come from the v0.2 benchmark suites and were
 collected on an Intel Xeon E-2286M (8C/16T, 2.4 GHz) under Linux
 6.8 with `-race` disabled. Re-run on your own hardware before
 relying on absolute values.
@@ -157,10 +157,10 @@ Postgres bench only runs when `IRCAT_TEST_POSTGRES_DSN` is set).
 
 | Backend | Serial Append | Parallel Append | Notes |
 |---|---|---|---|
-| SQLite (WAL + synchronous=NORMAL) | 183 µs | 73 µs | default in v1.1 |
+| SQLite (WAL + synchronous=NORMAL) | 183 µs | 73 µs | default in v0.2 |
 | SQLite (WAL + synchronous=FULL) | 8.4 ms | 9.4 ms | per-commit fsync |
 
-The default v1.1 SQLite DSN uses `synchronous=NORMAL`, which is
+The default v0.2 SQLite DSN uses `synchronous=NORMAL`, which is
 the standard SQLite production pairing for WAL mode. It fsyncs
 the WAL on checkpoint boundaries rather than every commit,
 trading a tiny window of "lost writes on power loss" between
@@ -221,7 +221,7 @@ on every run, including failures.
 
 #### Reference soak (manual, real hardware)
 
-The v1.1 plan called for a 24-hour reference soak at 10k
+The v0.2 plan called for a 24-hour reference soak at 10k
 concurrent connections, 1k channels, 24h on the reference
 Hetzner box. It's an operator drill rather than a CI job — the
 runner would need at least 4 CPU and 8 GB RAM dedicated to
@@ -263,7 +263,7 @@ non-zero when the drop rate exceeds `-max-drop-rate` (default
 `internal/storage/postgres/events_bench_test.go` hosts the
 Postgres equivalent of the SQLite audit-write benchmark. It
 Skips cleanly when `IRCAT_TEST_POSTGRES_DSN` is unset, which is
-why the v1.1 measured envelope only quotes SQLite. Real
+why the v0.2 measured envelope only quotes SQLite. Real
 numbers need an actual Postgres on tuned hardware:
 
 ```sh
