@@ -42,6 +42,22 @@ func (c *Conn) tryCompleteRegistration() {
 		return
 	}
 
+	// RFC 2812 §3.1.1 server password gate. When the operator
+	// has set Server.ClientPassword in the config, every client
+	// connection must have sent a matching PASS before reaching
+	// this point. We compare verbatim — there is no per-user
+	// account system at this layer, just a single network-wide
+	// gate. Empty config means "no password required".
+	if want := c.server.cfg.Server.ClientPassword; want != "" {
+		if c.pending.password != want {
+			c.send(protocol.NumericReply(c.server.cfg.Server.Name, c.starOrNick(),
+				protocol.ERR_PASSWDMISMATCH, "Password incorrect"))
+			c.sendError("Bad password")
+			c.cancel(errors.New("bad password"))
+			return
+		}
+	}
+
 	user := &state.User{
 		Nick:       c.pending.nick,
 		User:       c.pending.user,

@@ -46,6 +46,14 @@ type ServerConfig struct {
 	Admin       AdminInfo    `json:"admin"`
 	Listeners   []Listener   `json:"listeners"`
 	Limits      LimitsConfig `json:"limits"`
+
+	// ClientPassword is the optional plaintext password the
+	// server requires every client connection to send via PASS
+	// before NICK/USER. RFC 2812 §3.1.1. Empty disables the
+	// check entirely (the historical default for ircat). The
+	// value is matched verbatim — there is no per-user account
+	// system at this layer, just a single network-wide gate.
+	ClientPassword string `json:"client_password"`
 }
 
 // AdminInfo is the contact block advertised via /ADMIN.
