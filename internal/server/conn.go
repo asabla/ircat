@@ -60,6 +60,13 @@ type Conn struct {
 	// read goroutine.
 	lastActivity atomic.Int64
 
+	// lastMessageAt is the unix-nanos timestamp of the most recent
+	// PRIVMSG / NOTICE this user sent. Used by WHOIS 317 to report
+	// the RFC 2812 §3.6.2 idle time. Distinct from lastActivity
+	// because PING/PONG/WHO and other administrative traffic does
+	// not count as "speaking activity" for the idle timer.
+	lastMessageAt atomic.Int64
+
 	// pending tracks the registration state machine.
 	pending pending
 

@@ -244,15 +244,22 @@ func (c *Conn) sendWhois(name string) {
 		}
 		c.send(protocol.NumericReply(srv, nick, protocol.RPL_WHOISCHANNELS, u.Nick, b.String()))
 	}
-	// Idle time: placeholder until we track per-conn last-message
-	// timestamps in M2 flood control. Reports the time since
-	// connect for local users; remote users always report 0
-	// because we do not see their per-message activity.
+	// Idle time per RFC 2812 §3.6.2: seconds since the user's
+	// last PRIVMSG / NOTICE. We pull lastMessageAt off the
+	// owning Conn (it's atomic, no Conn lock needed). Remote
+	// users always report 0 because we have no visibility into
+	// their per-message activity. If the user has not yet sent
+	// any speaking traffic since connect, fall back to 0 — the
+	// RFC does not say to report time-since-connect there.
 	idle := 0
 	if !u.IsRemote() {
-		idle = int(time.Since(u.ConnectAt).Seconds())
-		if idle < 0 {
-			idle = 0
+		if owner := c.server.connFor(u.ID); owner != nil {
+			if last := owner.lastMessageAt.Load(); last > 0 {
+				since := int(time.Since(time.Unix(0, last)).Seconds())
+				if since > 0 {
+					idle = since
+				}
+			}
 		}
 	}
 	c.send(protocol.NumericReply(srv, nick, protocol.RPL_WHOISIDLE,

@@ -76,6 +76,10 @@ func (c *Conn) deliverMessage(m *protocol.Message, command string, emitErrors bo
 	for _, target := range strings.Split(m.Params[0], ",") {
 		c.deliverOneTarget(target, text, command, emitErrors)
 	}
+	// Stamp the speaking-activity timer used by WHOIS 317. We
+	// stamp once per command, after the bucket take, so a
+	// rate-limited drop does not move the clock forward.
+	c.lastMessageAt.Store(c.server.now().UnixNano())
 }
 
 func (c *Conn) deliverOneTarget(target, text, command string, emitErrors bool) {
