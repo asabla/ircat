@@ -120,6 +120,17 @@ type Server struct {
 	// nick used to point at. Capacity is fixed at construction.
 	whowas *state.Whowas
 
+	// reloader is the optional config reloader the REHASH command
+	// drives. Wired in by the host (cmd/ircat) so the server does
+	// not import the cmd package.
+	reloader Reloader
+
+	// shutdown is the optional process-exit callback the DIE and
+	// RESTART operator commands fire. Wired in by the host so the
+	// server can ask its parent to terminate without importing
+	// process-management glue.
+	shutdown func(reason string)
+
 	// shuttingDown is set to 1 once Run begins its drain. New accepts
 	// observe it and refuse cleanly instead of racing the close.
 	shuttingDown atomic.Bool
@@ -163,6 +174,29 @@ func WithStore(store storage.Store) Option {
 // can observe them.
 func WithEventBus(bus EventPublisher) Option {
 	return func(s *Server) { s.eventBus = bus }
+}
+
+// Reloader is the small surface the operator REHASH command uses
+// to trigger a SIGHUP-equivalent config reload. Implemented by
+// *cmd/ircat.reloadDeps. Optional — when nil, REHASH replies with
+// 481 (no operator) or a benign no-op message.
+type Reloader interface {
+	Reload(ctx context.Context) error
+}
+
+// WithReloader wires a config reloader so REHASH can apply config
+// changes without restarting the process.
+func WithReloader(r Reloader) Option {
+	return func(s *Server) { s.reloader = r }
+}
+
+// WithShutdown installs a callback the DIE/RESTART operator commands
+// will fire to ask the host process to exit. The reason string is
+// surfaced in the shutdown log line. The callback should be
+// non-blocking and return immediately; the actual shutdown happens
+// asynchronously when the host's run loop notices.
+func WithShutdown(fn func(reason string)) Option {
+	return func(s *Server) { s.shutdown = fn }
 }
 
 // New constructs a Server. It does not bind any sockets; that happens

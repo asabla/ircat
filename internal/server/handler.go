@@ -71,6 +71,12 @@ func (c *Conn) dispatch(m *protocol.Message) {
 		c.handleWallops(m)
 	case "STATS":
 		c.handleStats(m)
+	case "REHASH":
+		c.handleRehash(m)
+	case "DIE":
+		c.handleDie(m)
+	case "RESTART":
+		c.handleRestart(m)
 	case "USERHOST":
 		c.handleUserhost(m)
 	case "ISON":

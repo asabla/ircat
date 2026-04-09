@@ -95,9 +95,19 @@ func runServer(args []string) error {
 	defer eventBus.Close()
 
 	world := state.NewWorld()
+	// shutdownReason is captured by the DIE/RESTART hook below so the
+	// final shutdown log line records who asked the daemon to exit.
+	var shutdownReason string
+	var shutdownCancel context.CancelCauseFunc
 	srv := server.New(cfg, world, logger,
 		server.WithStore(store),
 		server.WithEventBus(eventBus),
+		server.WithShutdown(func(reason string) {
+			shutdownReason = reason
+			if shutdownCancel != nil {
+				shutdownCancel(errors.New(reason))
+			}
+		}),
 	)
 
 	sup := bots.New(bots.Options{
@@ -125,6 +135,9 @@ func runServer(args []string) error {
 		levelVar:   levelVar,
 		logger:     logger.With("component", "reload"),
 	}
+	// Wire the operator REHASH command into the same reloader the
+	// SIGHUP loop and the admin API use.
+	server.WithReloader(reloader)(srv)
 
 	apiSrv := api.New(api.Options{
 		Store:      store,
@@ -197,6 +210,9 @@ func runServer(args []string) error {
 	// gets the shared cancel.
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
+	// Expose the cancel func to the operator DIE/RESTART hook so an
+	// in-band shutdown request can break the run loop.
+	shutdownCancel = cancel
 
 	errs := make(chan error, 2)
 	go func() {
@@ -221,7 +237,11 @@ func runServer(args []string) error {
 		}
 	}
 
-	logger.Info("ircat shutting down", "reason", context.Cause(ctx))
+	if shutdownReason != "" {
+		logger.Info("ircat shutting down", "reason", shutdownReason)
+	} else {
+		logger.Info("ircat shutting down", "reason", context.Cause(ctx))
+	}
 	logger.Info("ircat stopped")
 	return nil
 }
