@@ -160,6 +160,18 @@ func (c *Conn) applyChannelModes(ch *state.Channel, params []string) (applied, [
 				flushDir(dir)
 				dirOut = append(dirOut, mc)
 			}
+		case 'r':
+			// +r server reop is only meaningful on safe (!) channels
+			// per RFC 2811 §4.2.5. Reject on other channel types
+			// rather than silently accepting a no-op.
+			if !isSafeChannel(ch.Name()) {
+				badChars = append(badChars, mc)
+				continue
+			}
+			if ch.SetBoolMode(mc, dir == '+') {
+				flushDir(dir)
+				dirOut = append(dirOut, mc)
+			}
 		case 'k':
 			if dir == '+' {
 				key, ok := popArg()

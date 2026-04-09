@@ -91,6 +91,7 @@ type channelModes struct {
 	secret      bool // +s
 	topicLocked bool // +t
 	anonymous   bool // +a (RFC 2811 §4.2.1) — rewrites every prefix to anonymous!anonymous@anonymous.
+	serverReop  bool // +r (RFC 2811 §4.2.5) — safe-channel server reop. Only meaningful on '!' channels: when set, the channel survives going empty and re-joiners are auto-opped.
 }
 
 // newChannel constructs an empty channel with the given display name.
@@ -344,6 +345,8 @@ func (c *Channel) boolModePtr(mode byte) *bool {
 		return &c.modes.topicLocked
 	case 'a':
 		return &c.modes.anonymous
+	case 'r':
+		return &c.modes.serverReop
 	}
 	return nil
 }
@@ -356,6 +359,14 @@ func (c *Channel) Anonymous() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.modes.anonymous
+}
+
+// ServerReop reports whether the channel has +r set (RFC 2811
+// §4.2.5). Only meaningful on '!' safe channels.
+func (c *Channel) ServerReop() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.modes.serverReop
 }
 
 // SetKey installs (or clears) the channel key. Returns true if the
@@ -709,6 +720,9 @@ func (c *Channel) ModeString() (modes string, params []string) {
 	if c.modes.anonymous {
 		out = append(out, 'a')
 	}
+	if c.modes.serverReop {
+		out = append(out, 'r')
+	}
 	if c.key != "" {
 		out = append(out, 'k')
 	}
@@ -759,6 +773,8 @@ func (c *Channel) RestoreState(topic, topicSetBy string, topicSetAt time.Time, m
 			c.modes.topicLocked = true
 		case 'a':
 			c.modes.anonymous = true
+		case 'r':
+			c.modes.serverReop = true
 		}
 	}
 	c.bans = make(map[string]time.Time, len(bans))

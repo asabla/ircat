@@ -217,13 +217,29 @@ func (w *World) EnsureChannel(name string) (*Channel, bool) {
 // was newly added; the returned Membership is the user's membership
 // flags after the call (the first joiner is automatically opped).
 //
+// On a safe (!) channel with +r server-reop set, a resurrection
+// join (channel exists but is empty because everyone parted) also
+// grants ops to the joiner per RFC 2811 §4.2.5. This is the
+// resurrection counterpart to the founder grant on initial create.
+//
 // Returns ErrNoSuchUser if id is unknown.
 func (w *World) JoinChannel(id UserID, channelName string) (*Channel, Membership, bool, error) {
 	if w.FindByID(id) == nil {
 		return nil, 0, false, ErrNoSuchUser
 	}
 	ch, created := w.EnsureChannel(channelName)
+	resurrected := !created &&
+		ch.MemberCount() == 0 &&
+		len(channelName) > 0 && channelName[0] == '!' &&
+		ch.ServerReop()
 	mem, added := ch.addMember(id, created)
+	if added && resurrected && !mem.IsOp() {
+		// Resurrection joiner is a regular MemberOp, not the
+		// channel creator (the original founder retains that).
+		// addMember did not auto-op them because the channel
+		// already existed, so we OR in MemberOp here.
+		mem, _ = ch.AddMembership(id, MemberOp)
+	}
 	return ch, mem, added, nil
 }
 
@@ -241,6 +257,14 @@ func (w *World) PartChannel(id UserID, name string) (*Channel, bool, error) {
 		return ch, false, ErrNoSuchUser
 	}
 	if ch.MemberCount() == 0 {
+		// Safe channels with +r set survive going empty per
+		// RFC 2811 §4.2.5: the next user to JOIN will be auto-
+		// opped by the server-reop mechanism. Other channels
+		// (and safe channels without +r) are dropped on empty
+		// to free the name.
+		if len(name) > 0 && name[0] == '!' && ch.ServerReop() {
+			return ch, false, nil
+		}
 		w.dropChannel(name)
 		return ch, true, nil
 	}
