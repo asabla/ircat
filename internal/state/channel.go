@@ -40,8 +40,8 @@ func (m Membership) IsCreator() bool { return m&MemberCreator != 0 }
 
 // Prefix returns the highest visible status prefix character per
 // RFC 2811 §4.3.5 / RFC 2812 §3.5: "!" for safe-channel creators,
-// "@" for ops, "+" for voiced, "" otherwise. Servers that advertise
-// multi-prefix in CAP can render multiple, but ircat does not yet.
+// "@" for ops, "+" for voiced, "" otherwise. Used for the default
+// (non-IRCv3-multi-prefix) NAMES/WHO rendering.
 func (m Membership) Prefix() string {
 	switch {
 	case m.IsCreator():
@@ -52,6 +52,32 @@ func (m Membership) Prefix() string {
 		return "+"
 	}
 	return ""
+}
+
+// MultiPrefix returns every status prefix that applies to m, in
+// descending order of authority: "!" before "@" before "+". Used
+// when the requester has negotiated the IRCv3 multi-prefix
+// capability so a creator who is also voiced shows up as "!+alice"
+// rather than just "!alice".
+//
+// Note that MemberCreator implies operator privileges per
+// RFC 2811 §4.3.5 — IsOp() returns true for a creator — so we
+// emit "@" for an explicit MemberOp grant rather than re-deriving
+// it from IsOp(). The "!" prefix already captures the implied op
+// status; rendering both would be redundant for the common case
+// of a creator who has not also been explicitly opped.
+func (m Membership) MultiPrefix() string {
+	var b []byte
+	if m.IsCreator() {
+		b = append(b, '!')
+	}
+	if m&MemberOp != 0 {
+		b = append(b, '@')
+	}
+	if m.IsVoice() {
+		b = append(b, '+')
+	}
+	return string(b)
 }
 
 // Channel is the in-memory record for one IRC channel.

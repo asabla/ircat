@@ -177,10 +177,15 @@ func (c *Conn) sendWhoReply(channel string, u *state.User, mem state.Membership)
 	if strings.ContainsRune(u.Modes, 'o') {
 		flags += "*"
 	}
-	if mem.IsOp() {
-		flags += "@"
-	} else if mem.IsVoice() {
-		flags += "+"
+	// Channel status prefixes. With multi-prefix negotiated, all
+	// applicable prefixes are appended in descending authority
+	// order (creator → op → voice). Without it, only the highest
+	// prefix is rendered, matching the legacy single-prefix WHO
+	// format every pre-IRCv3 client expects.
+	if c.capsAccepted["multi-prefix"] {
+		flags += mem.MultiPrefix()
+	} else {
+		flags += mem.Prefix()
 	}
 	c.send(protocol.NumericReply(srv, nick, protocol.RPL_WHOREPLY,
 		channel,

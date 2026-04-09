@@ -279,6 +279,7 @@ func (c *Conn) sendNamesReply(ch *state.Channel) {
 		line.WriteString("anonymous")
 		flush()
 	} else {
+		multiPrefix := c.capsAccepted["multi-prefix"]
 		for id, mem := range members {
 			u := c.server.world.FindByID(id)
 			if u == nil {
@@ -291,7 +292,13 @@ func (c *Conn) sendNamesReply(ch *state.Channel) {
 			if u.Service {
 				continue
 			}
-			token := mem.Prefix() + u.Nick
+			var prefix string
+			if multiPrefix {
+				prefix = mem.MultiPrefix()
+			} else {
+				prefix = mem.Prefix()
+			}
+			token := prefix + u.Nick
 			if line.Len()+1+len(token) > lineSoftCap {
 				flush()
 			}

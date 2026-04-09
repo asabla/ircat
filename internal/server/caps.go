@@ -21,6 +21,11 @@ var supportedCapList = []string{
 	// messages from the wire instead of optimistically.
 	// Wired in handler_message deliverOneTarget.
 	"echo-message",
+	// multi-prefix renders every applicable status prefix
+	// (creator/op/voice) in NAMES and WHO replies, instead
+	// of only the highest. Wired in sendNamesReply and
+	// sendWhoReply.
+	"multi-prefix",
 }
 
 // supportedCaps returns the space-separated cap list as it appears
