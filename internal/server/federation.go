@@ -198,6 +198,8 @@ func (s *Server) HandleSquit(peerName, reason string) {
 		// in two shared channels does not receive the message
 		// twice.
 		s.deliverPerUserChannels(quitMsg)
+		uCopy := u
+		s.recordWhowas(&uCopy)
 		// Drop the user from the world. RemoveUser walks the
 		// channel set and unhooks them.
 		s.world.RemoveUser(u.ID)

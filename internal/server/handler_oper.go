@@ -171,6 +171,7 @@ func (c *Conn) handleKill(m *protocol.Message) {
 			Params:  []string{"Killed (" + c.user.Nick + " (" + comment + "))"},
 		}
 		c.server.deliverPerUserChannels(quitMsg)
+		c.server.recordWhowas(target)
 		c.server.world.RemoveUser(target.ID)
 		return
 	}

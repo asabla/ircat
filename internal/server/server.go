@@ -114,6 +114,12 @@ type Server struct {
 	motdMu sync.RWMutex
 	motd   []string
 
+	// whowas is the historical-nick ring buffer driven by RFC 2812
+	// §3.6.3 WHOWAS. Entries are appended on disconnect, KILL, and
+	// nick change so a later WHOWAS lookup can recover what the
+	// nick used to point at. Capacity is fixed at construction.
+	whowas *state.Whowas
+
 	// shuttingDown is set to 1 once Run begins its drain. New accepts
 	// observe it and refuse cleanly instead of racing the close.
 	shuttingDown atomic.Bool
@@ -175,6 +181,7 @@ func New(cfg *config.Config, world *state.World, logger *slog.Logger, opts ...Op
 	}
 	s.createdAt = s.now()
 	s.motd = loadMOTD(cfg.Server.MOTDFile, logger)
+	s.whowas = state.NewWhowas(cfg.Server.Limits.WhowasHistory, world.CaseMapping())
 	return s
 }
 

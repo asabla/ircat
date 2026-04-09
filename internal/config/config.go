@@ -84,6 +84,11 @@ type LimitsConfig struct {
 	MessageBurst            int `json:"message_burst"`
 	MessageRefillPerSecond  int `json:"message_refill_per_second"`
 	MessageViolationsToKick int `json:"message_violations_to_kick"`
+
+	// WhowasHistory caps the number of historical nick entries the
+	// server retains for WHOWAS lookups (RFC 2812 §3.6.3). Set to 0
+	// to use the package default of 1024.
+	WhowasHistory int `json:"whowas_history"`
 }
 
 // StorageConfig selects between SQLite and Postgres backends.
@@ -373,6 +378,9 @@ func (c *Config) applyDefaults() {
 	}
 	if l.MessageViolationsToKick == 0 {
 		l.MessageViolationsToKick = 5
+	}
+	if l.WhowasHistory == 0 {
+		l.WhowasHistory = 1024
 	}
 
 	if c.Storage.Driver == "" {

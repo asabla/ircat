@@ -49,6 +49,8 @@ func (c *Conn) dispatch(m *protocol.Message) {
 		c.handleWho(m)
 	case "WHOIS":
 		c.handleWhois(m)
+	case "WHOWAS":
+		c.handleWhowas(m)
 	case "MODE":
 		c.handleMode(m)
 	case "VERSION":
@@ -143,6 +145,9 @@ func (c *Conn) handleNick(m *protocol.Message) {
 	// announcement to whatever they had on file.
 	if c.user != nil && c.user.Registered {
 		oldMask := c.user.Hostmask()
+		// Snapshot the pre-rename identity for WHOWAS so a later
+		// lookup of the old nick still resolves to who they were.
+		oldSnapshot := *c.user
 		if err := c.server.world.RenameUser(c.user.ID, requested); err != nil {
 			if errors.Is(err, state.ErrNickInUse) {
 				c.send(protocol.NumericReply(c.server.cfg.Server.Name, c.user.Nick,
@@ -152,6 +157,7 @@ func (c *Conn) handleNick(m *protocol.Message) {
 			c.logger.Warn("rename failed", "error", err)
 			return
 		}
+		c.server.recordWhowas(&oldSnapshot)
 		nickMsg := &protocol.Message{
 			Prefix:  oldMask,
 			Command: "NICK",

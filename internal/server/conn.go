@@ -184,6 +184,7 @@ func (c *Conn) close() {
 			reason = "Client closed connection"
 		}
 		c.broadcastQuit(reason)
+		c.server.recordWhowas(c.user)
 		c.server.unregisterConn(c.user.ID)
 		c.server.world.RemoveUser(c.user.ID)
 		c.user = nil
