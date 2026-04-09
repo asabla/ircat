@@ -28,6 +28,24 @@ func (c *Config) Validate() error {
 		return invalidf("server.limits.ping_timeout_seconds (%d) must be greater than ping_interval_seconds (%d)",
 			l.PingTimeoutSeconds, l.PingIntervalSeconds)
 	}
+	if c.Server.Limits.WhowasHistory < 0 {
+		return invalidf("server.limits.whowas_history: must be non-negative, got %d",
+			c.Server.Limits.WhowasHistory)
+	}
+	// ClientPassword is intentionally compared verbatim with no
+	// hashing — it is a single network-wide gate, not a per-user
+	// secret. Reject obvious mistakes (leading/trailing spaces,
+	// the literal placeholder strings env-substitution might
+	// leave behind) so a misconfigured deployment fails on boot
+	// rather than silently letting everyone in.
+	if p := c.Server.ClientPassword; p != "" {
+		if strings.TrimSpace(p) != p {
+			return invalidf("server.client_password: leading or trailing whitespace not allowed")
+		}
+		if p == "${IRCAT_CLIENT_PASSWORD}" || p == "$IRCAT_CLIENT_PASSWORD" {
+			return invalidf("server.client_password: env substitution placeholder %q was not expanded", p)
+		}
+	}
 
 	if len(c.Server.Listeners) == 0 {
 		return invalidf("server.listeners: at least one listener is required")

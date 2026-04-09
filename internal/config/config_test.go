@@ -177,6 +177,38 @@ func TestValidate_PostgresNeedsDSN(t *testing.T) {
 	}
 }
 
+func TestValidate_RejectsNegativeWhowasHistory(t *testing.T) {
+	cfg := minimalLoaded(t)
+	cfg.Server.Limits.WhowasHistory = -1
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "whowas_history") {
+		t.Fatalf("expected whowas_history error, got %v", err)
+	}
+}
+
+func TestValidate_RejectsClientPasswordPlaceholder(t *testing.T) {
+	cfg := minimalLoaded(t)
+	cfg.Server.ClientPassword = "${IRCAT_CLIENT_PASSWORD}"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "client_password") {
+		t.Fatalf("expected client_password placeholder error, got %v", err)
+	}
+}
+
+func TestValidate_RejectsClientPasswordWithWhitespace(t *testing.T) {
+	cfg := minimalLoaded(t)
+	cfg.Server.ClientPassword = "  hunter2  "
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "client_password") {
+		t.Fatalf("expected client_password whitespace error, got %v", err)
+	}
+}
+
+func TestValidate_AcceptsNormalClientPassword(t *testing.T) {
+	cfg := minimalLoaded(t)
+	cfg.Server.ClientPassword = "hunter2"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
 func TestResolveEnv_PullsSecrets(t *testing.T) {
 	cfg := minimalLoaded(t)
 	cfg.Storage.Driver = "postgres"
