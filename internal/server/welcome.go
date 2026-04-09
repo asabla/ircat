@@ -91,8 +91,14 @@ func (c *Conn) sendWelcomeBurst() {
 		srv, "ircat-0.0.1", "iow", "biklmnopstv"))
 
 	for _, line := range c.server.buildISupport() {
-		c.send(protocol.NumericReply(srv, nick, protocol.RPL_ISUPPORT,
-			append(line, "are supported by this server")...))
+		// Build a fresh slice rather than appending in-place: the
+		// sub-slices returned by buildISupport share a backing
+		// array, so an append-with-room would overwrite the
+		// first byte of the next line.
+		params := make([]string, 0, len(line)+1)
+		params = append(params, line...)
+		params = append(params, "are supported by this server")
+		c.send(protocol.NumericReply(srv, nick, protocol.RPL_ISUPPORT, params...))
 	}
 
 	c.sendMOTD()

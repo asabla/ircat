@@ -155,7 +155,7 @@ func (c *Conn) applyChannelModes(ch *state.Channel, params []string) (applied, [
 			continue
 		}
 		switch mc {
-		case 'i', 'm', 'n', 'p', 's', 't':
+		case 'i', 'm', 'n', 'p', 's', 't', 'a':
 			if ch.SetBoolMode(mc, dir == '+') {
 				flushDir(dir)
 				dirOut = append(dirOut, mc)

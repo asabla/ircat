@@ -299,7 +299,19 @@ func (s *Server) botFor(id state.UserID) BotDeliverer {
 // matching member is skipped (used by PRIVMSG so the sender doesn't
 // echo to themselves). If includeSelf is true, the except parameter
 // is ignored.
+//
+// On +a (anonymous) channels per RFC 2811 §4.2.1, the prefix of
+// every outbound message is rewritten to the canonical
+// anonymous!anonymous@anonymous. mask so members cannot identify
+// each other. The rewrite happens on a copy so the same Message
+// can be reused on non-anonymous fan-out paths without leaking
+// the rewrite.
 func (s *Server) broadcastToChannel(ch *state.Channel, msg *protocol.Message, except state.UserID, includeSelf bool) {
+	if ch.Anonymous() {
+		anon := *msg
+		anon.Prefix = anonymousMask
+		msg = &anon
+	}
 	for id := range ch.MemberIDs() {
 		if !includeSelf && id == except {
 			continue
@@ -313,6 +325,10 @@ func (s *Server) broadcastToChannel(ch *state.Channel, msg *protocol.Message, ex
 		}
 	}
 }
+
+// anonymousMask is the canonical hostmask used as the prefix on
+// every message originating from a +a channel (RFC 2811 §4.2.1).
+const anonymousMask = "anonymous!anonymous@anonymous."
 
 // Run binds every configured listener and serves until ctx is
 // cancelled. On shutdown it stops accepting, closes all listeners,

@@ -125,12 +125,21 @@ func (c *Conn) handleWho(m *protocol.Message) {
 				c.send(protocol.NumericReply(srv, nick, protocol.RPL_ENDOFWHO, mask, "End of WHO list"))
 				return
 			}
-			for id, mem := range ch.MemberIDs() {
-				u := c.server.world.FindByID(id)
-				if u == nil {
-					continue
+			// On +a (anonymous) channels WHO returns a single
+			// synthetic "anonymous" row rather than the real
+			// membership list per RFC 2811 §4.2.1.
+			if ch.Anonymous() {
+				c.send(protocol.NumericReply(srv, nick, protocol.RPL_WHOREPLY,
+					ch.Name(), "anonymous", "anonymous.", srv,
+					"anonymous", "H", "0 anonymous"))
+			} else {
+				for id, mem := range ch.MemberIDs() {
+					u := c.server.world.FindByID(id)
+					if u == nil {
+						continue
+					}
+					c.sendWhoReply(ch.Name(), u, mem)
 				}
-				c.sendWhoReply(ch.Name(), u, mem)
 			}
 		}
 		c.send(protocol.NumericReply(srv, nick, protocol.RPL_ENDOFWHO, mask, "End of WHO list"))

@@ -248,21 +248,30 @@ func (c *Conn) sendNamesReply(ch *state.Channel) {
 		line.Reset()
 	}
 
-	for id, mem := range members {
-		u := c.server.world.FindByID(id)
-		if u == nil {
-			continue
+	// On +a (anonymous) channels NAMES returns a single
+	// "anonymous" entry rather than the real member list per
+	// RFC 2811 §4.2.1: members must not be able to identify
+	// each other via NAMES.
+	if ch.Anonymous() {
+		line.WriteString("anonymous")
+		flush()
+	} else {
+		for id, mem := range members {
+			u := c.server.world.FindByID(id)
+			if u == nil {
+				continue
+			}
+			token := mem.Prefix() + u.Nick
+			if line.Len()+1+len(token) > lineSoftCap {
+				flush()
+			}
+			if line.Len() > 0 {
+				line.WriteByte(' ')
+			}
+			line.WriteString(token)
 		}
-		token := mem.Prefix() + u.Nick
-		if line.Len()+1+len(token) > lineSoftCap {
-			flush()
-		}
-		if line.Len() > 0 {
-			line.WriteByte(' ')
-		}
-		line.WriteString(token)
+		flush()
 	}
-	flush()
 
 	c.send(protocol.NumericReply(srv, nick, protocol.RPL_ENDOFNAMES, ch.Name(), "End of NAMES list"))
 }

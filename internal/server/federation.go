@@ -373,6 +373,18 @@ func (s *Server) deliverPerUserChannels(msg *protocol.Message) {
 	}
 	seen := make(map[state.UserID]bool)
 	for _, ch := range s.world.UserChannels(u.ID) {
+		// On +a (anonymous) channels we rewrite the prefix to
+		// the canonical anonymous mask before fanning out so a
+		// QUIT or NICK does not leak the real nick to peers in
+		// the channel. The rewrite is per-channel because the
+		// same user may be in mixed +a and non-+a channels in
+		// the same broadcast.
+		out := msg
+		if ch.Anonymous() {
+			anon := *msg
+			anon.Prefix = anonymousMask
+			out = &anon
+		}
 		for id := range ch.MemberIDs() {
 			if seen[id] || id == u.ID {
 				continue
@@ -383,7 +395,7 @@ func (s *Server) deliverPerUserChannels(msg *protocol.Message) {
 			}
 			seen[id] = true
 			if c := s.connFor(id); c != nil {
-				c.send(msg)
+				c.send(out)
 			}
 		}
 	}
