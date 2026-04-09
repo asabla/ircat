@@ -520,7 +520,7 @@ func TestFederation_NickCollisionLowerTSWins(t *testing.T) {
 	// Force the link into Active state by completing the
 	// handshake. We are the test driver so we send the peer
 	// PASS+SERVER lines into connTest.
-	if _, err := connTest.Write([]byte("PASS shared 0210 IRC| ircat-test\r\nSERVER node-b 1 1 :node-b\r\n")); err != nil {
+	if _, err := connTest.Write([]byte("PASS shared 0210 IRC| ircat-test\r\nSERVER node-b 1 1 :node-b\r\nSVINFO 6 6 0 :1700000000\r\n")); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
@@ -613,7 +613,7 @@ func TestFederation_NickCollisionHigherTSDropped(t *testing.T) {
 		_ = connTest.Close()
 		<-done
 	}()
-	if _, err := connTest.Write([]byte("PASS shared 0210 IRC| ircat-test\r\nSERVER node-b 1 1 :node-b\r\n")); err != nil {
+	if _, err := connTest.Write([]byte("PASS shared 0210 IRC| ircat-test\r\nSERVER node-b 1 1 :node-b\r\nSVINFO 6 6 0 :1700000000\r\n")); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
@@ -936,7 +936,7 @@ func TestFederation_NickCollisionEqualTSKillsBoth(t *testing.T) {
 		_ = connTest.Close()
 		<-done
 	}()
-	if _, err := connTest.Write([]byte("PASS shared 0210 IRC| ircat-test\r\nSERVER node-b 1 1 :node-b\r\n")); err != nil {
+	if _, err := connTest.Write([]byte("PASS shared 0210 IRC| ircat-test\r\nSERVER node-b 1 1 :node-b\r\nSVINFO 6 6 0 :1700000000\r\n")); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(2 * time.Second)

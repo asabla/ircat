@@ -296,6 +296,8 @@ func (l *Link) dispatch(msg *protocol.Message) {
 		l.handlePass(msg)
 	case "SERVER":
 		l.handleServer(msg)
+	case "SVINFO":
+		l.handleSvinfo(msg)
 	case "NICK":
 		l.handleRemoteNick(msg)
 	case "QUIT":
@@ -349,9 +351,11 @@ func (l *Link) handlePass(msg *protocol.Message) {
 	}
 }
 
-// handleServer is the second half of the handshake. After
-// validating the peer's SERVER line we transition to Bursting and
-// stream the initial state out.
+// handleServer is the second handshake step. After validating the
+// peer's SERVER line we send our SVINFO and wait for theirs before
+// transitioning to Bursting. The burst itself is held until the
+// SVINFO exchange completes so both sides agree on TS protocol
+// version before any state crosses the link.
 func (l *Link) handleServer(msg *protocol.Message) {
 	if len(msg.Params) < 1 {
 		l.logger.Warn("link SERVER missing name")
@@ -365,6 +369,40 @@ func (l *Link) handleServer(msg *protocol.Message) {
 		return
 	}
 	l.setPeerName(peer)
+	l.sendSvinfo()
+}
+
+// handleSvinfo validates the peer's SVINFO line and, if compatible,
+// starts the burst. RFC 2813 §4.1.3 form:
+//
+//	SVINFO <TS_VERSION> <TS_MIN_VERSION> 0 :<server-current-ts>
+//
+// We accept any TS version 3 or above (TS3 / TS5 / TS6 are all
+// compatible at the wire level for the message subset we
+// implement). The TS_MIN field is informational only — it tells us
+// the oldest TS version the peer is willing to talk; we do not act
+// on it because we already meet the floor.
+func (l *Link) handleSvinfo(msg *protocol.Message) {
+	if len(msg.Params) < 4 {
+		l.logger.Warn("link SVINFO underspec", "params", len(msg.Params))
+		_ = l.Close()
+		return
+	}
+	tsVersion, err := strconv.Atoi(msg.Params[0])
+	if err != nil || tsVersion < 3 {
+		l.logger.Warn("link SVINFO ts version unsupported", "got", msg.Params[0])
+		_ = l.Close()
+		return
+	}
+	// SVINFO is the gate. Once both sides have exchanged it the
+	// burst can stream. We always send our own SVINFO before
+	// reaching this code (handleServer triggers it), so receiving
+	// theirs is the signal to flip into Bursting.
+	if l.State() == LinkActive {
+		// Re-issued mid-link is harmless; just log and ignore.
+		return
+	}
+	peer := l.peerName
 	l.setState(LinkBursting)
 	l.logger.Info("link burst starting", "peer", peer)
 	l.sendBurst()
@@ -373,6 +411,22 @@ func (l *Link) handleServer(msg *protocol.Message) {
 	if l.cfg.OnActive != nil {
 		l.cfg.OnActive(l)
 	}
+}
+
+// sendSvinfo emits this server's SVINFO line. The TS version is
+// fixed at 6 (TS6, the modern norm); the minimum-supported version
+// is also 6 because we do not implement any of the pre-TS6
+// quirks; the third "0" param is reserved per the RFC; the
+// trailing param is the server's current unix timestamp.
+func (l *Link) sendSvinfo() {
+	l.Send(&protocol.Message{
+		Prefix:  l.localName,
+		Command: "SVINFO",
+		Params: []string{
+			"6", "6", "0",
+			strconv.FormatInt(time.Now().Unix(), 10),
+		},
+	})
 }
 
 // sendBurst streams the local state to the peer in RFC 2813
