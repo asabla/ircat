@@ -179,19 +179,37 @@ type channelPayload struct {
 }
 
 type channelDetailPayload struct {
-	Name      string
+	Name        string
 	MemberCount int
-	ModeWord  string
-	Topic     string
-	TopicSetBy string
-	Members   []channelMemberPayload
-	Bans      []string
+	ModeWord    string
+	Topic       string
+	TopicSetBy  string
+	Members     []channelMemberPayload
+	Bans        []string
+	Exceptions  []string
+	Invexes     []string
+	Quiets      []string
 }
 
 type channelMemberPayload struct {
 	Nick   string
 	Prefix string // "@" / "+" / ""
 	Remote bool
+}
+
+// sortedKeys returns the keys of a string-keyed map in lexical
+// order. Used by the channel detail handler so the ban / exception /
+// invex / quiet lists render deterministically across reloads.
+func sortedKeys[V any](m map[string]V) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 type fedLinkPayload struct {
@@ -906,11 +924,16 @@ func (s *Server) handleKickUserPage(sess *session, w http.ResponseWriter, r *htt
 // surfaced too if any are set.
 func (s *Server) handleChannelDetailPage(sess *session, w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	// Channel names start with # or & and the path uses URL
-	// encoding for # — accept both forms by re-prepending the
-	// prefix when the path value is bare.
-	if name != "" && name[0] != '#' && name[0] != '&' {
-		name = "#" + name
+	// Channel names start with #, &, +, or ! and the path uses
+	// URL encoding for # — accept the bare form by re-prepending
+	// '#' when the path value has no prefix byte the server
+	// recognises.
+	if name != "" {
+		switch name[0] {
+		case '#', '&', '+', '!':
+		default:
+			name = "#" + name
+		}
 	}
 	data := s.newPageData(sess, "channels", "channel — "+name)
 	if s.pages == nil || s.pages.World == nil {
@@ -943,6 +966,15 @@ func (s *Server) handleChannelDetailPage(sess *session, w http.ResponseWriter, r
 		})
 	}
 	sort.Slice(detail.Members, func(i, j int) bool { return detail.Members[i].Nick < detail.Members[j].Nick })
+
+	// Surface every list-form mode the channel knows about so an
+	// operator can audit them all in one place. Sort each list so
+	// the rendered output is deterministic across reloads.
+	detail.Bans = sortedKeys(ch.Bans())
+	detail.Exceptions = sortedKeys(ch.Exceptions())
+	detail.Invexes = sortedKeys(ch.Invexes())
+	detail.Quiets = sortedKeys(ch.Quiets())
+
 	data.ChannelDetail = detail
 	s.renderPage(w, "channel_detail", data)
 }

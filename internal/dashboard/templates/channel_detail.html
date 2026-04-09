@@ -50,8 +50,29 @@
 
 {{if .ChannelDetail.Bans}}
 <div class="panel">
-  <h3>bans</h3>
+  <h3>bans (+b)</h3>
   <ul>{{range .ChannelDetail.Bans}}<li><code>{{.}}</code></li>{{end}}</ul>
+</div>
+{{end}}
+
+{{if .ChannelDetail.Exceptions}}
+<div class="panel">
+  <h3>ban exceptions (+e)</h3>
+  <ul>{{range .ChannelDetail.Exceptions}}<li><code>{{.}}</code></li>{{end}}</ul>
+</div>
+{{end}}
+
+{{if .ChannelDetail.Invexes}}
+<div class="panel">
+  <h3>invite exceptions (+I)</h3>
+  <ul>{{range .ChannelDetail.Invexes}}<li><code>{{.}}</code></li>{{end}}</ul>
+</div>
+{{end}}
+
+{{if .ChannelDetail.Quiets}}
+<div class="panel">
+  <h3>quiets (+q)</h3>
+  <ul>{{range .ChannelDetail.Quiets}}<li><code>{{.}}</code></li>{{end}}</ul>
 </div>
 {{end}}
 {{end}}
