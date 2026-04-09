@@ -340,7 +340,7 @@ func (c *Conn) handleUserMode(target string, params []string) {
 	if len(params) == 0 {
 		c.send(&protocol.Message{
 			Prefix:  srv,
-			Command: "221", // RPL_UMODEIS
+			Command: protocol.RPL_UMODEIS,
 			Params:  []string{nick, "+" + c.user.Modes},
 		})
 		return

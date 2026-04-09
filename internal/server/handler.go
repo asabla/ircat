@@ -85,6 +85,10 @@ func (c *Conn) dispatch(m *protocol.Message) {
 		c.handleConnect(m)
 	case "TRACE":
 		c.handleTrace(m)
+	case "SUMMON":
+		c.handleSummon(m)
+	case "USERS":
+		c.handleUsers(m)
 	case "USERHOST":
 		c.handleUserhost(m)
 	case "ISON":

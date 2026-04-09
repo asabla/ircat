@@ -32,10 +32,29 @@ const (
 	ERR_NONICKNAMEGIVEN  = "431" // ":No nickname given"
 	ERR_ERRONEUSNICKNAME = "432" // "<nick> :Erroneous nickname"
 	ERR_NICKNAMEINUSE    = "433" // "<nick> :Nickname is already in use"
+	ERR_NICKCOLLISION    = "436" // "<nick> :Nickname collision KILL from <user>@<host>"
+	ERR_UNAVAILRESOURCE  = "437" // "<nick/channel> :Nick/channel is temporarily unavailable"
 	ERR_NOTREGISTERED    = "451" // ":You have not registered"
 	ERR_NEEDMOREPARAMS   = "461" // "<command> :Not enough parameters"
 	ERR_ALREADYREGISTRED = "462" // ":You may not reregister"
 	ERR_PASSWDMISMATCH   = "464" // ":Password incorrect"
+
+	// --- User-mode and access-control errors ---
+	ERR_RESTRICTED        = "484" // ":Your connection is restricted!"
+	ERR_UNIQOPPRIVSNEEDED = "485" // ":You're not the original channel operator"
+
+	// --- Bulk-target / overload errors ---
+	ERR_TOOMANYTARGETS = "407" // "<target> :<error code> recipients. <abort message>"
+	ERR_NOSUCHSERVICE  = "408" // "<service name> :No such service"
+	ERR_TOOMANYMATCHES = "416" // "<command> :Too many matches"
+	RPL_TRYAGAIN       = "263" // "<command> :Please wait a while and try again."
+
+	// --- SUMMON / USERS disabled stubs ---
+	ERR_SUMMONDISABLED = "445" // ":SUMMON has been disabled"
+	ERR_USERSDISABLED  = "446" // ":USERS has been disabled"
+
+	// --- User-mode is reply ---
+	RPL_UMODEIS = "221" // "<user mode string>"
 
 	// --- Quit / disconnect ---
 	ERR_UNKNOWNCOMMAND = "421" // "<command> :Unknown command"
