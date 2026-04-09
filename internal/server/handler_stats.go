@@ -62,17 +62,30 @@ func emptyOrQuery(q string) string {
 	return q
 }
 
-// statsLinks emits 211 for every active federation link. Without any
-// per-link byte counters wired up yet (those will land alongside the
-// link refactor) the rate fields are reported as zero.
+// statsLinks emits 211 for every active federation link with the
+// per-link counters maintained by federation.Link. The kbytes
+// fields are computed by dividing the cumulative byte counters
+// by 1024 and rounding down — close enough for an operator
+// glancing at the line.
 func (c *Conn) statsLinks() {
 	srv := c.server.cfg.Server.Name
 	nick := c.user.Nick
 	for _, row := range c.server.FederationSnapshot() {
 		// "<linkname> <sendq> <sent msgs> <sent kbytes> <recv msgs>
 		//  <recv kbytes> <time open>"
+		timeOpen := "0"
+		if !row.OpenedAt().IsZero() {
+			timeOpen = fmt.Sprintf("%d", int64(c.server.now().Sub(row.OpenedAt()).Seconds()))
+		}
 		c.send(protocol.NumericReply(srv, nick, protocol.RPL_STATSLINKINFO,
-			row.Peer(), "0", "0", "0", "0", "0", row.State()))
+			row.Peer(),
+			"0", // sendq depth — not yet exposed by the link
+			fmt.Sprintf("%d", row.SentMessages()),
+			fmt.Sprintf("%d", row.SentBytes()/1024),
+			fmt.Sprintf("%d", row.RecvMessages()),
+			fmt.Sprintf("%d", row.RecvBytes()/1024),
+			timeOpen,
+		))
 	}
 }
 

@@ -233,25 +233,41 @@ func (s *Server) LinkFor(peerName string) fedLinkSender {
 // methods so the dashboard package never has to import
 // internal/server or internal/federation for the type.
 type FederationLinkRow struct {
-	peer        string
-	state       string
-	description string
-	subscribed  []string
+	peer         string
+	state        string
+	description  string
+	subscribed   []string
+	sentMessages uint64
+	sentBytes    uint64
+	recvMessages uint64
+	recvBytes    uint64
+	openedAt     time.Time
 }
 
 func (r FederationLinkRow) Peer() string         { return r.peer }
 func (r FederationLinkRow) State() string        { return r.state }
 func (r FederationLinkRow) Description() string  { return r.description }
 func (r FederationLinkRow) Subscribed() []string { return r.subscribed }
+func (r FederationLinkRow) SentMessages() uint64 { return r.sentMessages }
+func (r FederationLinkRow) SentBytes() uint64    { return r.sentBytes }
+func (r FederationLinkRow) RecvMessages() uint64 { return r.recvMessages }
+func (r FederationLinkRow) RecvBytes() uint64    { return r.recvBytes }
+func (r FederationLinkRow) OpenedAt() time.Time  { return r.openedAt }
 
 // dashboardLinkRow is the wider interface used to type-assert
 // inside FederationSnapshot. The federation.Link struct
-// satisfies it via its existing methods, but we keep the
-// assertion local so the server package never imports
-// internal/federation just for the type.
+// satisfies it via StateString (which wraps LinkState.String for
+// callers that cannot import the LinkState type) plus the
+// counter accessors. We keep the assertion local so the server
+// package never imports internal/federation just for the type.
 type dashboardLinkRow interface {
-	State() string
+	StateString() string
 	PeerName() string
+	SentMessages() uint64
+	SentBytes() uint64
+	RecvMessages() uint64
+	RecvBytes() uint64
+	OpenedAt() time.Time
 }
 
 // FederationSnapshot returns a slice of FederationLinkRow
@@ -278,7 +294,12 @@ func (s *Server) FederationSnapshot() []FederationLinkRow {
 		// type-assert here for the extra fields. A future
 		// refactor can fold this into the registry directly.
 		if rich, ok := link.(dashboardLinkRow); ok {
-			row.state = rich.State()
+			row.state = rich.StateString()
+			row.sentMessages = rich.SentMessages()
+			row.sentBytes = rich.SentBytes()
+			row.recvMessages = rich.RecvMessages()
+			row.recvBytes = rich.RecvBytes()
+			row.openedAt = rich.OpenedAt()
 		}
 		if subs, ok := s.fedSubs[name]; ok {
 			for chName := range subs {

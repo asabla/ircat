@@ -30,6 +30,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/asabla/ircat/internal/protocol"
@@ -149,6 +150,17 @@ type Link struct {
 	// attached to the link observes it to exit.
 	closed chan struct{}
 
+	// Per-link traffic counters surfaced via STATS l. Each
+	// counter is incremented at exactly one site (Send for
+	// outbound, dispatch for inbound). Reads are from a
+	// non-link goroutine (the STATS handler), so atomic ops
+	// keep the operation lock-free.
+	sentMessages atomic.Uint64
+	sentBytes    atomic.Uint64
+	recvMessages atomic.Uint64
+	recvBytes    atomic.Uint64
+	openedAt     time.Time
+
 	wg sync.WaitGroup
 }
 
@@ -177,6 +189,14 @@ func (l *Link) State() LinkState {
 	return l.state
 }
 
+// StateString returns the current handshake state as a printable
+// string. Used by callers (the server package, the dashboard) that
+// must not import internal/federation just to know the LinkState
+// constants.
+func (l *Link) StateString() string {
+	return l.State().String()
+}
+
 // PeerName returns the authoritative peer server name (populated
 // by the handshake). Empty until the link has seen the peer's
 // SERVER line.
@@ -201,14 +221,48 @@ func (l *Link) setPeerName(name string) {
 // Send queues a message for transmission to the peer. Non-blocking:
 // if the outbound queue is full, the link is torn down (SendQ
 // exceeded semantics, same as a regular client connection).
+//
+// Increments sentMessages and sentBytes on the way out so STATS l
+// has accurate byte/message counters per link. The byte count is
+// the encoded wire form including the trailing CRLF, computed
+// on a best-effort basis (a malformed message reports zero bytes
+// because we cannot encode it).
 func (l *Link) Send(msg *protocol.Message) {
 	select {
 	case l.send <- msg:
+		l.sentMessages.Add(1)
+		if data, err := msg.Bytes(); err == nil {
+			l.sentBytes.Add(uint64(len(data)))
+		}
 	case <-l.closed:
 	default:
 		l.logger.Warn("link sendq full, tearing down", "peer", l.PeerName())
 		_ = l.Close()
 	}
+}
+
+// SentMessages returns the number of protocol messages this link
+// has queued for transmission since it was constructed.
+func (l *Link) SentMessages() uint64 { return l.sentMessages.Load() }
+
+// SentBytes returns the cumulative wire-byte count this link has
+// queued for transmission since it was constructed.
+func (l *Link) SentBytes() uint64 { return l.sentBytes.Load() }
+
+// RecvMessages returns the number of protocol messages this link
+// has dispatched from the peer.
+func (l *Link) RecvMessages() uint64 { return l.recvMessages.Load() }
+
+// RecvBytes returns the cumulative wire-byte count this link has
+// dispatched from the peer.
+func (l *Link) RecvBytes() uint64 { return l.recvBytes.Load() }
+
+// OpenedAt reports when the link entered Active state. Zero
+// before the burst completes.
+func (l *Link) OpenedAt() time.Time {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.openedAt
 }
 
 // Close releases the link. Idempotent. Fires OnClosed exactly
@@ -291,6 +345,10 @@ func (l *Link) Run(ctx context.Context, readMessages <-chan *protocol.Message, w
 // lines, burst ingestion (NICK), and runtime propagation (PRIVMSG,
 // NOTICE, JOIN, PART, QUIT, NICK changes).
 func (l *Link) dispatch(msg *protocol.Message) {
+	l.recvMessages.Add(1)
+	if data, err := msg.Bytes(); err == nil {
+		l.recvBytes.Add(uint64(len(data)))
+	}
 	switch msg.Command {
 	case "PASS":
 		l.handlePass(msg)
@@ -409,6 +467,9 @@ func (l *Link) handleSvinfo(msg *protocol.Message) {
 	l.logger.Info("link burst starting", "peer", peer)
 	l.sendBurst()
 	l.setState(LinkActive)
+	l.mu.Lock()
+	l.openedAt = time.Now()
+	l.mu.Unlock()
 	l.logger.Info("link active", "peer", peer)
 	if l.cfg.OnActive != nil {
 		l.cfg.OnActive(l)
