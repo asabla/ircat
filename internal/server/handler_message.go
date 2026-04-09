@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/asabla/ircat/internal/protocol"
+	"github.com/asabla/ircat/internal/state"
 )
 
 var errFlood = errors.New("excess flood")
@@ -85,6 +86,21 @@ func (c *Conn) deliverMessage(m *protocol.Message, command string, emitErrors bo
 func (c *Conn) deliverOneTarget(target, text, command string, emitErrors bool) {
 	srv := c.server.cfg.Server.Name
 	nick := c.user.Nick
+
+	// Operator-only mask broadcasts (RFC 2812 §3.3.1):
+	//   $<servermask> — every user on a matching server
+	//   #<hostmask>   — every user on a matching host
+	// The host-mask form is disambiguated from a channel name
+	// by the presence of a "." in the rest of the mask: "#chan"
+	// is a channel, "#*.example.com" is a host mask.
+	if len(target) > 1 && target[0] == '$' {
+		c.deliverMaskBroadcast(target[1:], text, command, false, emitErrors)
+		return
+	}
+	if len(target) > 1 && target[0] == '#' && strings.ContainsRune(target[1:], '.') {
+		c.deliverMaskBroadcast(target[1:], text, command, true, emitErrors)
+		return
+	}
 
 	if isChannelName(target) {
 		ch := c.server.world.FindChannel(target)
@@ -183,4 +199,54 @@ func (c *Conn) deliverOneTarget(target, text, command string, emitErrors bool) {
 // validChannelName for places that need it.
 func isChannelName(s string) bool {
 	return len(s) > 0 && (s[0] == '#' || s[0] == '&')
+}
+
+// deliverMaskBroadcast handles the operator-only $servermask /
+// #hostmask forms of PRIVMSG and NOTICE per RFC 2812 §3.3.1. The
+// hostMask flag selects which user field the glob matches against:
+// false → HomeServer (or local server name for local users), true →
+// the user's host. Non-operators are rejected with 481.
+func (c *Conn) deliverMaskBroadcast(mask, text, command string, hostMask bool, emitErrors bool) {
+	srv := c.server.cfg.Server.Name
+	nick := c.user.Nick
+	if !strings.ContainsRune(c.user.Modes, 'o') {
+		if emitErrors {
+			c.send(protocol.NumericReply(srv, nick,
+				protocol.ERR_NOPRIVILEGES, "Permission Denied- You're not an IRC operator"))
+		}
+		return
+	}
+	prefix := "$"
+	if hostMask {
+		prefix = "#"
+	}
+	msg := &protocol.Message{
+		Prefix:  c.user.Hostmask(),
+		Command: command,
+		Params:  []string{prefix + mask, text},
+	}
+	for _, snap := range c.server.world.Snapshot() {
+		if snap.IsRemote() {
+			continue
+		}
+		var candidate string
+		if hostMask {
+			candidate = snap.Host
+		} else {
+			candidate = snap.HomeServer
+			if candidate == "" {
+				candidate = srv
+			}
+		}
+		if !state.GlobMatchHost(mask, candidate) {
+			continue
+		}
+		if dest := c.server.connFor(snap.ID); dest != nil {
+			dest.send(msg)
+		}
+	}
+	// Forward to every federation peer so remote +o nodes can
+	// fan the broadcast out to their own local users matching
+	// the same mask.
+	c.server.forwardToAllLinks(msg)
 }
