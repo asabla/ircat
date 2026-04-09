@@ -89,6 +89,12 @@ type Conn struct {
 	// msgViolations counts dropped messages so the server can
 	// disconnect a persistently flooding client.
 	msgViolations int
+
+	// capsAccepted is the set of IRCv3 capabilities the client
+	// has successfully REQ'd. Membership in this set lets handlers
+	// decide whether to attach extra metadata (e.g. message-tags
+	// pass-through) on outbound messages aimed at this conn.
+	capsAccepted map[string]bool
 }
 
 // pending holds the partial state collected during registration.

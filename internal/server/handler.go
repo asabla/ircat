@@ -265,12 +265,19 @@ func (c *Conn) handleQuit(m *protocol.Message) {
 	c.cancel(errors.New("quit: " + reason))
 }
 
-// handleCap implements just enough of the IRCv3 capability
-// negotiation handshake that modern clients can complete connection.
-// We do not advertise any capabilities in M1, but we still need to
-// honour the negotiation lifecycle — specifically, when the client
-// has opted into CAP, registration must wait for CAP END before the
-// welcome burst goes out.
+// handleCap implements the IRCv3 capability negotiation handshake.
+// We honour the negotiation lifecycle (when the client has opted
+// into CAP, registration must wait for CAP END before the welcome
+// burst goes out) and advertise the capabilities the server
+// actually supports.
+//
+// Currently advertised:
+//
+//	message-tags — the parser already round-trips IRCv3 tag
+//	  blocks (parse.go), this just tells the client we will
+//	  pass them through. Negotiation is required because some
+//	  legacy clients break on the leading "@" if they see it
+//	  unsolicited.
 func (c *Conn) handleCap(m *protocol.Message) {
 	if len(m.Params) == 0 {
 		return
@@ -278,30 +285,53 @@ func (c *Conn) handleCap(m *protocol.Message) {
 	subcommand := strings.ToUpper(m.Params[0])
 	switch subcommand {
 	case "LS":
-		// "We support nothing right now."
 		c.pending.capNegotiating = true
 		c.send(&protocol.Message{
 			Prefix:  c.server.cfg.Server.Name,
 			Command: "CAP",
-			Params:  []string{c.starOrNick(), "LS", ""},
+			Params:  []string{c.starOrNick(), "LS", supportedCaps()},
 		})
 	case "LIST":
 		c.send(&protocol.Message{
 			Prefix:  c.server.cfg.Server.Name,
 			Command: "CAP",
-			Params:  []string{c.starOrNick(), "LIST", ""},
+			Params:  []string{c.starOrNick(), "LIST", strings.Join(c.acceptedCaps(), " ")},
 		})
 	case "REQ":
-		// Refuse all requests by NAKing them. M1 supports no caps.
 		c.pending.capNegotiating = true
 		req := ""
 		if len(m.Params) > 1 {
 			req = m.Params[1]
 		}
+		// ACK only if every requested cap is one we advertise.
+		// Otherwise NAK the whole batch (the IRCv3 spec is
+		// strict: REQ is atomic).
+		ack := true
+		for _, name := range strings.Fields(req) {
+			// Allow a leading "-" prefix (cap removal request).
+			if strings.HasPrefix(name, "-") {
+				name = name[1:]
+			}
+			if !isSupportedCap(name) {
+				ack = false
+				break
+			}
+		}
+		verb := "NAK"
+		if ack {
+			verb = "ACK"
+			for _, name := range strings.Fields(req) {
+				if strings.HasPrefix(name, "-") {
+					c.dropAcceptedCap(name[1:])
+				} else {
+					c.addAcceptedCap(name)
+				}
+			}
+		}
 		c.send(&protocol.Message{
 			Prefix:  c.server.cfg.Server.Name,
 			Command: "CAP",
-			Params:  []string{c.starOrNick(), "NAK", req},
+			Params:  []string{c.starOrNick(), verb, req},
 		})
 	case "END":
 		// Negotiation finished — if NICK and USER have already
