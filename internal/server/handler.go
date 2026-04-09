@@ -69,6 +69,8 @@ func (c *Conn) dispatch(m *protocol.Message) {
 		c.handleAway(m)
 	case "WALLOPS":
 		c.handleWallops(m)
+	case "STATS":
+		c.handleStats(m)
 	case "USERHOST":
 		c.handleUserhost(m)
 	case "ISON":
