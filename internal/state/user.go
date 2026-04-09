@@ -52,6 +52,17 @@ type User struct {
 	// (channel messages do not trigger the 301 — only direct
 	// PRIVMSGs).
 	Away string
+
+	// Service is true when this connection registered via SERVICE
+	// (RFC 2812 §3.1.6) instead of NICK/USER. Services have a few
+	// behavioural differences: they receive SQUERY rather than
+	// PRIVMSG, do not appear in NAMES/WHOIS for normal channels,
+	// and are listed via SERVLIST. ServiceType and
+	// ServiceDistribution carry the registration parameters for
+	// SERVLIST replies.
+	Service             bool
+	ServiceType         string
+	ServiceDistribution string
 }
 
 // IsRemote reports whether the user lives on a different node.

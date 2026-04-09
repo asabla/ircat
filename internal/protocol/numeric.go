@@ -22,6 +22,11 @@ const (
 	RPL_YOUREOPER  = "381" // ":You are now an IRC operator"
 	ERR_NOOPERHOST = "491" // ":No O-lines for your host"
 
+	// --- Service registration (RFC 2812 §3.1.6, §3.5) ---
+	RPL_YOURESERVICE = "383" // "<name> :You are service <name>"
+	RPL_SERVLIST     = "234" // "<name> <server> <mask> <type> <hopcount> <info>"
+	RPL_SERVLISTEND  = "235" // "<mask> <type> :End of service listing"
+
 	// --- MOTD (372-376, 422) ---
 	RPL_MOTDSTART = "375" // ":- <server> Message of the day -"
 	RPL_MOTD      = "372" // ":- <text>"

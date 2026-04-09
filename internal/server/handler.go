@@ -23,6 +23,8 @@ func (c *Conn) dispatch(m *protocol.Message) {
 		c.handleNick(m)
 	case "USER":
 		c.handleUser(m)
+	case "SERVICE":
+		c.handleService(m)
 	case "JOIN":
 		c.handleJoin(m)
 	case "PART":

@@ -284,6 +284,13 @@ func (c *Conn) sendNamesReply(ch *state.Channel) {
 			if u == nil {
 				continue
 			}
+			// RFC 2812 §3.5: services are invisible to NAMES.
+			// They participate in channels (so they can listen
+			// for SQUERY routing) but do not show up in the
+			// member list.
+			if u.Service {
+				continue
+			}
 			token := mem.Prefix() + u.Nick
 			if line.Len()+1+len(token) > lineSoftCap {
 				flush()
