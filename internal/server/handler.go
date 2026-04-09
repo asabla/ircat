@@ -51,6 +51,18 @@ func (c *Conn) dispatch(m *protocol.Message) {
 		c.handleWhois(m)
 	case "MODE":
 		c.handleMode(m)
+	case "VERSION":
+		c.handleVersion(m)
+	case "TIME":
+		c.handleTime(m)
+	case "ADMIN":
+		c.handleAdmin(m)
+	case "INFO":
+		c.handleInfo(m)
+	case "MOTD":
+		c.handleMotdCommand(m)
+	case "LUSERS":
+		c.handleLusers(m)
 	case "PING":
 		c.handlePing(m)
 	case "PONG":

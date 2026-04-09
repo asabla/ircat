@@ -107,6 +107,60 @@ const (
 	ERR_NOPRIVILEGES     = "481" // ":Permission Denied- You're not an IRC operator"
 	ERR_CHANOPRIVSNEEDED = "482" // "<channel> :You're not channel operator"
 	ERR_CANTKILLSERVER   = "483"
+
+	// --- LUSERS (251-255) ---
+	RPL_LUSERCLIENT   = "251" // ":There are <int> users and <int> services on <int> servers"
+	RPL_LUSEROP       = "252" // "<int> :operator(s) online"
+	RPL_LUSERUNKNOWN  = "253" // "<int> :unknown connection(s)"
+	RPL_LUSERCHANNELS = "254" // "<int> :channels formed"
+	RPL_LUSERME       = "255" // ":I have <int> clients and <int> servers"
+
+	// --- ADMIN (256-259) ---
+	RPL_ADMINME    = "256" // "<server> :Administrative info"
+	RPL_ADMINLOC1  = "257" // ":<admin info>"
+	RPL_ADMINLOC2  = "258" // ":<admin info>"
+	RPL_ADMINEMAIL = "259" // ":<admin info>"
+
+	// --- AWAY (301, 305, 306) ---
+	RPL_AWAY     = "301" // "<nick> :<away message>"
+	RPL_UNAWAY   = "305" // ":You are no longer marked as being away"
+	RPL_NOWAWAY  = "306" // ":You have been marked as being away"
+
+	// --- USERHOST / ISON (302, 303) ---
+	RPL_USERHOST = "302" // ":<reply>{ <reply>}" — up to 5 nick=+|-host
+	RPL_ISON     = "303" // ":<nick>{ <nick>}"
+
+	// --- WHOWAS / END (314, 369, 406) ---
+	RPL_ENDOFWHOWAS = "369" // "<nick> :End of WHOWAS"
+	ERR_WASNOSUCHNICK = "406" // "<nick> :There was no such nickname"
+
+	// --- VERSION / TIME / INFO (351, 391, 371-374) ---
+	RPL_VERSION    = "351" // "<version>.<debuglevel> <server> :<comments>"
+	RPL_TIME       = "391" // "<server> :<string showing server's local time>"
+	RPL_INFO       = "371" // ":<string>"
+	RPL_ENDOFINFO  = "374" // ":End of INFO list"
+
+	// --- LINKS (364, 365) ---
+	RPL_LINKS      = "364" // "<mask> <server> :<hopcount> <server info>"
+	RPL_ENDOFLINKS = "365" // "<mask> :End of LINKS list"
+
+	// --- STATS (211-219, 242, 243, 219) ---
+	RPL_STATSLINKINFO = "211" // "<linkname> <sendq> <sent msgs> <sent kbytes> <recv msgs> <recv kbytes> <time open>"
+	RPL_STATSCOMMANDS = "212" // "<command> <count> <byte count> <remote count>"
+	RPL_ENDOFSTATS    = "219" // "<query> :End of STATS report"
+	RPL_STATSUPTIME   = "242" // ":Server Up <days> days <hh>:<mm>:<ss>"
+	RPL_STATSOLINE    = "243" // "O <hostmask> * <name>"
+
+	// --- TRACE (200-209, 261, 262) ---
+	RPL_TRACELINK     = "200" // "Link <version> <destination> <next server>"
+	RPL_TRACECONNECTING = "201" // "Try. <class> <server>"
+	RPL_TRACEHANDSHAKE  = "202" // "H.S. <class> <server>"
+	RPL_TRACEUNKNOWN    = "203" // "???? <class> [<client IP>]"
+	RPL_TRACEOPERATOR   = "204" // "Oper <class> <nick>"
+	RPL_TRACEUSER       = "205" // "User <class> <nick>"
+	RPL_TRACESERVER     = "206" // "Serv <class> <int>S <int>C <server> <nick!user|*!*>@<host|server> V<protocol version>"
+	RPL_TRACECLASS      = "209" // "Class <class> <count>"
+	RPL_TRACEEND        = "262" // "<server> <version>.<debuglevel> :End of TRACE"
 )
 
 // NumericReply builds a server-originated numeric reply Message.
