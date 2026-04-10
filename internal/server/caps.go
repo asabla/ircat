@@ -55,6 +55,10 @@ var supportedCapList = []string{
 	// someone is the moment they join. Wired in the JOIN
 	// broadcast path in handler_channels.
 	"extended-join",
+	// batch frames related messages (NAMES burst, WHO reply)
+	// so a client can render them as a unit. Wired in
+	// sendNamesReply and handleWho.
+	"batch",
 }
 
 // supportedCaps returns the space-separated cap list as it appears
