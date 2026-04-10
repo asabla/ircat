@@ -75,6 +75,9 @@ follow-ups documented in the v0.3 plan are still
   wallclock proxy in `Runtime.effectiveDeadline` is the
   closest we can get without a fork.
 
+Quarterly upstream checks are tracked in
+[W3-SANDBOX-TRACKER.md](W3-SANDBOX-TRACKER.md).
+
 The CI fuzz job (`.github/workflows/ci.yml`) runs
 `FuzzSandboxNeverPanics` for 5 minutes on every PR against
 this exact pinned version, so any future bump bring its own
