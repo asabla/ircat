@@ -5,7 +5,7 @@ A modern, portable IRC server written in Go with a built-in htmx dashboard, Lua 
 ## Highlights
 
 - **100% RFC compliance** — every command, mode, prefix, and numeric the RFC family defines is implemented and tested. All four channel-name prefixes (`#`, `&`, `+`, `!`), every channel mode (`+i +m +n +p +s +t +k +l +o +v +b +e +I +q +a +O +r`), all six user modes, all 46 RFC 2812 commands, and the full RFC 2813 server-to-server handshake (PASS → SERVER → SVINFO → burst).
-- **IRCv3 modern client support** — `message-tags`, `server-time`, `echo-message`, `multi-prefix` negotiated via standard `CAP REQ`.
+- **IRCv3 modern client support** — `message-tags`, `server-time`, `echo-message`, `multi-prefix`, `userhost-in-names`, `away-notify`, `invite-notify` negotiated via standard `CAP REQ`.
 - **Single binary** — Go stdlib first; minimal external dependencies.
 - **Built-in dashboard** — htmx + server-sent events, live log streaming, channel/user/operator admin, federation panel.
 - **Pluggable storage** — SQLite (default, zero-config) or PostgreSQL, selected via config. Channel state, bans, exceptions, invexes, and quiets all round-trip across restart.
@@ -18,8 +18,9 @@ A modern, portable IRC server written in Go with a built-in htmx dashboard, Lua 
 
 ## Status
 
-**v1.0.0 tagged** — the RFC-complete release. See the v1.0.0 tag
-annotation for the full catalog of what's implemented and
+**v1.1.0 tagged** — adds three IRCv3 capabilities on top of the
+RFC-complete v1.0.0 base: `userhost-in-names`, `away-notify`, and
+`invite-notify`. See the v1.1.0 tag annotation for details and
 [`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the wire-level reference.
 
 The pre-1.0 development arc shipped under the v0.x tags. For
