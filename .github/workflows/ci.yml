@@ -82,6 +82,13 @@ jobs:
           check-latest: true
           cache: true
       - name: fuzz
+        env:
+          # gopher-lua table/string allocations bypass the sandbox's
+          # RegistrySlots cap, so over millions of fuzz iterations
+          # the worker can OOM before GC catches up. A soft memory
+          # limit makes the GC far more aggressive under pressure,
+          # keeping RSS in check without slowing down normal runs.
+          GOMEMLIMIT: 512MiB
         run: |
           go test -run='^$' -fuzz=FuzzSandboxNeverPanics \
             -fuzztime=5m ./internal/bots/

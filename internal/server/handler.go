@@ -341,9 +341,7 @@ func (c *Conn) handleCap(m *protocol.Message) {
 		ack := true
 		for _, name := range strings.Fields(req) {
 			// Allow a leading "-" prefix (cap removal request).
-			if strings.HasPrefix(name, "-") {
-				name = name[1:]
-			}
+			name = strings.TrimPrefix(name, "-")
 			if !isSupportedCap(name) {
 				ack = false
 				break

@@ -44,7 +44,6 @@ type API struct {
 	botManager BotManager
 	reloader   Reloader
 	now        func() time.Time
-	allowList  []string // optional CORS allow-list (M4 polish: defer)
 
 	// serverInfo describes the running ircat node. Captured at
 	// New time so the /server endpoint does not need to grow a

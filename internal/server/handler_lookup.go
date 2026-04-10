@@ -93,9 +93,7 @@ func (c *Conn) handleIson(m *protocol.Message) {
 	// individual middle params. We accept both.
 	var nicks []string
 	for _, p := range m.Params {
-		for _, n := range strings.Fields(p) {
-			nicks = append(nicks, n)
-		}
+		nicks = append(nicks, strings.Fields(p)...)
 	}
 	out := make([]string, 0, len(nicks))
 	for _, n := range nicks {

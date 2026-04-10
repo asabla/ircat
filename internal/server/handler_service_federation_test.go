@@ -8,7 +8,7 @@ import (
 func TestService_FederationBurstCarriesServiceFlag(t *testing.T) {
 	addrA, srvA, closeA := buildFederationPeer(t, "node-a")
 	defer closeA()
-	addrB, srvB, closeB := buildFederationPeer(t, "node-b")
+	_, srvB, closeB := buildFederationPeer(t, "node-b")
 	defer closeB()
 
 	// Register a service on node A BEFORE the link comes up so
@@ -37,8 +37,6 @@ func TestService_FederationBurstCarriesServiceFlag(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("service never propagated to node B")
-
-	_ = addrB
 }
 
 func TestService_RuntimeRegistrationPropagates(t *testing.T) {

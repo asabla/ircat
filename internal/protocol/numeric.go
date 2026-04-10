@@ -150,23 +150,23 @@ const (
 	RPL_ADMINEMAIL = "259" // ":<admin info>"
 
 	// --- AWAY (301, 305, 306) ---
-	RPL_AWAY     = "301" // "<nick> :<away message>"
-	RPL_UNAWAY   = "305" // ":You are no longer marked as being away"
-	RPL_NOWAWAY  = "306" // ":You have been marked as being away"
+	RPL_AWAY    = "301" // "<nick> :<away message>"
+	RPL_UNAWAY  = "305" // ":You are no longer marked as being away"
+	RPL_NOWAWAY = "306" // ":You have been marked as being away"
 
 	// --- USERHOST / ISON (302, 303) ---
 	RPL_USERHOST = "302" // ":<reply>{ <reply>}" — up to 5 nick=+|-host
 	RPL_ISON     = "303" // ":<nick>{ <nick>}"
 
 	// --- WHOWAS / END (314, 369, 406) ---
-	RPL_ENDOFWHOWAS = "369" // "<nick> :End of WHOWAS"
+	RPL_ENDOFWHOWAS   = "369" // "<nick> :End of WHOWAS"
 	ERR_WASNOSUCHNICK = "406" // "<nick> :There was no such nickname"
 
 	// --- VERSION / TIME / INFO (351, 391, 371-374) ---
-	RPL_VERSION    = "351" // "<version>.<debuglevel> <server> :<comments>"
-	RPL_TIME       = "391" // "<server> :<string showing server's local time>"
-	RPL_INFO       = "371" // ":<string>"
-	RPL_ENDOFINFO  = "374" // ":End of INFO list"
+	RPL_VERSION   = "351" // "<version>.<debuglevel> <server> :<comments>"
+	RPL_TIME      = "391" // "<server> :<string showing server's local time>"
+	RPL_INFO      = "371" // ":<string>"
+	RPL_ENDOFINFO = "374" // ":End of INFO list"
 
 	// --- LINKS (364, 365) ---
 	RPL_LINKS      = "364" // "<mask> <server> :<hopcount> <server info>"
@@ -180,7 +180,7 @@ const (
 	RPL_STATSOLINE    = "243" // "O <hostmask> * <name>"
 
 	// --- TRACE (200-209, 261, 262) ---
-	RPL_TRACELINK     = "200" // "Link <version> <destination> <next server>"
+	RPL_TRACELINK       = "200" // "Link <version> <destination> <next server>"
 	RPL_TRACECONNECTING = "201" // "Try. <class> <server>"
 	RPL_TRACEHANDSHAKE  = "202" // "H.S. <class> <server>"
 	RPL_TRACEUNKNOWN    = "203" // "???? <class> [<client IP>]"

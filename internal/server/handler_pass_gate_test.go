@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"net"
-	"strings"
 	"testing"
 	"time"
 
@@ -91,12 +90,8 @@ func TestPassGate_WrongPasswordRejects(t *testing.T) {
 	// before close, then EOF.
 	c.SetReadDeadline(time.Now().Add(2 * time.Second))
 	for {
-		line, err := r.ReadString('\n')
-		if err != nil {
+		if _, err := r.ReadString('\n'); err != nil {
 			break
-		}
-		if strings.HasPrefix(line, "ERROR") {
-			continue
 		}
 	}
 }
