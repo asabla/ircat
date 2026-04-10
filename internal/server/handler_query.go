@@ -125,22 +125,44 @@ func (c *Conn) handleWho(m *protocol.Message) {
 				c.send(protocol.NumericReply(srv, nick, protocol.RPL_ENDOFWHO, mask, "End of WHO list"))
 				return
 			}
+
+			// IRCv3 batch: wrap the WHO burst.
+			var batchRef string
+			if c.capsAccepted["batch"] {
+				batchRef = nextBatchRef()
+				c.startBatch(batchRef, "ircat.whoburst", ch.Name())
+			}
+
 			// On +a (anonymous) channels WHO returns a single
 			// synthetic "anonymous" row rather than the real
 			// membership list per RFC 2811 §4.2.1.
 			if ch.Anonymous() {
-				c.send(protocol.NumericReply(srv, nick, protocol.RPL_WHOREPLY,
+				msg := protocol.NumericReply(srv, nick, protocol.RPL_WHOREPLY,
 					ch.Name(), "anonymous", "anonymous.", srv,
-					"anonymous", "H", "0 anonymous"))
+					"anonymous", "H", "0 anonymous")
+				if batchRef != "" {
+					msg = msg.WithTag("batch", batchRef)
+				}
+				c.send(msg)
 			} else {
 				for id, mem := range ch.MemberIDs() {
 					u := c.server.world.FindByID(id)
 					if u == nil {
 						continue
 					}
-					c.sendWhoReply(ch.Name(), u, mem)
+					c.sendWhoReplyBatch(ch.Name(), u, mem, batchRef)
 				}
 			}
+
+			endMsg := protocol.NumericReply(srv, nick, protocol.RPL_ENDOFWHO, mask, "End of WHO list")
+			if batchRef != "" {
+				endMsg = endMsg.WithTag("batch", batchRef)
+			}
+			c.send(endMsg)
+			if batchRef != "" {
+				c.endBatch(batchRef)
+			}
+			return
 		}
 		c.send(protocol.NumericReply(srv, nick, protocol.RPL_ENDOFWHO, mask, "End of WHO list"))
 		return
@@ -166,6 +188,10 @@ func (c *Conn) handleWho(m *protocol.Message) {
 }
 
 func (c *Conn) sendWhoReply(channel string, u *state.User, mem state.Membership) {
+	c.sendWhoReplyBatch(channel, u, mem, "")
+}
+
+func (c *Conn) sendWhoReplyBatch(channel string, u *state.User, mem state.Membership, batchRef string) {
 	srv := c.server.cfg.Server.Name
 	nick := c.user.Nick
 	// "H" = here, "G" = gone (away). RFC 2812 §3.6.1.
@@ -187,14 +213,18 @@ func (c *Conn) sendWhoReply(channel string, u *state.User, mem state.Membership)
 	} else {
 		flags += mem.Prefix()
 	}
-	c.send(protocol.NumericReply(srv, nick, protocol.RPL_WHOREPLY,
+	msg := protocol.NumericReply(srv, nick, protocol.RPL_WHOREPLY,
 		channel,
 		userOrNick(u),
 		hostOrUnknown(u),
 		srv,
 		u.Nick,
 		flags,
-		"0 "+u.Realname))
+		"0 "+u.Realname)
+	if batchRef != "" {
+		msg = msg.WithTag("batch", batchRef)
+	}
+	c.send(msg)
 }
 
 // handleWhois implements WHOIS (RFC 2812 §3.6.2).

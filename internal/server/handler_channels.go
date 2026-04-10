@@ -300,6 +300,14 @@ func (c *Conn) sendNamesReply(ch *state.Channel) {
 	srv := c.server.cfg.Server.Name
 	nick := c.user.Nick
 
+	// IRCv3 batch: wrap the NAMES burst in a batch for clients
+	// that negotiated the cap.
+	var batchRef string
+	if c.capsAccepted["batch"] {
+		batchRef = nextBatchRef()
+		c.startBatch(batchRef, "ircat.namesburst", ch.Name())
+	}
+
 	// Channel visibility symbol per RFC 2812 §5.2.
 	symbol := "="
 	_, _, _, priv, secret, _, _, _ := ch.Modes()
@@ -317,8 +325,12 @@ func (c *Conn) sendNamesReply(ch *state.Channel) {
 		if line.Len() == 0 {
 			return
 		}
-		c.send(protocol.NumericReply(srv, nick, protocol.RPL_NAMREPLY,
-			symbol, ch.Name(), line.String()))
+		msg := protocol.NumericReply(srv, nick, protocol.RPL_NAMREPLY,
+			symbol, ch.Name(), line.String())
+		if batchRef != "" {
+			msg = msg.WithTag("batch", batchRef)
+		}
+		c.send(msg)
 		line.Reset()
 	}
 
@@ -372,7 +384,14 @@ func (c *Conn) sendNamesReply(ch *state.Channel) {
 		flush()
 	}
 
-	c.send(protocol.NumericReply(srv, nick, protocol.RPL_ENDOFNAMES, ch.Name(), "End of NAMES list"))
+	endMsg := protocol.NumericReply(srv, nick, protocol.RPL_ENDOFNAMES, ch.Name(), "End of NAMES list")
+	if batchRef != "" {
+		endMsg = endMsg.WithTag("batch", batchRef)
+	}
+	c.send(endMsg)
+	if batchRef != "" {
+		c.endBatch(batchRef)
+	}
 }
 
 // handlePart implements the PART command (RFC 2812 §3.2.2).
