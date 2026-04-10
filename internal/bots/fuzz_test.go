@@ -96,9 +96,17 @@ func FuzzSandboxNeverPanics(f *testing.F) {
 		})
 		elapsed := time.Since(start)
 		// The wallclock guarantees the call returns within the
-		// budget. Allow a generous fudge factor for goroutine
-		// scheduling on a busy fuzz host.
-		if elapsed > wallclock+500*time.Millisecond {
+		// budget. The fudge factor has to be generous: Go's
+		// fuzzer runs N workers in parallel (defaults to GOMAXPROCS)
+		// and a tight-loop seed in one worker can starve scheduling
+		// on the others for seconds at a time on a shared CI host.
+		// We have observed ~1s elapsed for trivial scripts on
+		// contended runners. The point of this assertion is to
+		// catch a runtime that runs *forever* (e.g. a missing
+		// context cancellation), not one that misses a 100ms
+		// budget by a small multiple, so a 5s ceiling is the
+		// right shape.
+		if elapsed > wallclock+5*time.Second {
 			t.Fatalf("DispatchMessage ran %s with %s budget; source: %q", elapsed, wallclock, src)
 		}
 	})

@@ -307,19 +307,28 @@ func TestSandbox_StringFormatHappyPath(t *testing.T) {
 	t.Cleanup(rt.Close)
 }
 
-// TestSandbox_RegistryCapStopsTableBlowup creates a runtime
-// with a very small RegistrySlots cap and asserts that a script
-// growing a large table fails inside the cap rather than the
-// wallclock budget. The cap is the right answer for memory
-// pressure — wallclock catches CPU pressure, this catches the
-// "fill memory and exit fast" pattern.
+// TestSandbox_RegistryCapStopsTableBlowup creates a runtime with a
+// very small RegistrySlots cap and asserts that a script which
+// grows the gopher-lua data stack fails inside that cap rather
+// than running unbounded. The cap is the right answer for stack
+// pressure (deep call chains, many in-flight locals); wallclock
+// is the right answer for CPU pressure. We exercise the cap with
+// a recursive function whose locals push into the data stack on
+// every call — gopher-lua's RegistryMaxSize then refuses to grow
+// the stack and the script aborts inside the budget.
+//
+// Note: a "fill a giant table" pattern does NOT trip RegistrySlots,
+// because gopher-lua tables store their entries in the table's
+// own array/hash parts, not on the VM data stack. That pattern is
+// covered by the wallclock-based blowup tests in this file.
 func TestSandbox_RegistryCapStopsTableBlowup(t *testing.T) {
 	src := `
+		local function r(n)
+			local a, b, c, d, e, f, g, h = 1, 2, 3, 4, 5, 6, 7, 8
+			return r(n + 1) + a + b + c + d + e + f + g + h
+		end
 		function on_message(ctx, ev)
-			local t = {}
-			for i = 1, 1000000 do
-				t[i] = i
-			end
+			r(0)
 		end
 	`
 	fa := newFakeActions("bot")
