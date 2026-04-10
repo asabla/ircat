@@ -52,6 +52,8 @@ type Store interface {
 	Channels() PersistentChannelStore
 	// Events returns the audit log event store.
 	Events() EventStore
+	// Accounts returns the user account store (SASL, NickServ).
+	Accounts() AccountStore
 	// Migrate runs any pending schema migrations. Idempotent.
 	Migrate(ctx context.Context) error
 	// Close releases all resources held by the driver.
@@ -75,6 +77,31 @@ type OperatorStore interface {
 	Create(ctx context.Context, op *Operator) error
 	Update(ctx context.Context, op *Operator) error
 	Delete(ctx context.Context, name string) error
+}
+
+// Account is one registered user account. Accounts are the
+// persistence-side complement of the in-memory state.User: a user
+// authenticates via SASL PLAIN or NickServ IDENTIFY, and the
+// matching Account record is looked up from the AccountStore.
+type Account struct {
+	ID           string
+	Username     string
+	PasswordHash string
+	Email        string
+	Verified     bool
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+// AccountStore is the persistence interface for user accounts
+// (SASL PLAIN, NickServ REGISTER / IDENTIFY).
+type AccountStore interface {
+	Get(ctx context.Context, username string) (*Account, error)
+	GetByID(ctx context.Context, id string) (*Account, error)
+	List(ctx context.Context) ([]Account, error)
+	Create(ctx context.Context, acct *Account) error
+	Update(ctx context.Context, acct *Account) error
+	Delete(ctx context.Context, username string) error
 }
 
 // APIToken is one admin API token record. The plaintext token is
