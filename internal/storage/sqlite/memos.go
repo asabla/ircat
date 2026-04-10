@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/asabla/ircat/internal/storage"
 )
@@ -97,6 +98,18 @@ func (s *memoStore) Delete(ctx context.Context, id string) error {
 		return storage.ErrNotFound
 	}
 	return nil
+}
+
+func (s *memoStore) PurgeOlderThan(ctx context.Context, before time.Time) (int, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM memos WHERE created_at < ?`, before)
+	if err != nil {
+		return 0, fmt.Errorf("memos.PurgeOlderThan: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("memos.PurgeOlderThan rows: %w", err)
+	}
+	return int(n), nil
 }
 
 func (s *memoStore) CountUnread(ctx context.Context, recipientID string) (int, error) {

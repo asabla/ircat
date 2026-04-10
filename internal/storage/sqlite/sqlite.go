@@ -41,6 +41,7 @@ type Store struct {
 	accounts           *accountStore
 	registeredChannels *registeredChannelStore
 	memos              *memoStore
+	nickOwners         *nickOwnerStore
 }
 
 // Open returns a Store backed by the SQLite database at path.
@@ -74,6 +75,7 @@ func Open(path string) (*Store, error) {
 	s.accounts = &accountStore{db: db}
 	s.registeredChannels = &registeredChannelStore{db: db}
 	s.memos = &memoStore{db: db}
+	s.nickOwners = &nickOwnerStore{db: db}
 	return s, nil
 }
 
@@ -125,6 +127,9 @@ func (s *Store) RegisteredChannels() storage.RegisteredChannelStore { return s.r
 
 // Memos returns the offline memo store.
 func (s *Store) Memos() storage.MemoStore { return s.memos }
+
+// NickOwners returns the nick ownership store.
+func (s *Store) NickOwners() storage.NickOwnerStore { return s.nickOwners }
 
 // Close releases the underlying database connection pool.
 func (s *Store) Close() error {
