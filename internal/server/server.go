@@ -85,6 +85,11 @@ type Server struct {
 	// "no fan-out" — the server still writes to the store.
 	eventBus EventPublisher
 
+	// nickserv is the live NickServ service instance. Nil when
+	// no store is wired (tests without persistence). Used by the
+	// registration and nick-change paths to trigger enforcement.
+	nickserv *nickserv.Service
+
 	// fedLinks is the federation link registry, keyed by peer
 	// server name. See internal/server/federation.go for the
 	// API the broadcast path uses.
@@ -456,6 +461,44 @@ func (s *Server) startNickServ(ctx context.Context) {
 		return
 	}
 	s.RegisterBot(svc.User().ID, svc)
+	s.nickserv = svc
+}
+
+// ForceNickChange renames a user on the server. Used by NickServ
+// enforcement to guest-rename unidentified users. Satisfies
+// nickserv.ReplySender.
+func (s *Server) ForceNickChange(oldNick, newNick string) bool {
+	u := s.world.FindByNick(oldNick)
+	if u == nil {
+		return false
+	}
+	if err := s.world.RenameUser(u.ID, newNick); err != nil {
+		s.logger.Warn("ForceNickChange failed", "from", oldNick, "to", newNick, "error", err)
+		return false
+	}
+	// Broadcast the nick change to the user and their channels.
+	nickMsg := &protocol.Message{
+		Prefix:  u.Hostmask(),
+		Command: "NICK",
+		Params:  []string{newNick},
+	}
+	if c := s.connFor(u.ID); c != nil {
+		c.send(nickMsg)
+	}
+	for _, ch := range s.world.UserChannels(u.ID) {
+		s.broadcastToChannel(ch, nickMsg, u.ID, false)
+	}
+	return true
+}
+
+// notifyNickServ tells NickServ to check whether a nick is
+// registered and start enforcement if needed. No-op when
+// NickServ is not running.
+func (s *Server) notifyNickServ(nick string, account string) {
+	if s.nickserv == nil {
+		return
+	}
+	s.nickserv.CheckNick(nick, account != "")
 }
 
 func (s *Server) acceptLoop(ctx context.Context, l net.Listener) {

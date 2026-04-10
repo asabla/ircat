@@ -240,6 +240,9 @@ func (c *Conn) handleNick(m *protocol.Message) {
 		// Forward the NICK change to every federation peer so
 		// remote nodes can rename their copy of the user.
 		c.server.forwardToAllLinks(nickMsg)
+		// Notify NickServ about the new nick so it can start
+		// enforcement if the nick is registered.
+		c.server.notifyNickServ(requested, c.user.Account)
 		return
 	}
 
