@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/asabla/ircat/internal/protocol"
 	"github.com/asabla/ircat/internal/state"
@@ -29,10 +30,19 @@ type Service struct {
 
 const memoservMask = "MemoServ!service@services."
 
+// retentionAge is the default maximum age for memos. Memos older
+// than this are purged automatically by the background goroutine.
+const retentionAge = 30 * 24 * time.Hour // 30 days
+
+// purgeInterval is how often the background goroutine runs.
+const purgeInterval = 1 * time.Hour
+
 // Start registers MemoServ as a service user in the world and
 // returns a Service that implements BotDeliverer (via Deliver).
 // The caller should register the returned Service with
-// Server.RegisterBot(user.ID, svc).
+// Server.RegisterBot(user.ID, svc). A background goroutine is
+// started that purges memos older than 30 days every hour; it
+// stops when ctx is cancelled.
 func Start(
 	ctx context.Context,
 	memos storage.MemoStore,
@@ -58,13 +68,18 @@ func Start(
 	}
 	logger.Info("MemoServ registered", "nick", user.Nick, "id", user.ID)
 
-	return &Service{
+	svc := &Service{
 		ms:     ms,
 		user:   user,
 		world:  world,
 		sender: sender,
 		logger: logger,
-	}, nil
+	}
+
+	// Launch background retention goroutine.
+	go svc.retentionLoop(ctx)
+
+	return svc, nil
 }
 
 // User returns the state.User backing MemoServ.
@@ -94,6 +109,29 @@ func (s *Service) Deliver(msg *protocol.Message) {
 	reply := s.ms.HandleMessage(context.Background(), senderNick, senderAccount, text)
 
 	s.sender.SendNoticeToNick(memoservMask, senderNick, reply)
+}
+
+// retentionLoop runs in the background and purges memos older than
+// retentionAge on a regular interval. It exits when ctx is cancelled.
+func (s *Service) retentionLoop(ctx context.Context) {
+	ticker := time.NewTicker(purgeInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cutoff := time.Now().UTC().Add(-retentionAge)
+			n, err := s.ms.memos.PurgeOlderThan(ctx, cutoff)
+			if err != nil {
+				s.logger.Warn("MemoServ retention purge failed", "error", err)
+				continue
+			}
+			if n > 0 {
+				s.logger.Info("MemoServ purged old memos", "count", n)
+			}
+		}
+	}
 }
 
 // NotifyUnread checks for unread memos and sends a NOTICE to the

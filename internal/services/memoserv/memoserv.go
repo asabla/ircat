@@ -31,7 +31,7 @@ func New(memos storage.MemoStore, accounts storage.AccountStore, logger *slog.Lo
 func (ms *MemoServ) HandleMessage(ctx context.Context, senderNick, senderAccount, text string) string {
 	parts := strings.Fields(text)
 	if len(parts) == 0 {
-		return "Unknown command. Available: SEND, LIST, READ, DELETE"
+		return "Unknown command. Available: SEND, LIST, READ, DELETE, PURGE"
 	}
 	switch strings.ToUpper(parts[0]) {
 	case "SEND":
@@ -42,8 +42,10 @@ func (ms *MemoServ) HandleMessage(ctx context.Context, senderNick, senderAccount
 		return ms.handleRead(ctx, senderAccount, parts[1:])
 	case "DELETE":
 		return ms.handleDelete(ctx, senderAccount, parts[1:])
+	case "PURGE":
+		return ms.handlePurge(ctx, senderAccount)
 	default:
-		return fmt.Sprintf("Unknown command %q. Available: SEND, LIST, READ, DELETE", parts[0])
+		return fmt.Sprintf("Unknown command %q. Available: SEND, LIST, READ, DELETE, PURGE", parts[0])
 	}
 }
 
@@ -187,6 +189,32 @@ func (ms *MemoServ) handleDelete(ctx context.Context, senderAccount string, args
 		return "Failed to delete memo."
 	}
 	return "Memo deleted."
+}
+
+// handlePurge manually triggers a memo purge for the caller's account.
+// Usage: PURGE
+func (ms *MemoServ) handlePurge(ctx context.Context, senderAccount string) string {
+	if senderAccount == "" {
+		return "You must be identified to purge memos."
+	}
+	acct, err := ms.accounts.Get(ctx, senderAccount)
+	if err != nil {
+		return "Internal error: your account was not found."
+	}
+	memos, err := ms.memos.ListForRecipient(ctx, acct.ID)
+	if err != nil {
+		ms.logger.Warn("MemoServ PURGE list failed", "error", err)
+		return "Failed to purge memos."
+	}
+	var count int
+	for _, m := range memos {
+		if m.Read {
+			if err := ms.memos.Delete(ctx, m.ID); err == nil {
+				count++
+			}
+		}
+	}
+	return fmt.Sprintf("Purged %d read memo(s).", count)
 }
 
 // generateID produces a simple unique ID for memos. Uses a
