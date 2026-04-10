@@ -195,25 +195,53 @@ func TestLink_Handshake(t *testing.T) {
 // TestLink_HandshakeRejectsOldSvinfo verifies that a peer offering
 // a TS protocol version below the floor (3) is rejected at the
 // SVINFO step rather than being allowed into burst.
+//
+// We do NOT call OpenOutbound — that would start B's normal
+// handshake, which races valid responses onto aReads alongside
+// the injected bogus SVINFO. Instead we feed A a synthetic
+// handshake with an under-floor TS version and verify the link
+// closes without reaching Active.
 func TestLink_HandshakeRejectsOldSvinfo(t *testing.T) {
-	lp := newLinkPair(t)
-	defer lp.close(t)
+	aHost := newFakeHost("node-a")
+	cfg := LinkConfig{
+		PeerName:    "node-b",
+		PasswordIn:  "shared",
+		PasswordOut: "shared",
+		Description: "node A -> B",
+		Version:     "ircat-test",
+	}
+	a := New(aHost, cfg, slog.Default())
+	aReads := make(chan *protocol.Message, 256)
+	// Writer discards — we only care about A's state transitions.
+	writeFromA := func(msg *protocol.Message) error { return nil }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- a.Run(ctx, aReads, writeFromA) }()
+	defer func() {
+		cancel()
+		_ = a.Close()
+		<-done
+	}()
 
-	if err := lp.a.OpenOutbound(); err != nil {
+	// Start A's outbound handshake so it sends PASS+SERVER+SVINFO
+	// (all discarded by our noop writer).
+	if err := a.OpenOutbound(); err != nil {
 		t.Fatal(err)
 	}
-	// Inject an under-floor SVINFO directly onto A's read channel,
-	// pretending B sent it after a valid PASS+SERVER. We expect A
-	// to close the link rather than reach Active.
-	lp.aReads <- &protocol.Message{Command: "PASS", Params: []string{"shared", "0210", "IRC|", "ircat-test"}}
-	lp.aReads <- &protocol.Message{Command: "SERVER", Params: []string{"node-b", "1", "1", "node-b"}}
-	lp.aReads <- &protocol.Message{Command: "SVINFO", Params: []string{"2", "2", "0", "1700000000"}}
 
-	// A must NOT reach Active; the link should close.
-	if waitFor(t, 1*time.Second, func() bool {
-		return lp.a.State() == LinkActive
+	// Inject a peer handshake with an under-floor TS version.
+	aReads <- &protocol.Message{Command: "PASS", Params: []string{"shared", "0210", "IRC|", "ircat-test"}}
+	aReads <- &protocol.Message{Command: "SERVER", Params: []string{"node-b", "1", "1", "node-b"}}
+	aReads <- &protocol.Message{Command: "SVINFO", Params: []string{"2", "2", "0", "1700000000"}}
+
+	// A must close the link rather than reach Active. Poll for
+	// LinkClosed — if we see Active first, the rejection failed.
+	if !waitFor(t, 2*time.Second, func() bool {
+		s := a.State()
+		return s == LinkClosed
 	}) {
-		t.Fatalf("link should not have reached Active with bogus SVINFO")
+		t.Fatalf("link should have closed after bogus SVINFO, state=%s", a.State())
 	}
 }
 

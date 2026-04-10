@@ -137,6 +137,7 @@ type Link struct {
 
 	mu        sync.Mutex
 	state     LinkState
+	closeOnce sync.Once
 	peerName  string // authoritative after handshake
 	localName string
 
@@ -276,7 +277,10 @@ func (l *Link) Close() error {
 	l.state = LinkClosed
 	cb := l.cfg.OnClosed
 	l.mu.Unlock()
-	close(l.closed)
+	// Use sync.Once so concurrent Close calls from the Run
+	// goroutine and a test/server teardown path cannot race on
+	// the channel close.
+	l.closeOnce.Do(func() { close(l.closed) })
 	if cb != nil {
 		cb(l)
 	}

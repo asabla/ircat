@@ -70,7 +70,11 @@ func FuzzSandboxNeverPanics(f *testing.F) {
 		// source can allocate tens of megabytes of Go heap.
 		// Over millions of iterations the GC cannot keep up and
 		// the worker OOMs.
-		if len(src) > 4096 {
+		// Cap input length. Short sources cover the same code paths
+		// and do not trigger the gopher-lua allocator pathology where
+		// a single iteration can allocate tens of megabytes, OOM-ing
+		// the fuzzer worker during minimization.
+		if len(src) > 2048 {
 			return
 		}
 
@@ -88,7 +92,7 @@ func FuzzSandboxNeverPanics(f *testing.F) {
 		rt, err := NewRuntime(src, fa, Budget{
 			Instructions:  100_000,
 			Wallclock:     wallclock,
-			RegistrySlots: 4096,
+			RegistrySlots: 2048,
 		})
 		if err != nil {
 			// Compile errors are fine — the sandbox refused
