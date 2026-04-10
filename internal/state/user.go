@@ -53,6 +53,10 @@ type User struct {
 	// PRIVMSGs).
 	Away string
 
+	// Account is the authenticated account name, set by SASL PLAIN
+	// or NickServ IDENTIFY. Empty means not logged in.
+	Account string
+
 	// Service is true when this connection registered via SERVICE
 	// (RFC 2812 §3.1.6) instead of NICK/USER. Services have a few
 	// behavioural differences: they receive SQUERY rather than

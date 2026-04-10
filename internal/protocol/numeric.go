@@ -179,6 +179,13 @@ const (
 	RPL_STATSUPTIME   = "242" // ":Server Up <days> days <hh>:<mm>:<ss>"
 	RPL_STATSOLINE    = "243" // "O <hostmask> * <name>"
 
+	// --- SASL authentication (IRCv3) ---
+	RPL_LOGGEDIN    = "900" // "<nick>!<user>@<host> <account> :You are now logged in as <account>"
+	RPL_SASLSUCCESS = "903" // ":SASL authentication successful"
+	ERR_SASLFAIL    = "904" // ":SASL authentication failed"
+	ERR_SASLTOOLONG = "905" // ":SASL message too long"
+	ERR_SASLABORTED = "906" // ":SASL authentication aborted"
+
 	// --- TRACE (200-209, 261, 262) ---
 	RPL_TRACELINK       = "200" // "Link <version> <destination> <next server>"
 	RPL_TRACECONNECTING = "201" // "Try. <class> <server>"

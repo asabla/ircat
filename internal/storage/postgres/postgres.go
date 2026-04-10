@@ -37,6 +37,7 @@ type Store struct {
 	bots      *botStore
 	channels  *channelStore
 	events    *eventStore
+	accounts  *accountStore
 }
 
 // Open returns a Store backed by the Postgres database at dsn. The
@@ -60,6 +61,7 @@ func Open(dsn string) (*Store, error) {
 	s.bots = &botStore{db: db}
 	s.channels = &channelStore{db: db}
 	s.events = &eventStore{db: db}
+	s.accounts = &accountStore{db: db}
 	return s, nil
 }
 
@@ -77,6 +79,9 @@ func (s *Store) Channels() storage.PersistentChannelStore { return s.channels }
 
 // Events returns the audit log store.
 func (s *Store) Events() storage.EventStore { return s.events }
+
+// Accounts returns the user account store.
+func (s *Store) Accounts() storage.AccountStore { return s.accounts }
 
 // Close releases the underlying database connection pool.
 func (s *Store) Close() error { return s.db.Close() }
