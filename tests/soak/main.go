@@ -33,6 +33,7 @@ import (
 	"math/rand"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -51,10 +52,19 @@ func main() {
 		warmup      = flag.Duration("warmup", 5*time.Second, "warm-up period before measuring")
 		nickPrefix  = flag.String("nick-prefix", "soak", "nickname prefix for spawned connections")
 		maxDropRate = flag.Float64("max-drop-rate", 0.01, "maximum acceptable drop rate as a fraction of sent (0..1); exit non-zero if exceeded")
+
+		meshMode = flag.Bool("mesh", false, "run three-node federation mesh soak instead of single-node")
+		addrs    = flag.String("addrs", "", "comma-separated list of exactly 3 ircat addresses (required when -mesh is set)")
 	)
 	flag.Parse()
 
 	log.SetFlags(log.Ltime | log.Lmicroseconds)
+
+	if *meshMode {
+		runMeshMode(*addrs, *nConns, *nChannels, *msgsPerSec, *duration, *warmup, *nickPrefix, *maxDropRate)
+		return
+	}
+
 	log.Printf("soak start: addr=%s conns=%d channels=%d rate=%d/s duration=%s",
 		*addr, *nConns, *nChannels, *msgsPerSec, *duration)
 
@@ -225,6 +235,30 @@ func main() {
 		log.Fatalf("FAIL: drop rate %.4f exceeds threshold %.4f", dropRate, *maxDropRate)
 	}
 	log.Printf("PASS (drop rate %.4f)", dropRate)
+}
+
+// runMeshMode parses the -addrs flag into a [3]string and
+// delegates to RunMesh with the shared soak flags.
+func runMeshMode(addrsFlag string, conns, channels, msgsPerSec int, duration, warmup time.Duration, nickPrefix string, maxDropRate float64) {
+	parts := strings.Split(addrsFlag, ",")
+	if len(parts) != 3 || parts[0] == "" {
+		log.Fatal("-mesh requires -addrs with exactly 3 comma-separated addresses")
+	}
+	cfg := MeshConfig{
+		Addrs:        [3]string{parts[0], parts[1], parts[2]},
+		ConnsPerNode: conns,
+		Channels:     channels,
+		MsgsPerSec:   msgsPerSec,
+		Duration:     duration,
+		Warmup:       warmup,
+		NickPrefix:   nickPrefix,
+		MaxDropRate:  maxDropRate,
+	}
+	ctx, cancel := signalContext(duration + warmup + 30*time.Second)
+	defer cancel()
+	if err := RunMesh(ctx, cfg); err != nil {
+		log.Fatal(err)
+	}
 }
 
 // signalContext returns a context that fires after d, on a
