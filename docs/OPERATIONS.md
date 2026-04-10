@@ -114,12 +114,15 @@ SQUIT needed.
 
 ## Measured envelope
 
+### v0.2 baseline
+
 Numbers below come from the v0.2 benchmark suites and were
 collected on an Intel Xeon E-2286M (8C/16T, 2.4 GHz) under Linux
-6.8 with `-race` disabled. Re-run on your own hardware before
+6.8 with `-race` disabled. These are preserved as the baseline
+for regression detection. Re-run on your own hardware before
 relying on absolute values.
 
-### Flood control
+#### Flood control
 
 Source: `internal/server/floodcontrol_bench_test.go`. Rerun with
 `go test -bench=BenchmarkTokenBucket ./internal/server/`.
@@ -148,7 +151,7 @@ conservative for a brand-new ircat install. Operators with
 large heavily-active channels should raise both numbers — the
 benchmark says there is no cost reason not to.
 
-### Storage audit-event throughput
+#### Storage audit-event throughput
 
 Source: `internal/storage/sqlite/events_bench_test.go` and the
 matching file under `internal/storage/postgres/`. Rerun with
@@ -172,6 +175,88 @@ Postgres numbers depend heavily on the host kernel + storage
 class — run the benchmark against your own database to get a
 local figure. The benchmark Skip's cleanly when
 `IRCAT_TEST_POSTGRES_DSN` is unset.
+
+---
+
+### v1.1 measurements
+
+The tables below should be filled from a dedicated benchmark run
+on the reference hardware (Intel Xeon E-2286M or equivalent).
+Until that run happens, compare against the v0.2 baseline above
+to detect regressions beyond the 5 % threshold.
+
+#### How to reproduce
+
+Run all three suites with `-race` disabled on the reference box:
+
+```sh
+go test -bench=. -benchmem ./internal/server/
+go test -bench=. -benchmem ./internal/storage/sqlite/
+go test -bench=. -benchmem ./internal/storage/postgres/
+```
+
+The Postgres suite requires `IRCAT_TEST_POSTGRES_DSN` to be set;
+it Skips cleanly when the variable is absent.
+
+#### Flood control
+
+| Scenario | ns/op | B/op | allocs/op | Notes |
+|---|---|---|---|---|
+| Single sender, uncontended | — | — | — | |
+| 1 sender on a shared bucket | — | — | — | |
+| 10 senders on a shared bucket | — | — | — | |
+| 100 senders on a shared bucket | — | — | — | |
+| 1000 senders on a shared bucket | — | — | — | |
+| 1 connection, own bucket | — | — | — | |
+| 10 connections, own bucket | — | — | — | |
+| 100 connections, own bucket | — | — | — | |
+| 1000 connections, own bucket | — | — | — | |
+
+#### CAP negotiation (registration hot path)
+
+| Scenario | ns/op | B/op | allocs/op | Notes |
+|---|---|---|---|---|
+| CAP LS / REQ / END + NICK + USER + welcome | — | — | — | |
+
+Source: `internal/server/handler_sasl_bench_test.go`.
+
+#### Storage audit-event throughput (SQLite)
+
+| Backend | Serial Append | Parallel Append | Notes |
+|---|---|---|---|
+| SQLite (WAL + synchronous=NORMAL) | — | — | |
+| SQLite (WAL + synchronous=FULL) | — | — | |
+
+#### Storage audit-event throughput (Postgres)
+
+| Backend | Serial Append | Parallel Append | Notes |
+|---|---|---|---|
+| Postgres (local container) | — | — | |
+
+#### Postgres on RDS
+
+This benchmark has not been run yet. The expected setup for
+producing comparable numbers:
+
+| Parameter | Value |
+|---|---|
+| Instance type | `db.r6g.large` (2 vCPU, 16 GB) or equivalent |
+| Postgres version | 16.x |
+| Storage | gp3, 3000 IOPS baseline |
+| Network topology | ircat and the benchmark runner in the same VPC / AZ |
+| SSL | `sslmode=require` (matches production) |
+| Connection | direct, no pgbouncer |
+
+Point the DSN at the managed instance and run:
+
+```sh
+IRCAT_TEST_POSTGRES_DSN='postgres://ircat:...@rds-host:5432/ircat?sslmode=require' \
+  go test -bench=BenchmarkEvents -benchtime=30s ./internal/storage/postgres/
+```
+
+Document the results in the table above alongside the SQLite and
+local-Postgres numbers so operators can make an informed backend
+choice.
 
 ### Soak harness
 
