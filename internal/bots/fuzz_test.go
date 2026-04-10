@@ -2,6 +2,8 @@ package bots
 
 import (
 	"context"
+	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -62,20 +64,28 @@ func FuzzSandboxNeverPanics(f *testing.F) {
 		f.Add(s)
 	}
 
+	// Counter tracks iterations so we can force GC periodically.
+	// gopher-lua allocates Go strings and tables that bypass the
+	// RegistrySlots cap. Without periodic GC the fuzzer worker
+	// accumulates garbage faster than the background collector can
+	// reclaim and eventually OOMs (especially during minimization
+	// where the failing input is re-run in a tight loop).
+	var iter atomic.Uint64
+
 	f.Fuzz(func(t *testing.T, src string) {
-		// Cap input length. Very long fuzzer-generated sources
-		// are unlikely to find bugs that shorter inputs miss,
-		// and gopher-lua's table/string allocations bypass the
-		// RegistrySlots cap so a single iteration with a large
-		// source can allocate tens of megabytes of Go heap.
-		// Over millions of iterations the GC cannot keep up and
-		// the worker OOMs.
-		// Cap input length. Short sources cover the same code paths
-		// and do not trigger the gopher-lua allocator pathology where
-		// a single iteration can allocate tens of megabytes, OOM-ing
-		// the fuzzer worker during minimization.
-		if len(src) > 2048 {
+		// Cap input length. Short sources cover the same code
+		// paths and are far less likely to trigger the gopher-lua
+		// allocation pathology where a single iteration allocates
+		// tens of megabytes.
+		if len(src) > 1024 {
 			return
+		}
+
+		// Force GC every 500 iterations to prevent garbage from
+		// accumulating to the point where the worker OOMs.
+		n := iter.Add(1)
+		if n%500 == 0 {
+			runtime.GC()
 		}
 
 		// Catch any panic the runtime might raise so the fuzz
@@ -92,7 +102,7 @@ func FuzzSandboxNeverPanics(f *testing.F) {
 		rt, err := NewRuntime(src, fa, Budget{
 			Instructions:  100_000,
 			Wallclock:     wallclock,
-			RegistrySlots: 2048,
+			RegistrySlots: 1024,
 		})
 		if err != nil {
 			// Compile errors are fine — the sandbox refused
