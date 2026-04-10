@@ -260,10 +260,10 @@ func (c *Channel) MemberIDs() map[UserID]Membership {
 //
 //   - '+'  modeless channels: no flag (no operators by definition)
 //   - '!'  safe channels: MemberCreator (RFC 2811 §4.3.5 — the
-//          immortal creator status that implies +o and cannot be
-//          removed)
+//     immortal creator status that implies +o and cannot be
+//     removed)
 //   - '#' / '&' standard channels: MemberOp (the regular auto-op
-//          first joiner has had since 1990)
+//     first joiner has had since 1990)
 //
 // Returns true if id was newly added, false if it was already a
 // member (in which case the membership is not modified).

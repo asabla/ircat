@@ -40,7 +40,9 @@ func (f *fakeMetricsForPages) FederationLinkCount() int { return f.fed }
 func (f *fakeMetricsForPages) BotCount() int            { return f.bots }
 func (f *fakeMetricsForPages) MessagesIn() uint64       { return f.in }
 func (f *fakeMetricsForPages) MessagesOut() uint64      { return f.out }
-func (f *fakeMetricsForPages) StartedAt() time.Time     { return time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC) }
+func (f *fakeMetricsForPages) StartedAt() time.Time {
+	return time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+}
 
 func newPageServer(t *testing.T) (*Server, *sqlite.Store, *state.World) {
 	t.Helper()

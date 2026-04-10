@@ -143,9 +143,9 @@ func TestChannels_RoundTripsExceptionsAndInvexes(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	rec := &storage.ChannelRecord{
-		Name:     "#fed",
-		Topic:    "",
-		ModeWord: "+nt",
+		Name:       "#fed",
+		Topic:      "",
+		ModeWord:   "+nt",
 		Bans:       []storage.BanRecord{{Mask: "evil!*@*"}},
 		Exceptions: []storage.BanRecord{{Mask: "trusted!*@safe.example"}},
 		Invexes:    []storage.BanRecord{{Mask: "*!*@vip.example"}},

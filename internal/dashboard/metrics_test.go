@@ -20,13 +20,13 @@ type fakeMetricsSource struct {
 	startedAt                  time.Time
 }
 
-func (f *fakeMetricsSource) UserCount() int            { return f.users }
-func (f *fakeMetricsSource) ChannelCount() int         { return f.channels }
-func (f *fakeMetricsSource) FederationLinkCount() int  { return f.fed }
-func (f *fakeMetricsSource) BotCount() int             { return f.bots }
-func (f *fakeMetricsSource) MessagesIn() uint64        { return f.in }
-func (f *fakeMetricsSource) MessagesOut() uint64       { return f.out }
-func (f *fakeMetricsSource) StartedAt() time.Time      { return f.startedAt }
+func (f *fakeMetricsSource) UserCount() int           { return f.users }
+func (f *fakeMetricsSource) ChannelCount() int        { return f.channels }
+func (f *fakeMetricsSource) FederationLinkCount() int { return f.fed }
+func (f *fakeMetricsSource) BotCount() int            { return f.bots }
+func (f *fakeMetricsSource) MessagesIn() uint64       { return f.in }
+func (f *fakeMetricsSource) MessagesOut() uint64      { return f.out }
+func (f *fakeMetricsSource) StartedAt() time.Time     { return f.startedAt }
 
 func startMetricsDashboard(t *testing.T, src MetricsSource) (string, func()) {
 	t.Helper()

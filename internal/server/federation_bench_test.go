@@ -338,4 +338,3 @@ func skipUntilNumeric(b *testing.B, c net.Conn, r *bufio.Reader, code string) {
 		}
 	}
 }
-

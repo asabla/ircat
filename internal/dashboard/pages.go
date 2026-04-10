@@ -122,20 +122,20 @@ type pageData struct {
 	ServerName string // small caption under the brand
 
 	// per-page payloads
-	Server       overviewPayload
-	Cards        []cardPayload
-	Users        []userPayload
-	UserDetail   *userDetailPayload
-	Channels     []channelPayload
+	Server        overviewPayload
+	Cards         []cardPayload
+	Users         []userPayload
+	UserDetail    *userDetailPayload
+	Channels      []channelPayload
 	ChannelDetail *channelDetailPayload
-	Federation   []fedLinkPayload
-	Bots         []botPayload
-	BotDetail    *botDetailPayload
-	Operators    []operatorPayload
-	Tokens       []tokenPayload
-	Events       []eventPayload
-	Error        string
-	Flash        string
+	Federation    []fedLinkPayload
+	Bots          []botPayload
+	BotDetail     *botDetailPayload
+	Operators     []operatorPayload
+	Tokens        []tokenPayload
+	Events        []eventPayload
+	Error         string
+	Flash         string
 }
 
 type overviewPayload struct {
@@ -1225,7 +1225,7 @@ func (s *Server) buildOverviewCards() []cardPayload {
 	return out
 }
 
-func itoa(n int) string  { return strconvItoa(int64(n)) }
+func itoa(n int) string      { return strconvItoa(int64(n)) }
 func u64toa(n uint64) string { return strconvItoa(int64(n)) }
 func strconvItoa(n int64) string {
 	if n == 0 {
