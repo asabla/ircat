@@ -555,14 +555,22 @@ func TestChannelTopicPost_AppliesViaActuator(t *testing.T) {
 // test without dragging the real federation registry into the
 // dashboard test suite.
 type fakeFedRow struct {
-	peer, state, descr string
-	subs               []string
+	peer, state, descr   string
+	subs                 []string
+	sentMsgs, recvMsgs   uint64
+	sentBytes, recvBytes uint64
+	opened               time.Time
 }
 
 func (r fakeFedRow) Peer() string         { return r.peer }
 func (r fakeFedRow) State() string        { return r.state }
 func (r fakeFedRow) Description() string  { return r.descr }
 func (r fakeFedRow) Subscribed() []string { return r.subs }
+func (r fakeFedRow) SentMessages() uint64 { return r.sentMsgs }
+func (r fakeFedRow) SentBytes() uint64    { return r.sentBytes }
+func (r fakeFedRow) RecvMessages() uint64 { return r.recvMsgs }
+func (r fakeFedRow) RecvBytes() uint64    { return r.recvBytes }
+func (r fakeFedRow) OpenedAt() time.Time  { return r.opened }
 
 type fakeFederationLister struct{ rows []FederationLinkRow }
 
