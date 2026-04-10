@@ -1,0 +1,30 @@
+# Slim release Dockerfile for goreleaser.
+#
+# GoReleaser builds the binary itself and copies it plus any
+# extra_files into a temporary build context. This Dockerfile
+# expects that context to contain:
+#
+#   ircat                       (the pre-built binary)
+#   docker/default-config.yaml  (shipped default config)
+#
+# The full multi-stage docker/Dockerfile is still used for local
+# and docker-compose builds where the source tree is available.
+
+# distroless has no shell, so we need a helper stage to create
+# runtime directories with the correct ownership (nonroot = 65532).
+FROM busybox:1.36 AS dirs
+RUN install -d -o 65532 -g 65532 \
+      /chown/var/lib/ircat \
+      /chown/var/log/ircat
+
+FROM gcr.io/distroless/static-debian12:nonroot
+WORKDIR /app
+COPY ircat /app/ircat
+COPY docker/default-config.yaml /etc/ircat/config.yaml
+COPY --from=dirs --chown=65532:65532 /chown/var/lib/ircat /var/lib/ircat
+COPY --from=dirs --chown=65532:65532 /chown/var/log/ircat /var/log/ircat
+
+EXPOSE 6667 6697 7000 8080
+USER nonroot:nonroot
+ENTRYPOINT ["/app/ircat"]
+CMD ["--config", "/etc/ircat/config.yaml"]

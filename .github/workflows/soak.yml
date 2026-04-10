@@ -34,9 +34,41 @@ on:
 
 permissions:
   contents: read
+  actions: read     # gh run list in the changes gate
 
 jobs:
+  # Gate: skip the soak if no commits landed since the last
+  # successful run. Manual dispatch always runs.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - name: check for new commits
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          last_ok=$(gh run list \
+            --repo "${{ github.repository }}" \
+            --workflow soak.yml \
+            --status success \
+            --json headSha \
+            --jq '.[0].headSha // ""' 2>/dev/null || true)
+          if [ -z "$last_ok" ] || [ "$last_ok" != "${{ github.sha }}" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "No new commits since last successful soak — skipping."
+          fi
+
   soak:
+    needs: changes
+    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:

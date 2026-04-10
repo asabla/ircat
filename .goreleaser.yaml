@@ -93,8 +93,10 @@ changelog:
 dockers:
   - image_templates:
       - 'ghcr.io/asabla/ircat:{{ .Version }}-amd64'
-    dockerfile: docker/Dockerfile
+    dockerfile: docker/Dockerfile.release
     use: buildx
+    extra_files:
+      - docker/default-config.yaml
     build_flag_templates:
       - '--platform=linux/amd64'
       - '--label=org.opencontainers.image.title={{ .ProjectName }}'
@@ -102,14 +104,13 @@ dockers:
       - '--label=org.opencontainers.image.created={{ .Date }}'
       - '--label=org.opencontainers.image.revision={{ .FullCommit }}'
       - '--label=org.opencontainers.image.source=https://github.com/asabla/ircat'
-      - '--build-arg=VERSION={{ .Version }}'
-      - '--build-arg=COMMIT={{ .ShortCommit }}'
-      - '--build-arg=DATE={{ .Date }}'
   - image_templates:
       - 'ghcr.io/asabla/ircat:{{ .Version }}-arm64'
     goarch: arm64
-    dockerfile: docker/Dockerfile
+    dockerfile: docker/Dockerfile.release
     use: buildx
+    extra_files:
+      - docker/default-config.yaml
     build_flag_templates:
       - '--platform=linux/arm64'
       - '--label=org.opencontainers.image.title={{ .ProjectName }}'
@@ -117,9 +118,6 @@ dockers:
       - '--label=org.opencontainers.image.created={{ .Date }}'
       - '--label=org.opencontainers.image.revision={{ .FullCommit }}'
       - '--label=org.opencontainers.image.source=https://github.com/asabla/ircat'
-      - '--build-arg=VERSION={{ .Version }}'
-      - '--build-arg=COMMIT={{ .ShortCommit }}'
-      - '--build-arg=DATE={{ .Date }}'
 
 docker_manifests:
   - name_template: 'ghcr.io/asabla/ircat:{{ .Version }}'
