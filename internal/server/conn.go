@@ -402,6 +402,16 @@ func (c *Conn) send(m *protocol.Message) {
 	if c.capsAccepted["server-time"] {
 		m = m.WithTag("time", c.server.now().UTC().Format("2006-01-02T15:04:05.000Z"))
 	}
+	// IRCv3 account-tag: attach @account=<name> when the sender is
+	// logged in and the recipient negotiated the cap. We extract the
+	// nick from the message prefix and look up the user in the world.
+	if c.capsAccepted["account-tag"] && m.Prefix != "" {
+		if nick, _, ok := strings.Cut(m.Prefix, "!"); ok {
+			if sender := c.server.world.FindByNick(nick); sender != nil && sender.Account != "" {
+				m = m.WithTag("account", sender.Account)
+			}
+		}
+	}
 	select {
 	case c.out <- m:
 	default:

@@ -45,6 +45,16 @@ var supportedCapList = []string{
 	// clients can authenticate before registration completes.
 	// Wired in handler_sasl.handleAuthenticate.
 	"sasl",
+	// account-tag attaches @account=<name> on every message
+	// from a logged-in user so the client knows who is behind
+	// the nick without a WHOIS. Wired in Conn.send alongside
+	// server-time.
+	"account-tag",
+	// extended-join adds the account name and realname as extra
+	// parameters on JOIN broadcasts so a client knows who
+	// someone is the moment they join. Wired in the JOIN
+	// broadcast path in handler_channels.
+	"extended-join",
 }
 
 // supportedCaps returns the space-separated cap list as it appears
