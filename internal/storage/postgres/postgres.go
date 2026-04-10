@@ -39,6 +39,7 @@ type Store struct {
 	events             *eventStore
 	accounts           *accountStore
 	registeredChannels *registeredChannelStore
+	memos              *memoStore
 }
 
 // Open returns a Store backed by the Postgres database at dsn. The
@@ -64,6 +65,7 @@ func Open(dsn string) (*Store, error) {
 	s.events = &eventStore{db: db}
 	s.accounts = &accountStore{db: db}
 	s.registeredChannels = &registeredChannelStore{db: db}
+	s.memos = &memoStore{db: db}
 	return s, nil
 }
 
@@ -87,6 +89,9 @@ func (s *Store) Accounts() storage.AccountStore { return s.accounts }
 
 // RegisteredChannels returns the ChanServ channel registration store.
 func (s *Store) RegisteredChannels() storage.RegisteredChannelStore { return s.registeredChannels }
+
+// Memos returns the offline memo store.
+func (s *Store) Memos() storage.MemoStore { return s.memos }
 
 // Close releases the underlying database connection pool.
 func (s *Store) Close() error { return s.db.Close() }

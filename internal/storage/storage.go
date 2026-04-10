@@ -56,6 +56,8 @@ type Store interface {
 	Accounts() AccountStore
 	// RegisteredChannels returns the ChanServ channel registration store.
 	RegisteredChannels() RegisteredChannelStore
+	// Memos returns the offline memo store (MemoServ).
+	Memos() MemoStore
 	// Migrate runs any pending schema migrations. Idempotent.
 	Migrate(ctx context.Context) error
 	// Close releases all resources held by the driver.
@@ -267,4 +269,24 @@ type RegisteredChannelStore interface {
 	ListAccess(ctx context.Context, channel string) ([]ChannelAccess, error)
 	SetAccess(ctx context.Context, ca *ChannelAccess) error
 	DeleteAccess(ctx context.Context, channel, accountID string) error
+}
+
+// Memo is one offline message between accounts.
+type Memo struct {
+	ID          string
+	SenderID    string
+	RecipientID string
+	Body        string
+	Read        bool
+	CreatedAt   time.Time
+}
+
+// MemoStore manages offline memos between accounts.
+type MemoStore interface {
+	Send(ctx context.Context, memo *Memo) error
+	ListForRecipient(ctx context.Context, recipientID string) ([]Memo, error)
+	Get(ctx context.Context, id string) (*Memo, error)
+	MarkRead(ctx context.Context, id string) error
+	Delete(ctx context.Context, id string) error
+	CountUnread(ctx context.Context, recipientID string) (int, error)
 }

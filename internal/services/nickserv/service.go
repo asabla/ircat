@@ -36,6 +36,11 @@ type Service struct {
 	// being renamed to a guest nick. Zero disables enforcement.
 	enforceTimeout time.Duration
 
+	// OnIdentify is an optional callback invoked after a successful
+	// NickServ IDENTIFY. The server wires this to notify MemoServ
+	// about unread memos. Called with (nick, accountName).
+	OnIdentify func(nick, account string)
+
 	// pending tracks users who are on a registered nick but have
 	// not yet identified. The timer fires the guest rename.
 	mu      sync.Mutex
@@ -112,6 +117,9 @@ func (s *Service) Deliver(msg *protocol.Message) {
 			u.Account = acctName
 		}
 		s.cancelEnforcement(senderNick)
+		if s.OnIdentify != nil {
+			s.OnIdentify(senderNick, acctName)
+		}
 	}
 
 	s.sender.SendNoticeToNick(nickservMask, senderNick, reply)
