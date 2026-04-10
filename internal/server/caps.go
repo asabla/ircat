@@ -59,6 +59,9 @@ var supportedCapList = []string{
 	// so a client can render them as a unit. Wired in
 	// sendNamesReply and handleWho.
 	"batch",
+	// chghost notifies shared-channel members when a user's
+	// displayed host changes. Wired in handler_chghost.
+	"chghost",
 }
 
 // supportedCaps returns the space-separated cap list as it appears

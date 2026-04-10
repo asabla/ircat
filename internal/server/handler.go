@@ -110,6 +110,8 @@ func (c *Conn) dispatch(m *protocol.Message) {
 		c.handleCap(m)
 	case "AUTHENTICATE":
 		c.handleAuthenticate(m)
+	case "CHGHOST":
+		c.handleChghost(m)
 	default:
 		// For unknown commands during registration we MUST send
 		// ERR_NOTREGISTERED, not ERR_UNKNOWNCOMMAND, so the client
