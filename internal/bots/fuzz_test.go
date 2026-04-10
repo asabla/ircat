@@ -63,6 +63,17 @@ func FuzzSandboxNeverPanics(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, src string) {
+		// Cap input length. Very long fuzzer-generated sources
+		// are unlikely to find bugs that shorter inputs miss,
+		// and gopher-lua's table/string allocations bypass the
+		// RegistrySlots cap so a single iteration with a large
+		// source can allocate tens of megabytes of Go heap.
+		// Over millions of iterations the GC cannot keep up and
+		// the worker OOMs.
+		if len(src) > 4096 {
+			return
+		}
+
 		// Catch any panic the runtime might raise so the fuzz
 		// run reports it as a failed input rather than a
 		// process-wide crash.
