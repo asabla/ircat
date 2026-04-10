@@ -161,6 +161,9 @@ func (c *Conn) joinOne(name, key string) {
 
 	// NAMES burst (only to the joiner).
 	c.sendNamesReply(ch)
+
+	// ChanServ auto-op check.
+	c.server.notifyChanServ(c.user.Nick, c.user.Account, ch.Name())
 }
 
 // checkJoinPolicy returns the mode character that prevented the
