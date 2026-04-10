@@ -33,12 +33,13 @@ var migrationFS embed.FS
 type Store struct {
 	db *sql.DB
 
-	operators *operatorStore
-	tokens    *tokenStore
-	bots      *botStore
-	channels  *channelStore
-	events    *eventStore
-	accounts  *accountStore
+	operators          *operatorStore
+	tokens             *tokenStore
+	bots               *botStore
+	channels           *channelStore
+	events             *eventStore
+	accounts           *accountStore
+	registeredChannels *registeredChannelStore
 }
 
 // Open returns a Store backed by the SQLite database at path.
@@ -70,6 +71,7 @@ func Open(path string) (*Store, error) {
 	s.channels = &channelStore{db: db}
 	s.events = &eventStore{db: db}
 	s.accounts = &accountStore{db: db}
+	s.registeredChannels = &registeredChannelStore{db: db}
 	return s, nil
 }
 
@@ -115,6 +117,9 @@ func (s *Store) Events() storage.EventStore { return s.events }
 
 // Accounts returns the user account store.
 func (s *Store) Accounts() storage.AccountStore { return s.accounts }
+
+// RegisteredChannels returns the ChanServ channel registration store.
+func (s *Store) RegisteredChannels() storage.RegisteredChannelStore { return s.registeredChannels }
 
 // Close releases the underlying database connection pool.
 func (s *Store) Close() error {

@@ -33,6 +33,7 @@ import (
 
 	"github.com/asabla/ircat/internal/config"
 	"github.com/asabla/ircat/internal/protocol"
+	"github.com/asabla/ircat/internal/services/chanserv"
 	"github.com/asabla/ircat/internal/services/nickserv"
 	"github.com/asabla/ircat/internal/state"
 	"github.com/asabla/ircat/internal/storage"
@@ -89,6 +90,10 @@ type Server struct {
 	// no store is wired (tests without persistence). Used by the
 	// registration and nick-change paths to trigger enforcement.
 	nickserv *nickserv.Service
+
+	// chanserv is the live ChanServ service instance. Nil when
+	// no store is wired. Used by the JOIN path to trigger auto-op.
+	chanserv *chanserv.Service
 
 	// fedLinks is the federation link registry, keyed by peer
 	// server name. See internal/server/federation.go for the
@@ -410,6 +415,7 @@ func (s *Server) Run(ctx context.Context) error {
 	// Start in-process services if the account store is available.
 	if s.store != nil {
 		s.startNickServ(ctx)
+		s.startChanServ(ctx)
 	}
 
 	if err := s.restorePersistentChannels(ctx); err != nil {
@@ -499,6 +505,47 @@ func (s *Server) notifyNickServ(nick string, account string) {
 		return
 	}
 	s.nickserv.CheckNick(nick, account != "")
+}
+
+// startChanServ registers a ChanServ service user in the world and
+// wires it up as a BotDeliverer so PRIVMSG/SQUERY reach it.
+func (s *Server) startChanServ(ctx context.Context) {
+	svc, err := chanserv.Start(
+		ctx,
+		s.store.RegisteredChannels(),
+		s.store.Accounts(),
+		s.world, s, s.logger,
+	)
+	if err != nil {
+		s.logger.Warn("ChanServ failed to start", "error", err)
+		return
+	}
+	s.RegisterBot(svc.User().ID, svc)
+	s.chanserv = svc
+}
+
+// SetChannelMode broadcasts a MODE change on a channel. Used by
+// ChanServ to set +o/-o. Satisfies chanserv.ReplySender.
+func (s *Server) SetChannelMode(from, channel, modeStr, target string) {
+	ch := s.world.FindChannel(channel)
+	if ch == nil {
+		return
+	}
+	msg := &protocol.Message{
+		Prefix:  from,
+		Command: "MODE",
+		Params:  []string{channel, modeStr, target},
+	}
+	s.broadcastToChannel(ch, msg, 0, true)
+}
+
+// notifyChanServ tells ChanServ to check whether a joining user
+// should be auto-opped. No-op when ChanServ is not running.
+func (s *Server) notifyChanServ(nick, account, channel string) {
+	if s.chanserv == nil {
+		return
+	}
+	s.chanserv.CheckJoin(nick, account, channel)
 }
 
 func (s *Server) acceptLoop(ctx context.Context, l net.Listener) {
