@@ -54,6 +54,8 @@ type Store interface {
 	Events() EventStore
 	// Accounts returns the user account store (SASL, NickServ).
 	Accounts() AccountStore
+	// RegisteredChannels returns the ChanServ channel registration store.
+	RegisteredChannels() RegisteredChannelStore
 	// Migrate runs any pending schema migrations. Idempotent.
 	Migrate(ctx context.Context) error
 	// Close releases all resources held by the driver.
@@ -234,4 +236,35 @@ type ListEventsOptions struct {
 	Type     string    // empty = all types
 	Limit    int       // <=0 = driver default (typically 100)
 	BeforeID string    // cursor; "" = newest first
+}
+
+// RegisteredChannel is a ChanServ-registered channel.
+type RegisteredChannel struct {
+	Channel   string
+	FounderID string // account ID
+	Guard     bool   // auto-op founder on join
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// ChannelAccess is one access-list entry for a registered channel.
+type ChannelAccess struct {
+	Channel   string
+	AccountID string
+	Flags     string // "o" = auto-op, "v" = auto-voice
+	CreatedAt time.Time
+}
+
+// RegisteredChannelStore manages ChanServ channel registrations.
+type RegisteredChannelStore interface {
+	Get(ctx context.Context, channel string) (*RegisteredChannel, error)
+	List(ctx context.Context) ([]RegisteredChannel, error)
+	Create(ctx context.Context, rc *RegisteredChannel) error
+	Update(ctx context.Context, rc *RegisteredChannel) error
+	Delete(ctx context.Context, channel string) error
+	// Access list operations
+	GetAccess(ctx context.Context, channel, accountID string) (*ChannelAccess, error)
+	ListAccess(ctx context.Context, channel string) ([]ChannelAccess, error)
+	SetAccess(ctx context.Context, ca *ChannelAccess) error
+	DeleteAccess(ctx context.Context, channel, accountID string) error
 }
