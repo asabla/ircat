@@ -503,6 +503,26 @@ func (s *Server) broadcastToChannelFederated(ch *state.Channel, msg *protocol.Me
 	s.forwardChannelToSubscribed(ch, msg)
 }
 
+// forwardJoinToFederation handles the federation-only part of a
+// JOIN broadcast. Used when the local delivery is handled separately
+// (e.g. for extended-join per-recipient branching).
+func (s *Server) forwardJoinToFederation(ch *state.Channel, msg *protocol.Message) {
+	if s.fedBroadcastMode() == "fanout" {
+		s.forwardToAllLinks(msg)
+		return
+	}
+	s.fedMu.RLock()
+	peers := make([]string, 0, len(s.fedLinks))
+	for name := range s.fedLinks {
+		peers = append(peers, name)
+	}
+	s.fedMu.RUnlock()
+	for _, name := range peers {
+		s.SubscribePeerToChannel(name, ch.Name())
+	}
+	s.forwardToAllLinks(msg)
+}
+
 // fedBroadcastMode returns the configured federation broadcast
 // mode, normalized and defaulted to "subscription".
 func (s *Server) fedBroadcastMode() string {
