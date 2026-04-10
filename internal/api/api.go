@@ -49,6 +49,10 @@ type API struct {
 	// New time so the /server endpoint does not need to grow a
 	// closure for every field.
 	serverInfo ServerInfoSource
+
+	// federation exposes the live per-link counters. Optional —
+	// when nil the federation endpoint returns an empty array.
+	federation FederationLister
 }
 
 // Actuator is the small surface the API uses to take live actions
@@ -98,6 +102,7 @@ type Options struct {
 	BotManager BotManager
 	ServerInfo ServerInfoSource
 	Reloader   Reloader
+	Federation FederationLister
 	Logger     *slog.Logger
 }
 
@@ -114,6 +119,7 @@ func New(opts Options) *API {
 		botManager: opts.BotManager,
 		serverInfo: opts.ServerInfo,
 		reloader:   opts.Reloader,
+		federation: opts.Federation,
 		logger:     logger,
 		now:        time.Now,
 	}
@@ -143,6 +149,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PUT /bots/{id}", a.requireToken(a.handleUpdateBot))
 	mux.HandleFunc("DELETE /bots/{id}", a.requireToken(a.handleDeleteBot))
 	mux.HandleFunc("POST /config/reload", a.requireToken(a.handleConfigReload))
+	mux.HandleFunc("GET /federation/links", a.requireToken(a.handleListFederationLinks))
 	return mux
 }
 
