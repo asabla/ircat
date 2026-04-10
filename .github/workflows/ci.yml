@@ -106,4 +106,4 @@ jobs:
           GOMEMLIMIT: 512MiB
         run: |
           go test -run='^$' -fuzz=FuzzSandboxNeverPanics \
-            -fuzztime=5m ./internal/bots/
+            -fuzztime=5m -parallel=2 ./internal/bots/
