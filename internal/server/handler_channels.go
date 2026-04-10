@@ -121,12 +121,40 @@ func (c *Conn) joinOne(name, key string) {
 	}
 
 	// Broadcast the JOIN to every member (including the joiner).
+	// IRCv3 extended-join: recipients that negotiated the cap see
+	// "JOIN #chan account :realname" instead of the bare form.
 	joinMsg := &protocol.Message{
 		Prefix:  c.user.Hostmask(),
 		Command: "JOIN",
 		Params:  []string{ch.Name()},
 	}
-	c.server.broadcastToChannelFederated(ch, joinMsg, 0, true)
+	account := c.user.Account
+	if account == "" {
+		account = "*"
+	}
+	extJoinMsg := &protocol.Message{
+		Prefix:  c.user.Hostmask(),
+		Command: "JOIN",
+		Params:  []string{ch.Name(), account, c.user.Realname},
+	}
+	if !ch.Anonymous() {
+		for id := range ch.MemberIDs() {
+			if peer := c.server.connFor(id); peer != nil {
+				if peer.capsAccepted["extended-join"] {
+					peer.send(extJoinMsg)
+				} else {
+					peer.send(joinMsg)
+				}
+				continue
+			}
+			if b := c.server.botFor(id); b != nil {
+				b.Deliver(joinMsg)
+			}
+		}
+	} else {
+		c.server.broadcastToChannel(ch, joinMsg, 0, true)
+	}
+	c.server.forwardJoinToFederation(ch, joinMsg)
 
 	// Topic burst (only to the joiner).
 	c.sendTopicState(ch)
