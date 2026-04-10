@@ -41,6 +41,10 @@ var supportedCapList = []string{
 	// INVITE happens, so the operator UI shows pending invites
 	// in real time. Wired in handler_channels.handleInvite.
 	"invite-notify",
+	// sasl advertises SASL PLAIN authentication support so
+	// clients can authenticate before registration completes.
+	// Wired in handler_sasl.handleAuthenticate.
+	"sasl",
 }
 
 // supportedCaps returns the space-separated cap list as it appears

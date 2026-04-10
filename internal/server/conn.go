@@ -125,6 +125,10 @@ type pending struct {
 	// give a clear "negotiation in progress" / "negotiation done"
 	// state machine that tryCompleteRegistration can ask about.
 	capEnded bool
+
+	// account is the authenticated account name, populated by a
+	// successful SASL PLAIN exchange before registration completes.
+	account string
 }
 
 func newConn(srv *Server, nc net.Conn) *Conn {
