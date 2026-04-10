@@ -33,6 +33,7 @@ import (
 
 	"github.com/asabla/ircat/internal/config"
 	"github.com/asabla/ircat/internal/protocol"
+	"github.com/asabla/ircat/internal/services/nickserv"
 	"github.com/asabla/ircat/internal/state"
 	"github.com/asabla/ircat/internal/storage"
 )
@@ -378,9 +379,32 @@ func (s *Server) newSafeChannelID() string {
 // Run binds every configured listener and serves until ctx is
 // cancelled. On shutdown it stops accepting, closes all listeners,
 // then waits for in-flight connections to finish their drain.
+// SendNoticeToNick delivers a NOTICE from the given prefix to the
+// named nick. Used by in-process services (NickServ) to reply to
+// users. Satisfies nickserv.ReplySender.
+func (s *Server) SendNoticeToNick(from, target, text string) {
+	u := s.world.FindByNick(target)
+	if u == nil {
+		return
+	}
+	msg := &protocol.Message{
+		Prefix:  from,
+		Command: "NOTICE",
+		Params:  []string{u.Nick, text},
+	}
+	if c := s.connFor(u.ID); c != nil {
+		c.send(msg)
+	}
+}
+
 func (s *Server) Run(ctx context.Context) error {
 	if len(s.cfg.Server.Listeners) == 0 {
 		return errors.New("server: no listeners configured")
+	}
+
+	// Start in-process services if the account store is available.
+	if s.store != nil {
+		s.startNickServ(ctx)
 	}
 
 	if err := s.restorePersistentChannels(ctx); err != nil {
@@ -421,6 +445,17 @@ func (s *Server) Run(ctx context.Context) error {
 	acceptWG.Wait()
 	s.connWG.Wait()
 	return nil
+}
+
+// startNickServ registers a NickServ service user in the world and
+// wires it up as a BotDeliverer so PRIVMSG/SQUERY reach it.
+func (s *Server) startNickServ(ctx context.Context) {
+	svc, err := nickserv.Start(ctx, s.store.Accounts(), s.world, s, s.logger)
+	if err != nil {
+		s.logger.Warn("NickServ failed to start", "error", err)
+		return
+	}
+	s.RegisterBot(svc.User().ID, svc)
 }
 
 func (s *Server) acceptLoop(ctx context.Context, l net.Listener) {
