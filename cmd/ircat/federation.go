@@ -32,7 +32,7 @@ import (
 // Plain TCP only for now — TLS and reconnect on dropped links
 // are tracked separately in docs/PLAN.md.
 func startFederation(ctx context.Context, cfg *config.Config, srv *server.Server, logger *slog.Logger) func() {
-	if cfg.Federation.Enabled == false {
+	if !cfg.Federation.Enabled {
 		return func() {}
 	}
 	logger = logger.With("component", "federation")
@@ -319,4 +319,3 @@ func (s *fedSupervisor) handleAccepted(conn net.Conn) {
 		s.runLink(conn, cfg, false)
 	}()
 }
-
