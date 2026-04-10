@@ -15,12 +15,15 @@ import (
 )
 
 // ReplySender is the interface NickServ uses to send NOTICE replies
-// back to users and force nick changes.
+// back to users, force nick changes, and disconnect users.
 type ReplySender interface {
 	SendNoticeToNick(from, target, text string)
 	// ForceNickChange renames a user on the server. Used by
 	// enforcement to guest-rename unidentified users.
 	ForceNickChange(oldNick, newNick string) bool
+	// DisconnectNick disconnects a user with the given nick and
+	// sends them a QUIT reason. Used by NickServ GHOST.
+	DisconnectNick(nick, reason string)
 }
 
 // Service wraps a NickServ handler with the delivery plumbing
@@ -56,11 +59,12 @@ const nickservMask = "NickServ!service@services."
 func Start(
 	ctx context.Context,
 	accounts storage.AccountStore,
+	nickOwners storage.NickOwnerStore,
 	world *state.World,
 	sender ReplySender,
 	logger *slog.Logger,
 ) (*Service, error) {
-	ns := New(accounts, logger)
+	ns := New(accounts, nickOwners, logger)
 
 	user := &state.User{
 		Nick:                "NickServ",
@@ -105,8 +109,14 @@ func (s *Service) Deliver(msg *protocol.Message) {
 		senderNick = senderNick[:idx]
 	}
 
+	// Look up the sender's account.
+	senderAccount := ""
+	if u := s.world.FindByNick(senderNick); u != nil {
+		senderAccount = u.Account
+	}
+
 	text := msg.Params[1]
-	reply := s.ns.HandleMessage(context.Background(), senderNick, text)
+	reply := s.ns.HandleMessage(context.Background(), senderNick, senderAccount, text)
 
 	// If IDENTIFY succeeded, set the user's Account field and
 	// cancel any pending enforcement timer.
@@ -120,6 +130,25 @@ func (s *Service) Deliver(msg *protocol.Message) {
 		if s.OnIdentify != nil {
 			s.OnIdentify(senderNick, acctName)
 		}
+	}
+
+	// Handle directive replies (GHOST, RELEASE).
+	if strings.HasPrefix(reply, "\x01GHOST ") {
+		targetNick := strings.TrimPrefix(reply, "\x01GHOST ")
+		targetNick = strings.TrimSpace(targetNick)
+		s.sender.DisconnectNick(targetNick,
+			fmt.Sprintf("Ghosted by %s", senderNick))
+		s.sender.SendNoticeToNick(nickservMask, senderNick,
+			fmt.Sprintf("User %s has been ghosted.", targetNick))
+		return
+	}
+	if strings.HasPrefix(reply, "\x01RELEASE ") {
+		targetNick := strings.TrimPrefix(reply, "\x01RELEASE ")
+		targetNick = strings.TrimSpace(targetNick)
+		s.cancelEnforcement(targetNick)
+		s.sender.SendNoticeToNick(nickservMask, senderNick,
+			fmt.Sprintf("Nick %s has been released.", targetNick))
+		return
 	}
 
 	s.sender.SendNoticeToNick(nickservMask, senderNick, reply)

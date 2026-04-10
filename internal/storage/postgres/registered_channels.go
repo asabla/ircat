@@ -17,14 +17,14 @@ type registeredChannelStore struct {
 }
 
 const (
-	rcSelectAll = `SELECT channel, founder_id, guard, created_at, updated_at FROM registered_channels`
+	rcSelectAll = `SELECT channel, founder_id, guard, keep_topic, created_at, updated_at FROM registered_channels`
 	rcSelectOne = rcSelectAll + ` WHERE channel = $1`
 )
 
 func (s *registeredChannelStore) Get(ctx context.Context, channel string) (*storage.RegisteredChannel, error) {
 	var rc storage.RegisteredChannel
 	err := s.db.QueryRowContext(ctx, rcSelectOne, channel).Scan(
-		&rc.Channel, &rc.FounderID, &rc.Guard, &rc.CreatedAt, &rc.UpdatedAt,
+		&rc.Channel, &rc.FounderID, &rc.Guard, &rc.KeepTopic, &rc.CreatedAt, &rc.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, storage.ErrNotFound
@@ -44,7 +44,7 @@ func (s *registeredChannelStore) List(ctx context.Context) ([]storage.Registered
 	var out []storage.RegisteredChannel
 	for rows.Next() {
 		var rc storage.RegisteredChannel
-		if err := rows.Scan(&rc.Channel, &rc.FounderID, &rc.Guard, &rc.CreatedAt, &rc.UpdatedAt); err != nil {
+		if err := rows.Scan(&rc.Channel, &rc.FounderID, &rc.Guard, &rc.KeepTopic, &rc.CreatedAt, &rc.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("registered_channels.List scan: %w", err)
 		}
 		out = append(out, rc)
@@ -58,9 +58,9 @@ func (s *registeredChannelStore) Create(ctx context.Context, rc *storage.Registe
 	}
 	now := time.Now().UTC()
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO registered_channels(channel, founder_id, guard, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5)`,
-		rc.Channel, rc.FounderID, rc.Guard, now, now,
+		`INSERT INTO registered_channels(channel, founder_id, guard, keep_topic, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		rc.Channel, rc.FounderID, rc.Guard, rc.KeepTopic, now, now,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -80,9 +80,9 @@ func (s *registeredChannelStore) Update(ctx context.Context, rc *storage.Registe
 	now := time.Now().UTC()
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE registered_channels
-		   SET founder_id = $1, guard = $2, updated_at = $3
-		 WHERE channel = $4`,
-		rc.FounderID, rc.Guard, now, rc.Channel,
+		   SET founder_id = $1, guard = $2, keep_topic = $3, updated_at = $4
+		 WHERE channel = $5`,
+		rc.FounderID, rc.Guard, rc.KeepTopic, now, rc.Channel,
 	)
 	if err != nil {
 		return fmt.Errorf("registered_channels.Update: %w", err)

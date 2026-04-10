@@ -58,6 +58,8 @@ type Store interface {
 	RegisteredChannels() RegisteredChannelStore
 	// Memos returns the offline memo store (MemoServ).
 	Memos() MemoStore
+	// NickOwners returns the nick ownership store (NickServ GROUP).
+	NickOwners() NickOwnerStore
 	// Migrate runs any pending schema migrations. Idempotent.
 	Migrate(ctx context.Context) error
 	// Close releases all resources held by the driver.
@@ -245,6 +247,7 @@ type RegisteredChannel struct {
 	Channel   string
 	FounderID string // account ID
 	Guard     bool   // auto-op founder on join
+	KeepTopic bool   // restore topic when channel re-creates
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -271,6 +274,23 @@ type RegisteredChannelStore interface {
 	DeleteAccess(ctx context.Context, channel, accountID string) error
 }
 
+// NickOwner links a nick to a registered account. Multiple nicks can
+// be grouped under one account; exactly one is marked primary.
+type NickOwner struct {
+	Nick      string
+	AccountID string
+	Primary   bool
+	CreatedAt time.Time
+}
+
+// NickOwnerStore manages the nick_owners table (GROUP, DROP, INFO).
+type NickOwnerStore interface {
+	Get(ctx context.Context, nick string) (*NickOwner, error)
+	ListByAccount(ctx context.Context, accountID string) ([]NickOwner, error)
+	Create(ctx context.Context, no *NickOwner) error
+	Delete(ctx context.Context, nick string) error
+}
+
 // Memo is one offline message between accounts.
 type Memo struct {
 	ID          string
@@ -289,4 +309,7 @@ type MemoStore interface {
 	MarkRead(ctx context.Context, id string) error
 	Delete(ctx context.Context, id string) error
 	CountUnread(ctx context.Context, recipientID string) (int, error)
+	// PurgeOlderThan deletes all memos created before the given
+	// timestamp and returns the number of rows removed.
+	PurgeOlderThan(ctx context.Context, before time.Time) (int, error)
 }

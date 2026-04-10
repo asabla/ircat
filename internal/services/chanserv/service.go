@@ -10,23 +10,28 @@ import (
 	"github.com/asabla/ircat/internal/storage"
 )
 
-// ReplySender is the interface ChanServ uses to send NOTICE replies
-// and manipulate channel modes.
+// ReplySender is the interface ChanServ uses to send NOTICE replies,
+// manipulate channel modes, and set channel topics.
 type ReplySender interface {
 	SendNoticeToNick(from, target, text string)
 	// SetChannelMode sets a mode on a channel. The modeStr is e.g.
 	// "+o" or "-o" and target is the nick affected.
 	SetChannelMode(from, channel, modeStr, target string)
+	// BroadcastChannelTopic broadcasts a topic change to a channel.
+	// Used by KEEPTOPIC to restore a persisted topic when the
+	// channel re-creates.
+	BroadcastChannelTopic(from, channel, topic string)
 }
 
 // Service wraps a ChanServ handler with the delivery plumbing
 // needed to run as an in-process IRC service.
 type Service struct {
-	cs     *ChanServ
-	user   *state.User
-	world  *state.World
-	sender ReplySender
-	logger *slog.Logger
+	cs              *ChanServ
+	user            *state.User
+	world           *state.World
+	sender          ReplySender
+	logger          *slog.Logger
+	persistChannels storage.PersistentChannelStore
 }
 
 const chanservMask = "ChanServ!service@services."
@@ -37,6 +42,7 @@ func Start(
 	ctx context.Context,
 	channels storage.RegisteredChannelStore,
 	accounts storage.AccountStore,
+	persistChannels storage.PersistentChannelStore,
 	world *state.World,
 	sender ReplySender,
 	logger *slog.Logger,
@@ -59,11 +65,12 @@ func Start(
 	logger.Info("ChanServ registered", "nick", user.Nick, "id", user.ID)
 
 	return &Service{
-		cs:     cs,
-		user:   user,
-		world:  world,
-		sender: sender,
-		logger: logger,
+		cs:              cs,
+		user:            user,
+		world:           world,
+		sender:          sender,
+		logger:          logger,
+		persistChannels: persistChannels,
 	}, nil
 }
 
@@ -189,12 +196,40 @@ func (s *Service) CheckJoin(nick, account, channel string) {
 
 	// Check access list for "o" flag.
 	ca, err := s.cs.channels.GetAccess(context.Background(), channel, account)
-	if err != nil {
-		return
-	}
-	if strings.Contains(ca.Flags, "o") {
+	if err == nil && strings.Contains(ca.Flags, "o") {
 		s.autoOp(nick, channel)
 	}
+
+	// KEEPTOPIC: if the channel was just re-created (only one
+	// member) and the registered channel has KEEPTOPIC enabled,
+	// restore the topic from persistent storage.
+	if rc.KeepTopic {
+		s.maybeRestoreTopic(channel)
+	}
+}
+
+// maybeRestoreTopic restores a persisted topic to a channel that
+// was just re-created (has exactly one member and no topic set).
+func (s *Service) maybeRestoreTopic(channel string) {
+	ch := s.world.FindChannel(channel)
+	if ch == nil {
+		return
+	}
+	// Only restore when the channel was just created (one member)
+	// and the current topic is empty.
+	topic, _, _ := ch.Topic()
+	if ch.MemberCount() != 1 || topic != "" {
+		return
+	}
+	if s.persistChannels == nil {
+		return
+	}
+	rec, err := s.persistChannels.Get(context.Background(), channel)
+	if err != nil || rec.Topic == "" {
+		return
+	}
+	ch.SetTopic(rec.Topic, rec.TopicSetBy, rec.TopicSetAt)
+	s.sender.BroadcastChannelTopic(chanservMask, channel, rec.Topic)
 }
 
 // autoOp grants +o to nick on channel silently.

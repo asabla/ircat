@@ -162,26 +162,26 @@ func (cs *ChanServ) handleInfo(ctx context.Context, args []string) string {
 	if !rc.Guard {
 		guardStr = "OFF"
 	}
-	return fmt.Sprintf("Channel: %s | Founder: %s | Guard: %s | Registered: %s",
-		rc.Channel, rc.FounderID, guardStr, rc.CreatedAt.Format("2006-01-02 15:04:05 UTC"))
+	keepTopicStr := "ON"
+	if !rc.KeepTopic {
+		keepTopicStr = "OFF"
+	}
+	return fmt.Sprintf("Channel: %s | Founder: %s | Guard: %s | KeepTopic: %s | Registered: %s",
+		rc.Channel, rc.FounderID, guardStr, keepTopicStr, rc.CreatedAt.Format("2006-01-02 15:04:05 UTC"))
 }
 
-// handleSet handles SET subcommands. Currently: GUARD ON/OFF.
-// Usage: SET <#channel> GUARD ON|OFF
+// handleSet handles SET subcommands: GUARD ON/OFF, KEEPTOPIC ON/OFF.
+// Usage: SET <#channel> <option> ON|OFF
 func (cs *ChanServ) handleSet(ctx context.Context, senderAccount string, args []string) string {
 	if senderAccount == "" {
 		return "You must be identified to use SET."
 	}
 	if len(args) < 3 {
-		return "Usage: SET <#channel> GUARD ON|OFF"
+		return "Usage: SET <#channel> <GUARD|KEEPTOPIC> ON|OFF"
 	}
 	channel := args[0]
 	subCmd := strings.ToUpper(args[1])
 	value := strings.ToUpper(args[2])
-
-	if subCmd != "GUARD" {
-		return "Unknown SET option. Available: GUARD"
-	}
 
 	rc, err := cs.channels.Get(ctx, channel)
 	if err != nil {
@@ -191,20 +191,40 @@ func (cs *ChanServ) handleSet(ctx context.Context, senderAccount string, args []
 		return "Only the channel founder can change settings."
 	}
 
-	switch value {
-	case "ON":
-		rc.Guard = true
-	case "OFF":
-		rc.Guard = false
-	default:
-		return "Usage: SET <#channel> GUARD ON|OFF"
-	}
+	switch subCmd {
+	case "GUARD":
+		switch value {
+		case "ON":
+			rc.Guard = true
+		case "OFF":
+			rc.Guard = false
+		default:
+			return "Usage: SET <#channel> GUARD ON|OFF"
+		}
+		if err := cs.channels.Update(ctx, rc); err != nil {
+			cs.logger.Warn("ChanServ SET GUARD failed", "error", err)
+			return "Internal error."
+		}
+		return fmt.Sprintf("Guard for %s is now %s.", channel, value)
 
-	if err := cs.channels.Update(ctx, rc); err != nil {
-		cs.logger.Warn("ChanServ SET GUARD failed", "error", err)
-		return "Internal error."
+	case "KEEPTOPIC":
+		switch value {
+		case "ON":
+			rc.KeepTopic = true
+		case "OFF":
+			rc.KeepTopic = false
+		default:
+			return "Usage: SET <#channel> KEEPTOPIC ON|OFF"
+		}
+		if err := cs.channels.Update(ctx, rc); err != nil {
+			cs.logger.Warn("ChanServ SET KEEPTOPIC failed", "error", err)
+			return "Internal error."
+		}
+		return fmt.Sprintf("KeepTopic for %s is now %s.", channel, value)
+
+	default:
+		return "Unknown SET option. Available: GUARD, KEEPTOPIC"
 	}
-	return fmt.Sprintf("Guard for %s is now %s.", channel, value)
 }
 
 // hasAccess checks whether the account is the founder or has the
