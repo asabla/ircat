@@ -34,6 +34,7 @@ import (
 	"github.com/asabla/ircat/internal/config"
 	"github.com/asabla/ircat/internal/protocol"
 	"github.com/asabla/ircat/internal/services/chanserv"
+	"github.com/asabla/ircat/internal/services/memoserv"
 	"github.com/asabla/ircat/internal/services/nickserv"
 	"github.com/asabla/ircat/internal/state"
 	"github.com/asabla/ircat/internal/storage"
@@ -94,6 +95,11 @@ type Server struct {
 	// chanserv is the live ChanServ service instance. Nil when
 	// no store is wired. Used by the JOIN path to trigger auto-op.
 	chanserv *chanserv.Service
+
+	// memoserv is the live MemoServ service instance. Nil when
+	// no store is wired. Used to notify users of unread memos
+	// on identify.
+	memoserv *memoserv.Service
 
 	// fedLinks is the federation link registry, keyed by peer
 	// server name. See internal/server/federation.go for the
@@ -416,6 +422,7 @@ func (s *Server) Run(ctx context.Context) error {
 	if s.store != nil {
 		s.startNickServ(ctx)
 		s.startChanServ(ctx)
+		s.startMemoServ(ctx)
 	}
 
 	if err := s.restorePersistentChannels(ctx); err != nil {
@@ -468,6 +475,31 @@ func (s *Server) startNickServ(ctx context.Context) {
 	}
 	s.RegisterBot(svc.User().ID, svc)
 	s.nickserv = svc
+}
+
+// startMemoServ registers a MemoServ service user in the world and
+// wires it up as a BotDeliverer so PRIVMSG/SQUERY reach it. Also
+// hooks into NickServ's IDENTIFY path to notify users of unread memos.
+func (s *Server) startMemoServ(ctx context.Context) {
+	svc, err := memoserv.Start(ctx, s.store.Memos(), s.store.Accounts(), s.world, s, s.logger)
+	if err != nil {
+		s.logger.Warn("MemoServ failed to start", "error", err)
+		return
+	}
+	s.RegisterBot(svc.User().ID, svc)
+	s.memoserv = svc
+
+	// Wire NickServ IDENTIFY callback to MemoServ unread notification.
+	if s.nickserv != nil {
+		s.nickserv.OnIdentify = func(nick, account string) {
+			// Look up account ID from the account name.
+			acct, err := s.store.Accounts().Get(ctx, account)
+			if err != nil {
+				return
+			}
+			svc.NotifyUnread(nick, acct.ID)
+		}
+	}
 }
 
 // ForceNickChange renames a user on the server. Used by NickServ
@@ -546,6 +578,19 @@ func (s *Server) notifyChanServ(nick, account, channel string) {
 		return
 	}
 	s.chanserv.CheckJoin(nick, account, channel)
+}
+
+// notifyMemoServ tells MemoServ to check for unread memos and
+// send a notification NOTICE. No-op when MemoServ is not running.
+func (s *Server) notifyMemoServ(nick string, account string) {
+	if s.memoserv == nil || account == "" {
+		return
+	}
+	acct, err := s.store.Accounts().Get(context.Background(), account)
+	if err != nil {
+		return
+	}
+	s.memoserv.NotifyUnread(nick, acct.ID)
 }
 
 func (s *Server) acceptLoop(ctx context.Context, l net.Listener) {

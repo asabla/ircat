@@ -90,6 +90,11 @@ func (c *Conn) tryCompleteRegistration() {
 	// Notify NickServ so it can check whether this nick is
 	// registered and start enforcement if needed.
 	c.server.notifyNickServ(user.Nick, user.Account)
+	// If the user authenticated via SASL, notify MemoServ of any
+	// unread memos right away.
+	if user.Account != "" {
+		c.server.notifyMemoServ(user.Nick, user.Account)
+	}
 }
 
 // sendWelcomeBurst emits the standard 001-005 welcome numerics plus
