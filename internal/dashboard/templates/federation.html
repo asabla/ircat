@@ -5,13 +5,26 @@
 <div class="panel">
   {{if .Federation}}
   <table>
-    <thead><tr><th>peer</th><th>state</th><th>description</th><th>subscribed channels</th></tr></thead>
+    <thead><tr>
+      <th>peer</th>
+      <th>state</th>
+      <th>description</th>
+      <th>sent msgs</th>
+      <th>recv msgs</th>
+      <th>sent bytes</th>
+      <th>recv bytes</th>
+      <th>subscribed channels</th>
+    </tr></thead>
     <tbody>
     {{range .Federation}}
     <tr>
       <td><strong>{{.Peer}}</strong></td>
       <td><span class="pill ok">{{.State}}</span></td>
       <td>{{.Description}}</td>
+      <td>{{.SentMessages}}</td>
+      <td>{{.RecvMessages}}</td>
+      <td>{{.SentBytes}}</td>
+      <td>{{.RecvBytes}}</td>
       <td>
         {{if .Subscribed}}
           {{range .Subscribed}}<code>{{.}}</code> {{end}}

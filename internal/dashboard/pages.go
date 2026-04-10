@@ -109,6 +109,11 @@ type FederationLinkRow interface {
 	State() string
 	Description() string
 	Subscribed() []string
+	SentMessages() uint64
+	SentBytes() uint64
+	RecvMessages() uint64
+	RecvBytes() uint64
+	OpenedAt() time.Time
 }
 
 // pageData is the per-request render struct. Every handler
@@ -213,10 +218,14 @@ func sortedKeys[V any](m map[string]V) []string {
 }
 
 type fedLinkPayload struct {
-	Peer        string
-	State       string
-	Description string
-	Subscribed  []string
+	Peer         string
+	State        string
+	Description  string
+	Subscribed   []string
+	SentMessages uint64
+	SentBytes    uint64
+	RecvMessages uint64
+	RecvBytes    uint64
 }
 
 type botPayload struct {
@@ -1016,10 +1025,14 @@ func (s *Server) handleFederationPage(sess *session, w http.ResponseWriter, r *h
 	if s.pages != nil && s.pages.Federation != nil {
 		for _, row := range s.pages.Federation.FederationSnapshot() {
 			data.Federation = append(data.Federation, fedLinkPayload{
-				Peer:        row.Peer(),
-				State:       row.State(),
-				Description: row.Description(),
-				Subscribed:  row.Subscribed(),
+				Peer:         row.Peer(),
+				State:        row.State(),
+				Description:  row.Description(),
+				Subscribed:   row.Subscribed(),
+				SentMessages: row.SentMessages(),
+				SentBytes:    row.SentBytes(),
+				RecvMessages: row.RecvMessages(),
+				RecvBytes:    row.RecvBytes(),
 			})
 		}
 		sort.Slice(data.Federation, func(i, j int) bool {
