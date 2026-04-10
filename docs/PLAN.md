@@ -87,6 +87,9 @@ the cloak follow-up.
   brand-new soak harness that drives a real three-node mesh
   under sustained load (100s of users, dozens of channels,
   scripted netsplit / netjoin cycles).
+  - ✅ Mesh soak harness landed in `tests/soak/mesh.go`:
+    `RunMesh()` distributes clients across 3 nodes, runs
+    sustained PRIVMSG with cross-node probe verification.
 - **Per-link byte counter dashboard panel.** v1.0 shipped the
   STATS l counters on the wire; surface them on the dashboard
   federation panel too so an operator does not need to OPER +
@@ -147,7 +150,8 @@ their own ChanServ.
 
 These are large pieces and will likely span multiple tagged
 releases. The minimum useful subset is the account framework
-plus NickServ.
+plus NickServ. The full design is documented in
+[`SERVICES.md`](SERVICES.md).
 
 **Exit:** `ircat services` is a real subcommand that brings up
 ChanServ + NickServ on the local node, registered with the
@@ -170,10 +174,17 @@ SERVICE form, persisting accounts to the same store.
   `handler_query`, and `handler_mode` are integration-tested
   but lack focused unit suites. Add them so the inner-loop
   regression detection is faster.
+  - ✅ `handler_message_test.go` — moderated, quiet, pre-reg.
+  - ✅ `handler_query_test.go` — WHOIS edge cases, NAMES
+    visibility, LIST filtering, WHO anonymous.
+  - ✅ `handler_mode_test.go` — batched modes, boolean modes,
+    quiet list, user mode edge cases, ban removal.
+- **Soak findings log.** [`SOAK-FINDINGS.md`](SOAK-FINDINGS.md)
+  tracks nightly and ad-hoc results in a structured table.
 
 **Exit:** measured envelope tables in `OPERATIONS.md` reflect
 current reality; the three large handlers each have their own
-`_test.go` file.
+`_test.go` file (✅ done).
 
 ---
 
