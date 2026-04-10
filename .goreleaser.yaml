@@ -120,11 +120,13 @@ dockers:
       - '--label=org.opencontainers.image.source=https://github.com/asabla/ircat'
 
 docker_manifests:
-  - name_template: 'ghcr.io/asabla/ircat:{{ .Version }}'
+  - id: versioned
+    name_template: 'ghcr.io/asabla/ircat:{{ .Version }}'
     image_templates:
       - 'ghcr.io/asabla/ircat:{{ .Version }}-amd64'
       - 'ghcr.io/asabla/ircat:{{ .Version }}-arm64'
-  - name_template: 'ghcr.io/asabla/ircat:latest'
+  - id: latest
+    name_template: 'ghcr.io/asabla/ircat:latest'
     image_templates:
       - 'ghcr.io/asabla/ircat:{{ .Version }}-amd64'
       - 'ghcr.io/asabla/ircat:{{ .Version }}-arm64'
@@ -150,6 +152,11 @@ signs:
 docker_signs:
   - id: cosign-image
     cmd: cosign
+    # Sign only the versioned manifest, not :latest. Both tags
+    # resolve to the same digest, so cosign tries to push the
+    # same .sig tag twice and ghcr.io rejects the duplicate.
+    ids:
+      - versioned
     artifacts: manifests
     output: true
     args:
