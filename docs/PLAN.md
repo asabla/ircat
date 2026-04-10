@@ -54,6 +54,15 @@ Shipped post-v1.0:
   #chan` to every channel operator with the cap when an
   INVITE happens.
 
+Shipped post-W4:
+
+- ✅ **`account-tag`** — attaches `@account=<name>` on every
+  message from a logged-in account. Wired in `Conn.send`.
+- ✅ **`extended-join`** — adds the account name and realname as
+  extra params on JOIN broadcasts. Per-recipient branching.
+- ✅ **`batch`** — frames NAMES and WHO reply bursts in
+  `BATCH +ref` / `BATCH -ref` with `@batch=ref` tags.
+
 Still pending:
 
 - **`chghost`** — notifies channel members when a user's host
@@ -61,20 +70,9 @@ Still pending:
   rewritten, so this is a near-no-op until the cloak / vhost
   work lands. Wire the cap negotiation when the forthcoming
   MODE +x cloak path appears.
-- **`account-tag`** — attaches `@account=<name>` on every
-  message from a logged-in account. Requires the account
-  framework (W4) to be useful.
-- **`extended-join`** — adds the account name and realname as
-  extra params on JOIN broadcasts so a client knows who someone
-  is the moment they join. Same prerequisite as account-tag.
-- **`batch`** — frames related messages (history replay, NAMES
-  burst, WHO replay) so a client can render them as a unit
-  instead of streaming. Cheap to add and useful as soon as the
-  history work begins.
 
-**Exit:** all the unblocked caps shipped (✅ above). The
-remaining four are tracked under W4 (services / accounts) and
-the cloak follow-up.
+**Exit:** all the unblocked caps shipped (✅). Only `chghost`
+remains, blocked on the MODE +x cloak design.
 
 ---
 
@@ -90,10 +88,10 @@ the cloak follow-up.
   - ✅ Mesh soak harness landed in `tests/soak/mesh.go`:
     `RunMesh()` distributes clients across 3 nodes, runs
     sustained PRIVMSG with cross-node probe verification.
-- **Per-link byte counter dashboard panel.** v1.0 shipped the
-  STATS l counters on the wire; surface them on the dashboard
-  federation panel too so an operator does not need to OPER +
-  STATS to see link throughput.
+- ✅ **Per-link byte counter dashboard panel.** The dashboard
+  federation page now shows sent/recv messages and bytes per link.
+  A JSON API endpoint (`GET /api/v1/federation/links`) is also
+  available for external monitoring.
 - **Burst compression (`zip` flag).** RFC 2813 mentions zlib-
   compressed bursts as an option. Useful on slow links carrying
   large channel state, optional for everything else.
@@ -136,12 +134,12 @@ is no in-tree service implementation. A first-party services
 daemon would let operators run a usable network without bringing
 their own ChanServ.
 
-- **Account framework.** Per-user accounts with password,
-  email, and SASL PLAIN auth at registration time. This is the
-  precondition for everything else in W4 and most of W1's
-  account-aware caps.
-- **NickServ.** Reserves nicks against an account, kicks
-  imposters, lets the owner claim back a stolen nick.
+- ✅ **Account framework.** Per-user accounts with password,
+  email, and SASL PLAIN auth at registration time.
+  AccountStore + SQLite/Postgres drivers + migrations shipped.
+- ✅ **NickServ.** REGISTER, IDENTIFY, nick enforcement timer
+  (60s identify-or-guest-rename), wired into server lifecycle
+  via BotDeliverer. `ircat services` subcommand ships it.
 - **ChanServ.** Channel registration, founder restoration after
   empty, op grants on join for known accounts, ban-on-disconnect
   rules.
