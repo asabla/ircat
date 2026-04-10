@@ -468,7 +468,7 @@ func (s *Server) Run(ctx context.Context) error {
 // startNickServ registers a NickServ service user in the world and
 // wires it up as a BotDeliverer so PRIVMSG/SQUERY reach it.
 func (s *Server) startNickServ(ctx context.Context) {
-	svc, err := nickserv.Start(ctx, s.store.Accounts(), s.world, s, s.logger)
+	svc, err := nickserv.Start(ctx, s.store.Accounts(), s.store.NickOwners(), s.world, s, s.logger)
 	if err != nil {
 		s.logger.Warn("NickServ failed to start", "error", err)
 		return
@@ -529,6 +529,22 @@ func (s *Server) ForceNickChange(oldNick, newNick string) bool {
 	return true
 }
 
+// DisconnectNick forcibly disconnects the user holding the given
+// nick with a QUIT reason. Used by NickServ GHOST. Satisfies
+// nickserv.ReplySender.
+func (s *Server) DisconnectNick(nick, reason string) {
+	u := s.world.FindByNick(nick)
+	if u == nil {
+		return
+	}
+	c := s.connFor(u.ID)
+	if c == nil {
+		return
+	}
+	c.sendError(reason)
+	c.cancel(fmt.Errorf("ghosted: %s", reason))
+}
+
 // notifyNickServ tells NickServ to check whether a nick is
 // registered and start enforcement if needed. No-op when
 // NickServ is not running.
@@ -546,6 +562,7 @@ func (s *Server) startChanServ(ctx context.Context) {
 		ctx,
 		s.store.RegisteredChannels(),
 		s.store.Accounts(),
+		s.store.Channels(),
 		s.world, s, s.logger,
 	)
 	if err != nil {
@@ -567,6 +584,22 @@ func (s *Server) SetChannelMode(from, channel, modeStr, target string) {
 		Prefix:  from,
 		Command: "MODE",
 		Params:  []string{channel, modeStr, target},
+	}
+	s.broadcastToChannel(ch, msg, 0, true)
+}
+
+// BroadcastChannelTopic broadcasts a TOPIC change on a channel. Used
+// by ChanServ KEEPTOPIC to restore a persisted topic. Satisfies
+// chanserv.ReplySender.
+func (s *Server) BroadcastChannelTopic(from, channel, topic string) {
+	ch := s.world.FindChannel(channel)
+	if ch == nil {
+		return
+	}
+	msg := &protocol.Message{
+		Prefix:  from,
+		Command: "TOPIC",
+		Params:  []string{channel, topic},
 	}
 	s.broadcastToChannel(ch, msg, 0, true)
 }
