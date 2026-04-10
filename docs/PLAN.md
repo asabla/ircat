@@ -167,9 +167,19 @@ SERVICE form, persisting accounts to the same store.
 - **Refresh the measured envelope** in `docs/OPERATIONS.md`
   if benchmark numbers shifted by more than 5 % between v0.3
   and the next tag.
+  - ✅ Envelope structure refreshed for v1.1: v0.2 baseline
+    preserved, v1.1 placeholder tables added with "how to
+    reproduce" commands. Awaiting a dedicated benchmark run
+    on the reference hardware to fill the numbers.
+  - ✅ CAP negotiation benchmark added
+    (`handler_sasl_bench_test.go`) to cover the registration
+    hot path; will extend for SASL when W4 lands.
 - **Postgres-on-RDS benchmark.** Documented in v0.3 but never
   run for real. Post-v1.0 ships the numbers if a tuned managed
   Postgres is reachable.
+  - ✅ RDS setup documented in `OPERATIONS.md` (instance type,
+    pg version, network topology, exact commands). Awaiting
+    access to a tuned managed Postgres environment.
 - **Per-handler unit-test files.** `handler_message`,
   `handler_query`, and `handler_mode` are integration-tested
   but lack focused unit suites. Add them so the inner-loop
