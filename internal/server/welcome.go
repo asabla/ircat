@@ -87,6 +87,9 @@ func (c *Conn) tryCompleteRegistration() {
 	c.logger.Info("registered", "nick", user.Nick, "user", user.User)
 	c.server.announceUserToFederation(user)
 	c.sendWelcomeBurst()
+	// Notify NickServ so it can check whether this nick is
+	// registered and start enforcement if needed.
+	c.server.notifyNickServ(user.Nick, user.Account)
 }
 
 // sendWelcomeBurst emits the standard 001-005 welcome numerics plus
