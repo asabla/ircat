@@ -150,6 +150,17 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("DELETE /bots/{id}", a.requireToken(a.handleDeleteBot))
 	mux.HandleFunc("POST /config/reload", a.requireToken(a.handleConfigReload))
 	mux.HandleFunc("GET /federation/links", a.requireToken(a.handleListFederationLinks))
+	mux.HandleFunc("GET /accounts", a.requireToken(a.handleListAccounts))
+	mux.HandleFunc("GET /accounts/{id}", a.requireToken(a.handleGetAccount))
+	mux.HandleFunc("POST /accounts", a.requireToken(a.handleCreateAccount))
+	mux.HandleFunc("DELETE /accounts/{id}", a.requireToken(a.handleDeleteAccount))
+	mux.HandleFunc("POST /accounts/{id}/password", a.requireToken(a.handleResetAccountPassword))
+	mux.HandleFunc("GET /channels/{name}/registration", a.requireToken(a.handleGetChannelRegistration))
+	mux.HandleFunc("POST /channels/{name}/registration", a.requireToken(a.handleCreateChannelRegistration))
+	mux.HandleFunc("PUT /channels/{name}/registration", a.requireToken(a.handleUpdateChannelRegistration))
+	mux.HandleFunc("DELETE /channels/{name}/registration", a.requireToken(a.handleDeleteChannelRegistration))
+	mux.HandleFunc("PUT /channels/{name}/access/{account_id}", a.requireToken(a.handleSetChannelAccess))
+	mux.HandleFunc("DELETE /channels/{name}/access/{account_id}", a.requireToken(a.handleDeleteChannelAccess))
 	return mux
 }
 
