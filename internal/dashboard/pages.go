@@ -34,6 +34,12 @@ type PageDeps struct {
 	// Bots is the supervisor surface used by the bots CRUD
 	// pages. Optional — without it the form posts return 503.
 	Bots BotManager
+	// BotValidator is the pure-function pre-save Lua
+	// syntax-check hook the bot edit page calls into. Matches
+	// internal/bots.Validate. Optional — without it the
+	// Validate button returns 503 and the Save path skips the
+	// pre-check (today's destructive behaviour).
+	BotValidator func(source string) error
 	// LogTail is the in-memory ring buffer the /dashboard/logs
 	// SSE stream polls. Optional — without it the page renders
 	// the empty state and the SSE handler returns 503.
@@ -624,11 +630,91 @@ func (s *Server) handleBotSourcePost(sess *session, w http.ResponseWriter, r *ht
 		return
 	}
 	bot.Source = r.PostForm.Get("source")
+	// Pre-save syntax check: if a validator is wired and the
+	// source fails to compile, re-render the edit page with the
+	// error and do NOT call UpdateBot. That keeps the previous
+	// running source and stored record intact, which is the
+	// whole point of the Validate button's lazy sibling — a
+	// broken save should not replace a running bot.
+	if s.pages.BotValidator != nil {
+		if verr := s.pages.BotValidator(bot.Source); verr != nil {
+			s.renderBotDetailWithFlash(sess, w, r, bot, "lua error: "+verr.Error())
+			return
+		}
+	}
 	if err := s.pages.Bots.UpdateBot(r.Context(), bot); err != nil {
 		http.Error(w, "update failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	http.Redirect(w, r, "/dashboard/bots/"+id, http.StatusSeeOther)
+}
+
+// renderBotDetailWithFlash re-renders the bot detail page with
+// an error message in the Flash field. Used by the source POST
+// handler so a validation or update failure does not redirect
+// away from the textarea the operator was editing.
+func (s *Server) renderBotDetailWithFlash(sess *session, w http.ResponseWriter, r *http.Request, bot *storage.Bot, flash string) {
+	data := s.newPageData(sess, "bots", "bot — "+bot.Name)
+	data.Flash = flash
+	data.BotDetail = &botDetailPayload{
+		ID:      bot.ID,
+		Name:    bot.Name,
+		Enabled: bot.Enabled,
+		Source:  bot.Source,
+	}
+	s.renderPage(w, "bot_detail", data)
+}
+
+// handleBotValidatePost is the htmx target for the Validate
+// button on the bot edit page. It returns a tiny HTML fragment
+// (ok pill or error block) without touching storage. The
+// fragment replaces the contents of the #validate-result div
+// via hx-target.
+func (s *Server) handleBotValidatePost(sess *session, w http.ResponseWriter, r *http.Request) {
+	if s.pages == nil || s.pages.BotValidator == nil {
+		http.Error(w, "validator not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if !s.checkCSRF(sess, r.PostForm.Get("csrf")) {
+		http.Error(w, "bad csrf token", http.StatusForbidden)
+		return
+	}
+	source := r.PostForm.Get("source")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.pages.BotValidator(source); err != nil {
+		w.Write([]byte(`<span class="pill warn">invalid</span> <code>` + htmlEscape(err.Error()) + `</code>`))
+		return
+	}
+	w.Write([]byte(`<span class="pill ok">lua ok</span>`))
+}
+
+// htmlEscape is the tiny escaper the validate fragment uses.
+// Enough for a compiler diagnostic; for anything more we would
+// route through html/template.
+func htmlEscape(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '&':
+			b.WriteString("&amp;")
+		case '<':
+			b.WriteString("&lt;")
+		case '>':
+			b.WriteString("&gt;")
+		case '"':
+			b.WriteString("&quot;")
+		case '\'':
+			b.WriteString("&#39;")
+		default:
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
 }
 
 // handleBotTogglePost flips a bot's Enabled flag and pushes the

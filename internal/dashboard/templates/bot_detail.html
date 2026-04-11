@@ -2,6 +2,8 @@
 <h2>bot &mdash; {{.BotDetail.Name}}</h2>
 <p class="subtitle"><a href="/dashboard/bots">&larr; all bots</a></p>
 
+{{if .Flash}}<p class="error">{{.Flash}}</p>{{end}}
+
 <div class="panel">
   <h3>state</h3>
   <dl class="kv">
@@ -16,10 +18,18 @@
 
 <div class="panel">
   <h3>source</h3>
-  <form method="post" action="/dashboard/bots/{{.BotDetail.ID}}/source">
+  <form method="post" action="/dashboard/bots/{{.BotDetail.ID}}/source" id="bot-source-form">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <textarea name="source" rows="20">{{.BotDetail.Source}}</textarea>
-    <button type="submit" class="primary">save source</button>
+    <div class="toolbar">
+      <button type="submit" class="primary">save source</button>
+      <button type="button"
+              hx-post="/dashboard/bots/validate"
+              hx-include="#bot-source-form"
+              hx-target="#validate-result"
+              hx-swap="innerHTML">validate</button>
+      <span id="validate-result"></span>
+    </div>
   </form>
 </div>
 {{end}}

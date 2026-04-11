@@ -112,6 +112,23 @@ type Event struct {
 	CommandArgs string // everything after the command name
 }
 
+// Validate compiles source in a throwaway lua.LState and returns
+// nil if the script parses cleanly. It never runs the top-level
+// chunk, so top-level side effects (ctx:join, ctx:say, ...) do
+// not fire — this is strictly a syntax-check path for the
+// dashboard "Validate" button and the /api/v1/bots/validate
+// endpoint. The returned error, if any, is the raw gopher-lua
+// compile diagnostic ("line N: ...") so the UI can surface it
+// verbatim.
+func Validate(source string) error {
+	L := lua.NewState(lua.Options{SkipOpenLibs: true})
+	defer L.Close()
+	if _, err := L.LoadString(source); err != nil {
+		return err
+	}
+	return nil
+}
+
 // NewRuntime compiles source into a fresh sandboxed lua.LState and
 // returns a Runtime. Any syntax error in source is returned here.
 func NewRuntime(source string, actions Actions, budget Budget) (*Runtime, error) {

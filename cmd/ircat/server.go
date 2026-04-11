@@ -140,13 +140,14 @@ func runServer(args []string) error {
 	server.WithReloader(reloader)(srv)
 
 	apiSrv := api.New(api.Options{
-		Store:      store,
-		World:      world,
-		Actuator:   srv,
-		BotManager: sup,
-		ServerInfo: srv,
-		Reloader:   reloader,
-		Logger:     logger.With("component", "api"),
+		Store:        store,
+		World:        world,
+		Actuator:     srv,
+		BotManager:   sup,
+		BotValidator: bots.Validate,
+		ServerInfo:   srv,
+		Reloader:     reloader,
+		Logger:       logger.With("component", "api"),
 	})
 
 	dash := dashboard.New(dashboard.Options{
@@ -154,13 +155,14 @@ func runServer(args []string) error {
 		Logger:     logger.With("component", "dashboard"),
 		APIHandler: apiSrv.Handler(),
 		PageDeps: &dashboard.PageDeps{
-			Store:      store,
-			World:      world,
-			ServerInfo: srv,
-			Actuator:   srv,
-			Federation: federationListerAdapter{srv: srv},
-			Bots:       sup,
-			LogTail:    logRingAdapter{ring: ring},
+			Store:        store,
+			World:        world,
+			ServerInfo:   srv,
+			Actuator:     srv,
+			Federation:   federationListerAdapter{srv: srv},
+			Bots:         sup,
+			BotValidator: bots.Validate,
+			LogTail:      logRingAdapter{ring: ring},
 		},
 		Metrics: srv,
 		ReadyFunc: func() error {

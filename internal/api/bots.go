@@ -21,6 +21,12 @@ type BotManager interface {
 	DeleteBot(ctx context.Context, id string) error
 }
 
+// BotValidator is the small hook the /bots/validate endpoint
+// calls into. internal/bots.Validate satisfies it. Kept as a
+// plain func type (not an interface) so callers can pass the
+// package-level function directly without wrapping it.
+type BotValidator func(source string) error
+
 type botRecord struct {
 	ID              string `json:"id"`
 	Name            string `json:"name"`
@@ -150,6 +156,42 @@ func (a *API) handleUpdateBot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toBotRecord(*bot))
+}
+
+// validateBotRequest is the body shape for POST /bots/validate.
+type validateBotRequest struct {
+	Source string `json:"source"`
+}
+
+// validateBotResponse is the success/failure envelope the
+// /bots/validate endpoint returns. Both shapes share the same
+// struct so the JSON client sees a uniform payload.
+type validateBotResponse struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+// handleValidateBot compiles the supplied Lua source in a
+// throwaway sandboxed lua.LState via the wired BotValidator and
+// returns {"ok": true} on success or {"ok": false, "error": "..."}
+// on failure. Never touches the bot store: this is the pre-save
+// syntax-check path the dashboard "Validate" button hits via
+// htmx. Returns 503 when no validator is wired (test harness).
+func (a *API) handleValidateBot(w http.ResponseWriter, r *http.Request) {
+	if a.botValidator == nil {
+		writeError(w, http.StatusServiceUnavailable, "no_validator", "bot validator not configured")
+		return
+	}
+	var req validateBotRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_json", err.Error())
+		return
+	}
+	if err := a.botValidator(req.Source); err != nil {
+		writeJSON(w, http.StatusOK, validateBotResponse{OK: false, Error: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, validateBotResponse{OK: true})
 }
 
 func (a *API) handleDeleteBot(w http.ResponseWriter, r *http.Request) {
