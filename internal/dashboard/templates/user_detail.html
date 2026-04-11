@@ -1,6 +1,6 @@
 {{define "content"}}
 <h2>{{.UserDetail.Nick}}</h2>
-<p class="subtitle"><a href="/dashboard/users">← all users</a></p>
+<p class="subtitle"><a href="/dashboard/users">&larr; all users</a></p>
 
 <div class="panel">
   <h3>identity</h3>
@@ -15,7 +15,7 @@
 <div class="panel">
   <h3>channels</h3>
   {{if .UserDetail.Channels}}
-  <ul>{{range .UserDetail.Channels}}<li><a href="/dashboard/channels/{{.}}">{{.}}</a></li>{{end}}</ul>
+  <ul>{{range .UserDetail.Channels}}<li><a href="/dashboard/channels/{{. | pathEscape}}">{{.}}</a></li>{{end}}</ul>
   {{else}}
   <p class="muted">not in any channels.</p>
   {{end}}

@@ -16,7 +16,7 @@
       <td><a href="/dashboard/users/{{.Nick}}">{{.Nick}}</a></td>
       <td><code>{{.Hostmask}}</code></td>
       <td>{{if .Modes}}<span class="pill">+{{.Modes}}</span>{{end}}</td>
-      <td>{{range .Channels}}<a href="/dashboard/channels/{{.}}">{{.}}</a> {{end}}</td>
+      <td>{{range .Channels}}<a href="/dashboard/channels/{{. | pathEscape}}">{{.}}</a> {{end}}</td>
       <td>
         <form method="post" action="/dashboard/users/{{.Nick}}/kick" class="inline">
           <input type="hidden" name="csrf" value="{{$.CSRF}}">
@@ -28,7 +28,7 @@
     </tbody>
   </table>
   {{else}}
-  <p class="muted">no users connected.</p>
+  <p class="empty-state">no users connected.</p>
   {{end}}
 </div>
 

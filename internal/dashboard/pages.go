@@ -5,6 +5,7 @@ import (
 	"errors"
 	"html/template"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -1017,7 +1018,7 @@ func (s *Server) handleChannelTopicPost(sess *session, w http.ResponseWriter, r 
 		http.Error(w, "set topic failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/dashboard/channels/"+name, http.StatusSeeOther)
+	http.Redirect(w, r, "/dashboard/channels/"+url.PathEscape(name), http.StatusSeeOther)
 }
 
 func (s *Server) handleFederationPage(sess *session, w http.ResponseWriter, r *http.Request) {

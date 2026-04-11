@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"net/url"
 )
 
 //go:embed templates/*.html
@@ -34,9 +35,15 @@ func loadTemplates() (*templates, error) {
 		"events",
 		"logs",
 	}
+	funcs := template.FuncMap{
+		// pathEscape percent-encodes a string for safe use in URL
+		// path segments. Needed because channel names start with #
+		// which browsers interpret as a fragment anchor.
+		"pathEscape": url.PathEscape,
+	}
 	out := &templates{pages: make(map[string]*template.Template, len(pages))}
 	for _, name := range pages {
-		t, err := template.New("base.html").ParseFS(templateFS,
+		t, err := template.New("base.html").Funcs(funcs).ParseFS(templateFS,
 			"templates/base.html",
 			"templates/"+name+".html",
 		)
