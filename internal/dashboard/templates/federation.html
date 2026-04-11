@@ -29,7 +29,7 @@
         {{if .Subscribed}}
           {{range .Subscribed}}<code>{{.}}</code> {{end}}
         {{else}}
-          <span class="muted">—</span>
+          <span class="muted">&mdash;</span>
         {{end}}
       </td>
     </tr>
@@ -37,7 +37,7 @@
     </tbody>
   </table>
   {{else}}
-  <p class="muted">no federation links registered. Configure peers in <code>federation.links</code> to see them here.</p>
+  <p class="empty-state">no federation links registered. Configure peers in <code>federation.links</code> to see them here.</p>
   {{end}}
 </div>
 {{end}}

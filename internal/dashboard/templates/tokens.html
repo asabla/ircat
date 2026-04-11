@@ -11,7 +11,7 @@
     <label>label <input type="text" name="label" required placeholder="ci-runner"></label>
     <button type="submit" class="primary">mint</button>
   </form>
-  <p class="muted">The plaintext token is shown once after creation. Copy it now; you cannot retrieve it later.</p>
+  <p class="muted" style="margin-top: 0.5rem; font-size: 0.78rem;">The plaintext token is shown once after creation. Copy it now; you cannot retrieve it later.</p>
 </div>
 
 <div class="panel">
@@ -37,7 +37,7 @@
     </tbody>
   </table>
   {{else}}
-  <p class="muted">no tokens minted yet.</p>
+  <p class="empty-state">no tokens minted yet.</p>
   {{end}}
 </div>
 {{end}}

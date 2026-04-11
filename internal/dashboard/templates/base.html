@@ -16,15 +16,24 @@
       <small>{{.ServerName}}</small>
     </div>
     <nav>
-      <a href="/dashboard"            class="{{if eq .NavActive "overview"}}active{{end}}">overview</a>
-      <a href="/dashboard/users"      class="{{if eq .NavActive "users"}}active{{end}}">users</a>
-      <a href="/dashboard/channels"   class="{{if eq .NavActive "channels"}}active{{end}}">channels</a>
-      <a href="/dashboard/federation" class="{{if eq .NavActive "federation"}}active{{end}}">federation</a>
-      <a href="/dashboard/bots"       class="{{if eq .NavActive "bots"}}active{{end}}">bots</a>
-      <a href="/dashboard/operators"  class="{{if eq .NavActive "operators"}}active{{end}}">operators</a>
-      <a href="/dashboard/tokens"     class="{{if eq .NavActive "tokens"}}active{{end}}">tokens</a>
-      <a href="/dashboard/events"     class="{{if eq .NavActive "events"}}active{{end}}">audit log</a>
-      <a href="/dashboard/logs"       class="{{if eq .NavActive "logs"}}active{{end}}">live logs</a>
+      <div class="nav-group">
+        <div class="nav-label">monitor</div>
+        <a href="/dashboard"            class="{{if eq .NavActive "overview"}}active{{end}}">overview</a>
+        <a href="/dashboard/users"      class="{{if eq .NavActive "users"}}active{{end}}">users</a>
+        <a href="/dashboard/channels"   class="{{if eq .NavActive "channels"}}active{{end}}">channels</a>
+        <a href="/dashboard/federation" class="{{if eq .NavActive "federation"}}active{{end}}">federation</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">manage</div>
+        <a href="/dashboard/bots"       class="{{if eq .NavActive "bots"}}active{{end}}">bots</a>
+        <a href="/dashboard/operators"  class="{{if eq .NavActive "operators"}}active{{end}}">operators</a>
+        <a href="/dashboard/tokens"     class="{{if eq .NavActive "tokens"}}active{{end}}">tokens</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">observe</div>
+        <a href="/dashboard/events"     class="{{if eq .NavActive "events"}}active{{end}}">audit log</a>
+        <a href="/dashboard/logs"       class="{{if eq .NavActive "logs"}}active{{end}}">live logs</a>
+      </div>
     </nav>
     <div class="session">
       signed in as <strong>{{.Operator}}</strong>
@@ -39,10 +48,8 @@
   </main>
 </div>
 {{else}}
-<div class="layout" style="grid-template-columns: 1fr;">
-  <main>
-    {{template "content" .}}
-  </main>
+<div class="login-container">
+  {{template "content" .}}
 </div>
 {{end}}
 </body>
