@@ -10,7 +10,7 @@ tmp_dir = "tmp"
   # The binary reads its config path from $IRCAT_CONFIG, which the
   # dev compose stack sets. No CLI args needed.
   bin = "./tmp/ircat"
-  include_ext = ["go", "html", "tmpl", "yaml", "yml", "json", "sql"]
+  include_ext = ["go", "html", "css", "js", "tmpl", "yaml", "yml", "json", "sql"]
   exclude_dir = ["tmp", "vendor", "docs", ".git", ".devcontainer"]
   delay = 500
   stop_on_error = true

@@ -1,6 +1,6 @@
 {{define "content"}}
 <h2>{{.ChannelDetail.Name}}</h2>
-<p class="subtitle"><a href="/dashboard/channels">← all channels</a> — {{.ChannelDetail.MemberCount}} members</p>
+<p class="subtitle"><a href="/dashboard/channels">&larr; all channels</a> — {{.ChannelDetail.MemberCount}} members</p>
 
 <div class="panel">
   <h3>state</h3>
@@ -13,7 +13,7 @@
 
 <div class="panel">
   <h3>edit topic</h3>
-  <form method="post" action="/dashboard/channels/{{.ChannelDetail.Name}}/topic" class="row">
+  <form method="post" action="/dashboard/channels/{{.ChannelDetail.Name | pathEscape}}/topic" class="row">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <input type="text" name="topic" value="{{.ChannelDetail.Topic}}" style="flex: 1; min-width: 18rem;">
     <button type="submit" class="primary">set topic</button>
@@ -44,7 +44,7 @@
     </tbody>
   </table>
   {{else}}
-  <p class="muted">no members.</p>
+  <p class="empty-state">no members.</p>
   {{end}}
 </div>
 

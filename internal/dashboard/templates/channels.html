@@ -13,7 +13,7 @@
     <tbody id="channels-tbody">
     {{range .Channels}}
     <tr>
-      <td><a href="/dashboard/channels/{{.Name}}">{{.Name}}</a></td>
+      <td><a href="/dashboard/channels/{{.Name | pathEscape}}">{{.Name}}</a></td>
       <td>{{.MemberCount}}</td>
       <td><span class="pill">{{.ModeWord}}</span></td>
       <td>{{.Topic}}</td>
@@ -22,7 +22,7 @@
     </tbody>
   </table>
   {{else}}
-  <p class="muted">no channels.</p>
+  <p class="empty-state">no channels.</p>
   {{end}}
 </div>
 
