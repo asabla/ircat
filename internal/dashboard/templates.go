@@ -31,6 +31,7 @@ func loadTemplates() (*templates, error) {
 		"federation",
 		"bots", "bot_detail",
 		"operators",
+		"accounts", "account_detail",
 		"tokens",
 		"events",
 		"logs",

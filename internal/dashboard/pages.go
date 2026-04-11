@@ -138,6 +138,8 @@ type pageData struct {
 	Bots          []botPayload
 	BotDetail     *botDetailPayload
 	Operators     []operatorPayload
+	Accounts      []accountPayload
+	AccountDetail *accountDetailPayload
 	Tokens        []tokenPayload
 	Events        []eventPayload
 	Error         string
@@ -249,6 +251,32 @@ type operatorPayload struct {
 	HostMask  string
 	Flags     []string
 	CreatedAt string
+}
+
+type accountPayload struct {
+	ID        string
+	Username  string
+	Email     string
+	Verified  bool
+	CreatedAt string
+	Nicks     []string
+}
+
+type accountDetailPayload struct {
+	ID              string
+	Username        string
+	Email           string
+	Verified        bool
+	CreatedAt       string
+	UpdatedAt       string
+	Nicks           []string
+	FounderChannels []string
+	AccessChannels  []accountAccessRow
+}
+
+type accountAccessRow struct {
+	Channel string
+	Flags   string
 }
 
 type tokenPayload struct {
@@ -1261,6 +1289,213 @@ func strconvItoa(n int64) string {
 		buf[i] = '-'
 	}
 	return string(buf[i:])
+}
+
+// ----- accounts pages ------------------------------------------------
+
+// handleAccountsPage renders /dashboard/accounts — list + create form.
+func (s *Server) handleAccountsPage(sess *session, w http.ResponseWriter, r *http.Request) {
+	data := s.newPageData(sess, "accounts", "accounts")
+	s.fillAccounts(r.Context(), data)
+	s.renderPage(w, "accounts", data)
+}
+
+func (s *Server) fillAccounts(ctx context.Context, data *pageData) {
+	if s.pages == nil || s.pages.Store == nil {
+		return
+	}
+	accts, err := s.pages.Store.Accounts().List(ctx)
+	if err != nil {
+		s.logger.Warn("dashboard list accounts failed", "error", err)
+		return
+	}
+	for _, a := range accts {
+		row := accountPayload{
+			ID:        a.ID,
+			Username:  a.Username,
+			Email:     a.Email,
+			Verified:  a.Verified,
+			CreatedAt: a.CreatedAt.UTC().Format(time.RFC3339),
+		}
+		owners, err := s.pages.Store.NickOwners().ListByAccount(ctx, a.ID)
+		if err == nil {
+			for _, no := range owners {
+				row.Nicks = append(row.Nicks, no.Nick)
+			}
+			sort.Strings(row.Nicks)
+		}
+		data.Accounts = append(data.Accounts, row)
+	}
+	sort.Slice(data.Accounts, func(i, j int) bool { return data.Accounts[i].Username < data.Accounts[j].Username })
+}
+
+// handleAccountCreate handles POST /dashboard/accounts/create.
+func (s *Server) handleAccountCreate(sess *session, w http.ResponseWriter, r *http.Request) {
+	if s.pages == nil || s.pages.Store == nil {
+		http.Error(w, "accounts not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if !s.checkCSRF(sess, r.PostForm.Get("csrf")) {
+		http.Error(w, "bad csrf token", http.StatusForbidden)
+		return
+	}
+	username := strings.TrimSpace(r.PostForm.Get("username"))
+	password := r.PostForm.Get("password")
+	email := strings.TrimSpace(r.PostForm.Get("email"))
+	if username == "" || password == "" {
+		s.renderAccountsWithFlash(sess, w, r, "username and password are required")
+		return
+	}
+	hash, err := auth.Hash(auth.AlgorithmArgon2id, password, auth.DefaultArgon2idParams())
+	if err != nil {
+		s.renderAccountsWithFlash(sess, w, r, "hash failed: "+err.Error())
+		return
+	}
+	acct := &storage.Account{
+		ID:           username, // match NickServ convention
+		Username:     username,
+		PasswordHash: hash,
+		Email:        email,
+	}
+	if err := s.pages.Store.Accounts().Create(r.Context(), acct); err != nil {
+		if errors.Is(err, storage.ErrConflict) {
+			s.renderAccountsWithFlash(sess, w, r, "account already exists")
+			return
+		}
+		s.renderAccountsWithFlash(sess, w, r, "create failed: "+err.Error())
+		return
+	}
+	http.Redirect(w, r, "/dashboard/accounts", http.StatusSeeOther)
+}
+
+func (s *Server) renderAccountsWithFlash(sess *session, w http.ResponseWriter, r *http.Request, flash string) {
+	data := s.newPageData(sess, "accounts", "accounts")
+	data.Flash = flash
+	s.fillAccounts(r.Context(), data)
+	s.renderPage(w, "accounts", data)
+}
+
+// handleAccountDetailPage renders /dashboard/accounts/{id}.
+func (s *Server) handleAccountDetailPage(sess *session, w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.pages == nil || s.pages.Store == nil {
+		http.Error(w, "accounts not configured", http.StatusServiceUnavailable)
+		return
+	}
+	acct, err := s.pages.Store.Accounts().GetByID(r.Context(), id)
+	if err != nil {
+		http.Error(w, "no such account", http.StatusNotFound)
+		return
+	}
+	data := s.newPageData(sess, "accounts", "account — "+acct.Username)
+	detail := &accountDetailPayload{
+		ID:        acct.ID,
+		Username:  acct.Username,
+		Email:     acct.Email,
+		Verified:  acct.Verified,
+		CreatedAt: acct.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt: acct.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+	owners, err := s.pages.Store.NickOwners().ListByAccount(r.Context(), acct.ID)
+	if err == nil {
+		for _, no := range owners {
+			detail.Nicks = append(detail.Nicks, no.Nick)
+		}
+		sort.Strings(detail.Nicks)
+	}
+	// Walk all registered channels to find founder + access hits. The
+	// registered-channel list is small enough that a linear scan is
+	// cheaper than maintaining a reverse index.
+	if regs, err := s.pages.Store.RegisteredChannels().List(r.Context()); err == nil {
+		for _, rc := range regs {
+			if rc.FounderID == acct.ID {
+				detail.FounderChannels = append(detail.FounderChannels, rc.Channel)
+			}
+			if ca, err := s.pages.Store.RegisteredChannels().GetAccess(r.Context(), rc.Channel, acct.ID); err == nil {
+				detail.AccessChannels = append(detail.AccessChannels, accountAccessRow{
+					Channel: ca.Channel,
+					Flags:   ca.Flags,
+				})
+			}
+		}
+		sort.Strings(detail.FounderChannels)
+		sort.Slice(detail.AccessChannels, func(i, j int) bool {
+			return detail.AccessChannels[i].Channel < detail.AccessChannels[j].Channel
+		})
+	}
+	data.AccountDetail = detail
+	s.renderPage(w, "account_detail", data)
+}
+
+// handleAccountDelete handles POST /dashboard/accounts/{id}/delete.
+func (s *Server) handleAccountDelete(sess *session, w http.ResponseWriter, r *http.Request) {
+	if s.pages == nil || s.pages.Store == nil {
+		http.Error(w, "accounts not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if !s.checkCSRF(sess, r.PostForm.Get("csrf")) {
+		http.Error(w, "bad csrf token", http.StatusForbidden)
+		return
+	}
+	id := r.PathValue("id")
+	acct, err := s.pages.Store.Accounts().GetByID(r.Context(), id)
+	if err != nil {
+		http.Error(w, "no such account", http.StatusNotFound)
+		return
+	}
+	if err := s.pages.Store.Accounts().Delete(r.Context(), acct.Username); err != nil {
+		s.logger.Warn("dashboard account delete failed", "id", id, "error", err)
+		http.Error(w, "delete failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/dashboard/accounts", http.StatusSeeOther)
+}
+
+// handleAccountPasswordReset handles POST /dashboard/accounts/{id}/password.
+func (s *Server) handleAccountPasswordReset(sess *session, w http.ResponseWriter, r *http.Request) {
+	if s.pages == nil || s.pages.Store == nil {
+		http.Error(w, "accounts not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if !s.checkCSRF(sess, r.PostForm.Get("csrf")) {
+		http.Error(w, "bad csrf token", http.StatusForbidden)
+		return
+	}
+	id := r.PathValue("id")
+	password := r.PostForm.Get("password")
+	if password == "" {
+		http.Error(w, "password required", http.StatusBadRequest)
+		return
+	}
+	acct, err := s.pages.Store.Accounts().GetByID(r.Context(), id)
+	if err != nil {
+		http.Error(w, "no such account", http.StatusNotFound)
+		return
+	}
+	hash, err := auth.Hash(auth.AlgorithmArgon2id, password, auth.DefaultArgon2idParams())
+	if err != nil {
+		http.Error(w, "hash failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	acct.PasswordHash = hash
+	if err := s.pages.Store.Accounts().Update(r.Context(), acct); err != nil {
+		s.logger.Warn("dashboard account password reset failed", "id", id, "error", err)
+		http.Error(w, "update failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/dashboard/accounts/"+id, http.StatusSeeOther)
 }
 
 // silence unused-import warnings while iterating

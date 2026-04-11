@@ -1,0 +1,45 @@
+{{define "content"}}
+<h2>accounts</h2>
+<p class="subtitle">{{len .Accounts}} registered</p>
+
+{{if .Flash}}<p class="error">{{.Flash}}</p>{{end}}
+
+<div class="panel">
+  <h3>create account</h3>
+  <form method="post" action="/dashboard/accounts/create" class="row">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>username <input type="text" name="username" required></label>
+    <label>password <input type="password" name="password" required></label>
+    <label>email <input type="email" name="email"></label>
+    <button type="submit" class="primary">create</button>
+  </form>
+</div>
+
+<div class="panel">
+  <h3>registered accounts</h3>
+  {{if .Accounts}}
+  <table>
+    <thead><tr><th>username</th><th>email</th><th>verified</th><th>linked nicks</th><th>created</th><th></th></tr></thead>
+    <tbody>
+    {{range .Accounts}}
+    <tr>
+      <td><a href="/dashboard/accounts/{{.ID}}">{{.Username}}</a></td>
+      <td>{{if .Email}}{{.Email}}{{else}}<span class="muted">-</span>{{end}}</td>
+      <td>{{if .Verified}}<span class="pill ok">yes</span>{{else}}<span class="pill">no</span>{{end}}</td>
+      <td>{{range .Nicks}}<span class="pill">{{.}}</span> {{else}}<span class="muted">-</span>{{end}}</td>
+      <td class="muted">{{.CreatedAt}}</td>
+      <td>
+        <form method="post" action="/dashboard/accounts/{{.ID}}/delete" class="inline">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <button type="submit" class="danger">delete</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="empty-state">no accounts registered.</p>
+  {{end}}
+</div>
+{{end}}

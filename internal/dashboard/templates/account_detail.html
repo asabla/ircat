@@ -1,0 +1,70 @@
+{{define "content"}}
+<h2>{{.AccountDetail.Username}}</h2>
+<p class="subtitle"><a href="/dashboard/accounts">&larr; all accounts</a></p>
+
+<div class="panel">
+  <h3>account</h3>
+  <dl class="kv">
+    <dt>id</dt><dd><code>{{.AccountDetail.ID}}</code></dd>
+    <dt>username</dt><dd>{{.AccountDetail.Username}}</dd>
+    <dt>email</dt><dd>{{if .AccountDetail.Email}}{{.AccountDetail.Email}}{{else}}<span class="muted">-</span>{{end}}</dd>
+    <dt>verified</dt><dd>{{if .AccountDetail.Verified}}<span class="pill ok">yes</span>{{else}}<span class="pill">no</span>{{end}}</dd>
+    <dt>created</dt><dd class="muted">{{.AccountDetail.CreatedAt}}</dd>
+    <dt>updated</dt><dd class="muted">{{.AccountDetail.UpdatedAt}}</dd>
+  </dl>
+</div>
+
+<div class="panel">
+  <h3>linked nicks</h3>
+  {{if .AccountDetail.Nicks}}
+  <ul>{{range .AccountDetail.Nicks}}<li><code>{{.}}</code></li>{{end}}</ul>
+  {{else}}
+  <p class="empty-state">no nicks grouped.</p>
+  {{end}}
+</div>
+
+<div class="panel">
+  <h3>founder of</h3>
+  {{if .AccountDetail.FounderChannels}}
+  <ul>{{range .AccountDetail.FounderChannels}}<li><a href="/dashboard/channels/{{. | pathEscape}}">{{.}}</a></li>{{end}}</ul>
+  {{else}}
+  <p class="empty-state">not a founder of any channel.</p>
+  {{end}}
+</div>
+
+<div class="panel">
+  <h3>channel access</h3>
+  {{if .AccountDetail.AccessChannels}}
+  <table>
+    <thead><tr><th>channel</th><th>flags</th></tr></thead>
+    <tbody>
+    {{range .AccountDetail.AccessChannels}}
+    <tr>
+      <td><a href="/dashboard/channels/{{.Channel | pathEscape}}">{{.Channel}}</a></td>
+      <td><code>{{.Flags}}</code></td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="empty-state">no access entries.</p>
+  {{end}}
+</div>
+
+<div class="panel">
+  <h3>reset password</h3>
+  <form method="post" action="/dashboard/accounts/{{.AccountDetail.ID}}/password" class="row">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>new password <input type="password" name="password" required></label>
+    <button type="submit" class="primary">reset</button>
+  </form>
+</div>
+
+<div class="panel">
+  <h3>danger zone</h3>
+  <form method="post" action="/dashboard/accounts/{{.AccountDetail.ID}}/delete" class="row">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button type="submit" class="danger">delete account</button>
+  </form>
+</div>
+{{end}}
