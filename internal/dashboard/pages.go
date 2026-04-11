@@ -172,6 +172,8 @@ type pageData struct {
 	Bots          []botPayload
 	BotDetail     *botDetailPayload
 	Operators     []operatorPayload
+	Accounts      []accountPayload
+	AccountDetail *accountDetailPayload
 	Tokens        []tokenPayload
 	Events        []eventPayload
 	Error         string
@@ -219,16 +221,36 @@ type channelPayload struct {
 }
 
 type channelDetailPayload struct {
-	Name        string
-	MemberCount int
-	ModeWord    string
-	Topic       string
-	TopicSetBy  string
-	Members     []channelMemberPayload
-	Bans        []string
-	Exceptions  []string
-	Invexes     []string
-	Quiets      []string
+	Name         string
+	MemberCount  int
+	ModeWord     string
+	Topic        string
+	TopicSetBy   string
+	Members      []channelMemberPayload
+	Bans         []string
+	Exceptions   []string
+	Invexes      []string
+	Quiets       []string
+	Registration *channelRegistrationPayload
+	// AccountOptions is the list of accounts the register /
+	// add-access forms render as <option>. Populated regardless
+	// of whether the channel is currently registered so both
+	// forms can pick a founder / grantee.
+	AccountOptions []string
+}
+
+type channelRegistrationPayload struct {
+	FounderID       string
+	FounderUsername string
+	Guard           bool
+	KeepTopic       bool
+	CreatedAt       string
+	Access          []channelAccessPayload
+}
+
+type channelAccessPayload struct {
+	AccountID string
+	Flags     string
 }
 
 type channelMemberPayload struct {
@@ -284,6 +306,32 @@ type operatorPayload struct {
 	HostMask  string
 	Flags     []string
 	CreatedAt string
+}
+
+type accountPayload struct {
+	ID        string
+	Username  string
+	Email     string
+	Verified  bool
+	CreatedAt string
+	Nicks     []string
+}
+
+type accountDetailPayload struct {
+	ID              string
+	Username        string
+	Email           string
+	Verified        bool
+	CreatedAt       string
+	UpdatedAt       string
+	Nicks           []string
+	FounderChannels []string
+	AccessChannels  []accountAccessRow
+}
+
+type accountAccessRow struct {
+	Channel string
+	Flags   string
 }
 
 type tokenPayload struct {
@@ -1223,8 +1271,249 @@ func (s *Server) handleChannelDetailPage(sess *session, w http.ResponseWriter, r
 	detail.Invexes = sortedKeys(ch.Invexes())
 	detail.Quiets = sortedKeys(ch.Quiets())
 
+	s.fillChannelRegistration(r.Context(), detail, name)
+
 	data.ChannelDetail = detail
 	s.renderPage(w, "channel_detail", data)
+}
+
+// fillChannelRegistration attaches the registration + account-picker
+// fields to detail. Safe to call with a nil store — both slices are
+// left empty in that case and the template renders the "unregistered"
+// branch.
+func (s *Server) fillChannelRegistration(ctx context.Context, detail *channelDetailPayload, name string) {
+	if s.pages == nil || s.pages.Store == nil {
+		return
+	}
+	// Account options for the register / add-access forms.
+	if accts, err := s.pages.Store.Accounts().List(ctx); err == nil {
+		for _, a := range accts {
+			detail.AccountOptions = append(detail.AccountOptions, a.Username)
+		}
+		sort.Strings(detail.AccountOptions)
+	}
+	rc, err := s.pages.Store.RegisteredChannels().Get(ctx, name)
+	if err != nil {
+		return // unregistered — template shows the "register" form
+	}
+	reg := &channelRegistrationPayload{
+		FounderID: rc.FounderID,
+		Guard:     rc.Guard,
+		KeepTopic: rc.KeepTopic,
+		CreatedAt: rc.CreatedAt.UTC().Format(time.RFC3339),
+	}
+	if acct, err := s.pages.Store.Accounts().GetByID(ctx, rc.FounderID); err == nil {
+		reg.FounderUsername = acct.Username
+	} else {
+		reg.FounderUsername = rc.FounderID
+	}
+	if access, err := s.pages.Store.RegisteredChannels().ListAccess(ctx, name); err == nil {
+		for _, ca := range access {
+			reg.Access = append(reg.Access, channelAccessPayload{
+				AccountID: ca.AccountID,
+				Flags:     ca.Flags,
+			})
+		}
+		sort.Slice(reg.Access, func(i, j int) bool {
+			return reg.Access[i].AccountID < reg.Access[j].AccountID
+		})
+	}
+	detail.Registration = reg
+}
+
+// normalizeChannelName re-prepends '#' when the URL path value lost
+// its sigil. The existing channel detail handler does the same thing;
+// the registration form posts share the logic here so a single helper
+// keeps the behaviour consistent.
+func normalizeChannelName(name string) string {
+	if name == "" {
+		return name
+	}
+	switch name[0] {
+	case '#', '&', '+', '!':
+		return name
+	}
+	return "#" + name
+}
+
+// handleChannelRegister handles POST /dashboard/channels/{name}/register.
+func (s *Server) handleChannelRegister(sess *session, w http.ResponseWriter, r *http.Request) {
+	name := normalizeChannelName(r.PathValue("name"))
+	if s.pages == nil || s.pages.Store == nil {
+		http.Error(w, "store not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if !s.checkCSRF(sess, r.PostForm.Get("csrf")) {
+		http.Error(w, "bad csrf token", http.StatusForbidden)
+		return
+	}
+	founder := strings.TrimSpace(r.PostForm.Get("founder_id"))
+	guard := r.PostForm.Get("guard") != ""
+	if founder == "" {
+		http.Error(w, "founder_id required", http.StatusBadRequest)
+		return
+	}
+	if _, err := s.pages.Store.Accounts().GetByID(r.Context(), founder); err != nil {
+		http.Error(w, "founder account does not exist", http.StatusBadRequest)
+		return
+	}
+	rc := &storage.RegisteredChannel{
+		Channel:   name,
+		FounderID: founder,
+		Guard:     guard,
+	}
+	if err := s.pages.Store.RegisteredChannels().Create(r.Context(), rc); err != nil {
+		if errors.Is(err, storage.ErrConflict) {
+			http.Error(w, "already registered", http.StatusConflict)
+			return
+		}
+		s.logger.Warn("dashboard channel register failed", "channel", name, "error", err)
+		http.Error(w, "register failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/dashboard/channels/"+url.PathEscape(name), http.StatusSeeOther)
+}
+
+// handleChannelRegistrationUpdate handles POST
+// /dashboard/channels/{name}/registration/update (guard / keeptopic /
+// founder edits). The founder_id form field is optional; when empty
+// the existing founder is kept.
+func (s *Server) handleChannelRegistrationUpdate(sess *session, w http.ResponseWriter, r *http.Request) {
+	name := normalizeChannelName(r.PathValue("name"))
+	if s.pages == nil || s.pages.Store == nil {
+		http.Error(w, "store not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if !s.checkCSRF(sess, r.PostForm.Get("csrf")) {
+		http.Error(w, "bad csrf token", http.StatusForbidden)
+		return
+	}
+	rc, err := s.pages.Store.RegisteredChannels().Get(r.Context(), name)
+	if err != nil {
+		http.Error(w, "not registered", http.StatusNotFound)
+		return
+	}
+	if f := strings.TrimSpace(r.PostForm.Get("founder_id")); f != "" {
+		if _, err := s.pages.Store.Accounts().GetByID(r.Context(), f); err != nil {
+			http.Error(w, "founder account does not exist", http.StatusBadRequest)
+			return
+		}
+		rc.FounderID = f
+	}
+	rc.Guard = r.PostForm.Get("guard") != ""
+	rc.KeepTopic = r.PostForm.Get("keep_topic") != ""
+	if err := s.pages.Store.RegisteredChannels().Update(r.Context(), rc); err != nil {
+		s.logger.Warn("dashboard channel registration update failed", "channel", name, "error", err)
+		http.Error(w, "update failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/dashboard/channels/"+url.PathEscape(name), http.StatusSeeOther)
+}
+
+// handleChannelDrop handles POST /dashboard/channels/{name}/registration/delete.
+func (s *Server) handleChannelDrop(sess *session, w http.ResponseWriter, r *http.Request) {
+	name := normalizeChannelName(r.PathValue("name"))
+	if s.pages == nil || s.pages.Store == nil {
+		http.Error(w, "store not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if !s.checkCSRF(sess, r.PostForm.Get("csrf")) {
+		http.Error(w, "bad csrf token", http.StatusForbidden)
+		return
+	}
+	if err := s.pages.Store.RegisteredChannels().Delete(r.Context(), name); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			http.Error(w, "not registered", http.StatusNotFound)
+			return
+		}
+		s.logger.Warn("dashboard channel drop failed", "channel", name, "error", err)
+		http.Error(w, "drop failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/dashboard/channels/"+url.PathEscape(name), http.StatusSeeOther)
+}
+
+// handleChannelAccessAdd handles POST /dashboard/channels/{name}/access.
+func (s *Server) handleChannelAccessAdd(sess *session, w http.ResponseWriter, r *http.Request) {
+	name := normalizeChannelName(r.PathValue("name"))
+	if s.pages == nil || s.pages.Store == nil {
+		http.Error(w, "store not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if !s.checkCSRF(sess, r.PostForm.Get("csrf")) {
+		http.Error(w, "bad csrf token", http.StatusForbidden)
+		return
+	}
+	accountID := strings.TrimSpace(r.PostForm.Get("account_id"))
+	flags := strings.TrimSpace(r.PostForm.Get("flags"))
+	if accountID == "" {
+		http.Error(w, "account_id required", http.StatusBadRequest)
+		return
+	}
+	if _, err := s.pages.Store.RegisteredChannels().Get(r.Context(), name); err != nil {
+		http.Error(w, "channel not registered", http.StatusNotFound)
+		return
+	}
+	if _, err := s.pages.Store.Accounts().GetByID(r.Context(), accountID); err != nil {
+		http.Error(w, "account does not exist", http.StatusBadRequest)
+		return
+	}
+	ca := &storage.ChannelAccess{
+		Channel:   name,
+		AccountID: accountID,
+		Flags:     flags,
+	}
+	if err := s.pages.Store.RegisteredChannels().SetAccess(r.Context(), ca); err != nil {
+		s.logger.Warn("dashboard channel access set failed", "channel", name, "error", err)
+		http.Error(w, "set access failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/dashboard/channels/"+url.PathEscape(name), http.StatusSeeOther)
+}
+
+// handleChannelAccessRemove handles POST
+// /dashboard/channels/{name}/access/{account_id}/delete.
+func (s *Server) handleChannelAccessRemove(sess *session, w http.ResponseWriter, r *http.Request) {
+	name := normalizeChannelName(r.PathValue("name"))
+	accountID := r.PathValue("account_id")
+	if s.pages == nil || s.pages.Store == nil {
+		http.Error(w, "store not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if !s.checkCSRF(sess, r.PostForm.Get("csrf")) {
+		http.Error(w, "bad csrf token", http.StatusForbidden)
+		return
+	}
+	if err := s.pages.Store.RegisteredChannels().DeleteAccess(r.Context(), name, accountID); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			http.Error(w, "access entry not found", http.StatusNotFound)
+			return
+		}
+		s.logger.Warn("dashboard channel access delete failed", "channel", name, "error", err)
+		http.Error(w, "delete failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/dashboard/channels/"+url.PathEscape(name), http.StatusSeeOther)
 }
 
 // handleChannelTopicPost is the form post that backs the
@@ -1499,6 +1788,213 @@ func strconvItoa(n int64) string {
 		buf[i] = '-'
 	}
 	return string(buf[i:])
+}
+
+// ----- accounts pages ------------------------------------------------
+
+// handleAccountsPage renders /dashboard/accounts — list + create form.
+func (s *Server) handleAccountsPage(sess *session, w http.ResponseWriter, r *http.Request) {
+	data := s.newPageData(sess, "accounts", "accounts")
+	s.fillAccounts(r.Context(), data)
+	s.renderPage(w, "accounts", data)
+}
+
+func (s *Server) fillAccounts(ctx context.Context, data *pageData) {
+	if s.pages == nil || s.pages.Store == nil {
+		return
+	}
+	accts, err := s.pages.Store.Accounts().List(ctx)
+	if err != nil {
+		s.logger.Warn("dashboard list accounts failed", "error", err)
+		return
+	}
+	for _, a := range accts {
+		row := accountPayload{
+			ID:        a.ID,
+			Username:  a.Username,
+			Email:     a.Email,
+			Verified:  a.Verified,
+			CreatedAt: a.CreatedAt.UTC().Format(time.RFC3339),
+		}
+		owners, err := s.pages.Store.NickOwners().ListByAccount(ctx, a.ID)
+		if err == nil {
+			for _, no := range owners {
+				row.Nicks = append(row.Nicks, no.Nick)
+			}
+			sort.Strings(row.Nicks)
+		}
+		data.Accounts = append(data.Accounts, row)
+	}
+	sort.Slice(data.Accounts, func(i, j int) bool { return data.Accounts[i].Username < data.Accounts[j].Username })
+}
+
+// handleAccountCreate handles POST /dashboard/accounts/create.
+func (s *Server) handleAccountCreate(sess *session, w http.ResponseWriter, r *http.Request) {
+	if s.pages == nil || s.pages.Store == nil {
+		http.Error(w, "accounts not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if !s.checkCSRF(sess, r.PostForm.Get("csrf")) {
+		http.Error(w, "bad csrf token", http.StatusForbidden)
+		return
+	}
+	username := strings.TrimSpace(r.PostForm.Get("username"))
+	password := r.PostForm.Get("password")
+	email := strings.TrimSpace(r.PostForm.Get("email"))
+	if username == "" || password == "" {
+		s.renderAccountsWithFlash(sess, w, r, "username and password are required")
+		return
+	}
+	hash, err := auth.Hash(auth.AlgorithmArgon2id, password, auth.DefaultArgon2idParams())
+	if err != nil {
+		s.renderAccountsWithFlash(sess, w, r, "hash failed: "+err.Error())
+		return
+	}
+	acct := &storage.Account{
+		ID:           username, // match NickServ convention
+		Username:     username,
+		PasswordHash: hash,
+		Email:        email,
+	}
+	if err := s.pages.Store.Accounts().Create(r.Context(), acct); err != nil {
+		if errors.Is(err, storage.ErrConflict) {
+			s.renderAccountsWithFlash(sess, w, r, "account already exists")
+			return
+		}
+		s.renderAccountsWithFlash(sess, w, r, "create failed: "+err.Error())
+		return
+	}
+	http.Redirect(w, r, "/dashboard/accounts", http.StatusSeeOther)
+}
+
+func (s *Server) renderAccountsWithFlash(sess *session, w http.ResponseWriter, r *http.Request, flash string) {
+	data := s.newPageData(sess, "accounts", "accounts")
+	data.Flash = flash
+	s.fillAccounts(r.Context(), data)
+	s.renderPage(w, "accounts", data)
+}
+
+// handleAccountDetailPage renders /dashboard/accounts/{id}.
+func (s *Server) handleAccountDetailPage(sess *session, w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.pages == nil || s.pages.Store == nil {
+		http.Error(w, "accounts not configured", http.StatusServiceUnavailable)
+		return
+	}
+	acct, err := s.pages.Store.Accounts().GetByID(r.Context(), id)
+	if err != nil {
+		http.Error(w, "no such account", http.StatusNotFound)
+		return
+	}
+	data := s.newPageData(sess, "accounts", "account — "+acct.Username)
+	detail := &accountDetailPayload{
+		ID:        acct.ID,
+		Username:  acct.Username,
+		Email:     acct.Email,
+		Verified:  acct.Verified,
+		CreatedAt: acct.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt: acct.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+	owners, err := s.pages.Store.NickOwners().ListByAccount(r.Context(), acct.ID)
+	if err == nil {
+		for _, no := range owners {
+			detail.Nicks = append(detail.Nicks, no.Nick)
+		}
+		sort.Strings(detail.Nicks)
+	}
+	// Walk all registered channels to find founder + access hits. The
+	// registered-channel list is small enough that a linear scan is
+	// cheaper than maintaining a reverse index.
+	if regs, err := s.pages.Store.RegisteredChannels().List(r.Context()); err == nil {
+		for _, rc := range regs {
+			if rc.FounderID == acct.ID {
+				detail.FounderChannels = append(detail.FounderChannels, rc.Channel)
+			}
+			if ca, err := s.pages.Store.RegisteredChannels().GetAccess(r.Context(), rc.Channel, acct.ID); err == nil {
+				detail.AccessChannels = append(detail.AccessChannels, accountAccessRow{
+					Channel: ca.Channel,
+					Flags:   ca.Flags,
+				})
+			}
+		}
+		sort.Strings(detail.FounderChannels)
+		sort.Slice(detail.AccessChannels, func(i, j int) bool {
+			return detail.AccessChannels[i].Channel < detail.AccessChannels[j].Channel
+		})
+	}
+	data.AccountDetail = detail
+	s.renderPage(w, "account_detail", data)
+}
+
+// handleAccountDelete handles POST /dashboard/accounts/{id}/delete.
+func (s *Server) handleAccountDelete(sess *session, w http.ResponseWriter, r *http.Request) {
+	if s.pages == nil || s.pages.Store == nil {
+		http.Error(w, "accounts not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if !s.checkCSRF(sess, r.PostForm.Get("csrf")) {
+		http.Error(w, "bad csrf token", http.StatusForbidden)
+		return
+	}
+	id := r.PathValue("id")
+	acct, err := s.pages.Store.Accounts().GetByID(r.Context(), id)
+	if err != nil {
+		http.Error(w, "no such account", http.StatusNotFound)
+		return
+	}
+	if err := s.pages.Store.Accounts().Delete(r.Context(), acct.Username); err != nil {
+		s.logger.Warn("dashboard account delete failed", "id", id, "error", err)
+		http.Error(w, "delete failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/dashboard/accounts", http.StatusSeeOther)
+}
+
+// handleAccountPasswordReset handles POST /dashboard/accounts/{id}/password.
+func (s *Server) handleAccountPasswordReset(sess *session, w http.ResponseWriter, r *http.Request) {
+	if s.pages == nil || s.pages.Store == nil {
+		http.Error(w, "accounts not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if !s.checkCSRF(sess, r.PostForm.Get("csrf")) {
+		http.Error(w, "bad csrf token", http.StatusForbidden)
+		return
+	}
+	id := r.PathValue("id")
+	password := r.PostForm.Get("password")
+	if password == "" {
+		http.Error(w, "password required", http.StatusBadRequest)
+		return
+	}
+	acct, err := s.pages.Store.Accounts().GetByID(r.Context(), id)
+	if err != nil {
+		http.Error(w, "no such account", http.StatusNotFound)
+		return
+	}
+	hash, err := auth.Hash(auth.AlgorithmArgon2id, password, auth.DefaultArgon2idParams())
+	if err != nil {
+		http.Error(w, "hash failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	acct.PasswordHash = hash
+	if err := s.pages.Store.Accounts().Update(r.Context(), acct); err != nil {
+		s.logger.Warn("dashboard account password reset failed", "id", id, "error", err)
+		http.Error(w, "update failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/dashboard/accounts/"+id, http.StatusSeeOther)
 }
 
 // silence unused-import warnings while iterating
