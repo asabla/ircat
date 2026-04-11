@@ -271,11 +271,12 @@ type botPayload struct {
 }
 
 type botDetailPayload struct {
-	ID      string
-	Name    string
-	Enabled bool
-	Source  string
-	Status  string
+	ID           string
+	Name         string
+	Enabled      bool
+	Source       string
+	Status       string
+	TickInterval string // Go duration literal, e.g. "2s", "500ms"; empty when zero
 }
 
 type operatorPayload struct {
@@ -627,12 +628,27 @@ func (s *Server) handleBotDetailPage(sess *session, w http.ResponseWriter, r *ht
 	}
 	data.Title = "bot — " + bot.Name
 	data.BotDetail = &botDetailPayload{
-		ID:      bot.ID,
-		Name:    bot.Name,
-		Enabled: bot.Enabled,
-		Source:  bot.Source,
+		ID:           bot.ID,
+		Name:         bot.Name,
+		Enabled:      bot.Enabled,
+		Source:       bot.Source,
+		TickInterval: formatTickInterval(bot.TickInterval),
 	}
 	s.renderPage(w, "bot_detail", data)
+}
+
+// formatTickInterval renders a stored bot tick duration as the
+// Go duration literal shown in the dashboard input. A zero
+// interval renders as the empty string so the input starts
+// blank (meaning "no tick"). time.Duration.String is good
+// enough for the shapes operators type by hand — "500ms",
+// "2s", "1m30s" — but we special-case the zero value so the
+// field is not pre-populated with "0s".
+func formatTickInterval(d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+	return d.String()
 }
 
 // handleBotSourcePost saves a fresh copy of the bot source via
@@ -658,6 +674,24 @@ func (s *Server) handleBotSourcePost(sess *session, w http.ResponseWriter, r *ht
 		return
 	}
 	bot.Source = r.PostForm.Get("source")
+	// Optional tick-interval field. Empty string means "leave
+	// the existing value alone"; an explicit "0" or "0s" means
+	// "disable ticking". Anything else goes through
+	// time.ParseDuration so operators can type "500ms", "2s",
+	// "1m30s" etc. A parse failure is surfaced via Flash and
+	// the save is rejected, mirroring the validator path below.
+	if raw := strings.TrimSpace(r.PostForm.Get("tick_interval")); raw != "" {
+		d, derr := time.ParseDuration(raw)
+		if derr != nil {
+			s.renderBotDetailWithFlash(sess, w, r, bot, "bad tick_interval: "+derr.Error())
+			return
+		}
+		if d < 0 {
+			s.renderBotDetailWithFlash(sess, w, r, bot, "tick_interval must be zero or positive")
+			return
+		}
+		bot.TickInterval = d
+	}
 	// Pre-save syntax check: if a validator is wired and the
 	// source fails to compile, re-render the edit page with the
 	// error and do NOT call UpdateBot. That keeps the previous
@@ -685,10 +719,11 @@ func (s *Server) renderBotDetailWithFlash(sess *session, w http.ResponseWriter, 
 	data := s.newPageData(sess, "bots", "bot — "+bot.Name)
 	data.Flash = flash
 	data.BotDetail = &botDetailPayload{
-		ID:      bot.ID,
-		Name:    bot.Name,
-		Enabled: bot.Enabled,
-		Source:  bot.Source,
+		ID:           bot.ID,
+		Name:         bot.Name,
+		Enabled:      bot.Enabled,
+		Source:       bot.Source,
+		TickInterval: formatTickInterval(bot.TickInterval),
 	}
 	s.renderPage(w, "bot_detail", data)
 }
