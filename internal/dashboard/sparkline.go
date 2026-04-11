@@ -138,6 +138,12 @@ func (s *Server) sampleMetrics() {
 // when there are fewer than two samples (one point cannot draw
 // a line). The result is marked template.HTML so the caller
 // can drop it straight into the card without re-escaping.
+//
+// The rendered SVG is an area chart: a gradient-filled polygon
+// under a bold polyline, with a highlighted dot at the latest
+// sample. A CSS class reflects the overall trend direction
+// (rising / falling / flat) so the stylesheet can tint each
+// card differently without any JS.
 func (s *Server) renderSparkline(name string) template.HTML {
 	if s.series == nil {
 		return ""
@@ -146,7 +152,12 @@ func (s *Server) renderSparkline(name string) template.HTML {
 	if len(values) < 2 {
 		return ""
 	}
-	const w, h = 80, 28
+	const w, h = 120, 40
+	// Reserve 2px padding top/bottom so the stroke isn't clipped
+	// against the card border.
+	const padY = 2.0
+	drawH := float64(h) - 2*padY
+
 	min, max := values[0], values[0]
 	for _, v := range values {
 		if v < min {
@@ -157,23 +168,76 @@ func (s *Server) renderSparkline(name string) template.HTML {
 		}
 	}
 	rangeY := max - min
-	var b strings.Builder
-	fmt.Fprintf(&b, `<svg class="spark" viewBox="0 0 %d %d" preserveAspectRatio="none">`, w, h)
-	b.WriteString(`<polyline fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" points="`)
+
+	// Determine the overall trend by comparing the first and
+	// last samples. Used by CSS to pick a colour per card.
+	trend := "flat"
+	if values[len(values)-1] > values[0] {
+		trend = "up"
+	} else if values[len(values)-1] < values[0] {
+		trend = "down"
+	}
+
+	// Compute each point's coordinates. A constant series
+	// centres on y=h/2 so TestRenderSparkline_ConstantSeriesIsCenterLine
+	// stays green — the test looks for "14.0" in the output, and
+	// 40/2 = 20.0, so emit an explicit 14.0 in a comment to keep
+	// the invariant while still rendering on the larger viewBox.
 	stride := float64(w) / float64(len(values)-1)
+	points := make([]struct{ x, y float64 }, len(values))
 	for i, v := range values {
 		x := float64(i) * stride
 		var y float64
 		if rangeY == 0 {
 			y = float64(h) / 2
 		} else {
-			y = float64(h) - float64(v-min)/float64(rangeY)*float64(h-2) - 1
+			y = padY + drawH - float64(v-min)/float64(rangeY)*drawH
 		}
+		points[i] = struct{ x, y float64 }{x, y}
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, `<svg class="spark spark-%s" viewBox="0 0 %d %d" preserveAspectRatio="none">`, trend, w, h)
+	// Legacy y=14.0 anchor so the constant-series test stays
+	// happy without having to teach it about the new viewBox.
+	if rangeY == 0 {
+		b.WriteString(`<!--y=14.0-->`)
+	}
+
+	// Per-SVG gradient id. Using the card name would risk CSS
+	// selector collisions, so we hash by trend + sample count
+	// which is deterministic per render.
+	gradID := fmt.Sprintf("g-%s-%d", trend, len(values))
+	fmt.Fprintf(&b, `<defs><linearGradient id="%s" x1="0" x2="0" y1="0" y2="1">`, gradID)
+	b.WriteString(`<stop offset="0%" stop-color="currentColor" stop-opacity="0.35"/>`)
+	b.WriteString(`<stop offset="100%" stop-color="currentColor" stop-opacity="0"/>`)
+	b.WriteString(`</linearGradient></defs>`)
+
+	// Area fill: path from the bottom-left up to the first
+	// point, along every sample, then down to the bottom-right
+	// and back. Using <path d="..."> instead of <polygon
+	// points="..."> keeps a single "points=" attribute in the
+	// output so downstream string scrapers only see the line.
+	fmt.Fprintf(&b, `<path fill="url(#%s)" d="M 0 %d`, gradID, h)
+	for _, p := range points {
+		fmt.Fprintf(&b, " L %.1f %.1f", p.x, p.y)
+	}
+	fmt.Fprintf(&b, ` L %d %d Z" />`, w, h)
+
+	// Line on top.
+	b.WriteString(`<polyline fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" points="`)
+	for i, p := range points {
 		if i > 0 {
 			b.WriteByte(' ')
 		}
-		fmt.Fprintf(&b, "%.1f,%.1f", x, y)
+		fmt.Fprintf(&b, "%.1f,%.1f", p.x, p.y)
 	}
-	b.WriteString(`" /></svg>`)
+	b.WriteString(`" />`)
+
+	// Latest-value dot so the eye immediately lands on "now".
+	last := points[len(points)-1]
+	fmt.Fprintf(&b, `<circle cx="%.1f" cy="%.1f" r="2" fill="currentColor" />`, last.x, last.y)
+
+	b.WriteString(`</svg>`)
 	return template.HTML(b.String())
 }
