@@ -75,4 +75,86 @@
   <ul>{{range .ChannelDetail.Quiets}}<li><code>{{.}}</code></li>{{end}}</ul>
 </div>
 {{end}}
+
+<div class="panel">
+  <h3>registration (ChanServ)</h3>
+  {{with .ChannelDetail.Registration}}
+  <dl class="kv">
+    <dt>founder</dt><dd><a href="/dashboard/accounts/{{.FounderID}}">{{.FounderUsername}}</a></dd>
+    <dt>guard</dt><dd>{{if .Guard}}<span class="pill ok">on</span>{{else}}<span class="pill">off</span>{{end}}</dd>
+    <dt>keep topic</dt><dd>{{if .KeepTopic}}<span class="pill ok">on</span>{{else}}<span class="pill">off</span>{{end}}</dd>
+    <dt>registered</dt><dd class="muted">{{.CreatedAt}}</dd>
+  </dl>
+
+  <h4>update</h4>
+  <form method="post" action="/dashboard/channels/{{$.ChannelDetail.Name | pathEscape}}/registration/update" class="row">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <label>founder
+      <select name="founder_id">
+        {{range $.ChannelDetail.AccountOptions}}
+        <option value="{{.}}" {{if eq . $.ChannelDetail.Registration.FounderID}}selected{{end}}>{{.}}</option>
+        {{end}}
+      </select>
+    </label>
+    <label><input type="checkbox" name="guard" {{if .Guard}}checked{{end}}> guard</label>
+    <label><input type="checkbox" name="keep_topic" {{if .KeepTopic}}checked{{end}}> keep topic</label>
+    <button type="submit" class="primary">save</button>
+  </form>
+
+  <h4>access list</h4>
+  {{if .Access}}
+  <table>
+    <thead><tr><th>account</th><th>flags</th><th></th></tr></thead>
+    <tbody>
+    {{range .Access}}
+    <tr>
+      <td><a href="/dashboard/accounts/{{.AccountID}}">{{.AccountID}}</a></td>
+      <td><code>{{.Flags}}</code></td>
+      <td>
+        <form method="post" action="/dashboard/channels/{{$.ChannelDetail.Name | pathEscape}}/access/{{.AccountID}}/delete" class="inline">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <button type="submit" class="danger">revoke</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="empty-state">no access entries.</p>
+  {{end}}
+
+  <h4>grant access</h4>
+  <form method="post" action="/dashboard/channels/{{$.ChannelDetail.Name | pathEscape}}/access" class="row">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <label>account
+      <select name="account_id" required>
+        <option value="">-- pick --</option>
+        {{range $.ChannelDetail.AccountOptions}}<option value="{{.}}">{{.}}</option>{{end}}
+      </select>
+    </label>
+    <label>flags <input type="text" name="flags" placeholder="ov" maxlength="8"></label>
+    <button type="submit" class="primary">grant</button>
+  </form>
+
+  <h4>drop registration</h4>
+  <form method="post" action="/dashboard/channels/{{$.ChannelDetail.Name | pathEscape}}/registration/delete" class="row">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <button type="submit" class="danger">drop registration</button>
+  </form>
+  {{else}}
+  <p class="empty-state">this channel is not registered with ChanServ.</p>
+  <form method="post" action="/dashboard/channels/{{.ChannelDetail.Name | pathEscape}}/register" class="row">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>founder
+      <select name="founder_id" required>
+        <option value="">-- pick --</option>
+        {{range .ChannelDetail.AccountOptions}}<option value="{{.}}">{{.}}</option>{{end}}
+      </select>
+    </label>
+    <label><input type="checkbox" name="guard" checked> guard</label>
+    <button type="submit" class="primary">register this channel</button>
+  </form>
+  {{end}}
+</div>
 {{end}}
