@@ -4,15 +4,24 @@
 
 {{template "overview-cards" .}}
 
-<div class="panel">
-  <h3>server</h3>
-  <dl class="kv">
-    <dt>name</dt><dd>{{.Server.Name}}</dd>
-    <dt>network</dt><dd>{{.Server.Network}}</dd>
-    <dt>version</dt><dd>{{.Server.Version}}</dd>
-    <dt>started at</dt><dd>{{.Server.StartedAt}}</dd>
-    <dt>listeners</dt><dd>{{range .Server.Listeners}}<code>{{.}}</code> {{end}}</dd>
-  </dl>
+<div class="overview-grid">
+  <div class="panel">
+    <h3>server</h3>
+    <dl class="kv">
+      <dt>name</dt><dd>{{.Server.Name}}</dd>
+      <dt>network</dt><dd>{{.Server.Network}}</dd>
+      <dt>version</dt><dd><code>{{.Server.Version}}</code></dd>
+      <dt>started at</dt><dd>{{.Server.StartedAt}}</dd>
+    </dl>
+  </div>
+  <div class="panel">
+    <h3>listeners</h3>
+    <dl class="kv">
+      {{range .Server.Listeners}}
+      <dt>bind</dt><dd><code>{{.}}</code></dd>
+      {{end}}
+    </dl>
+  </div>
 </div>
 {{end}}
 

@@ -1,6 +1,6 @@
 {{define "content"}}
-<div class="panel" style="max-width: 24rem; margin: 4rem auto;">
-  <h2 style="margin-top: 0;">ircat</h2>
+<div class="login-box">
+  <h2>ircat</h2>
   <p class="subtitle">operator sign-in</p>
   {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
   <form method="post" action="/dashboard/login">

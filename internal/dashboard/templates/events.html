@@ -10,7 +10,7 @@
     {{range .Events}}
     <tr>
       <td class="muted">{{.Timestamp}}</td>
-      <td><span class="pill">{{.Type}}</span></td>
+      <td><span class="pill type-{{.Type}}">{{.Type}}</span></td>
       <td><code>{{.Actor}}</code></td>
       <td>{{.Target}}</td>
       <td><code>{{.DataJSON}}</code></td>
@@ -19,7 +19,7 @@
     </tbody>
   </table>
   {{else}}
-  <p class="muted">no events recorded yet.</p>
+  <p class="empty-state">no events recorded yet.</p>
   {{end}}
 </div>
 {{end}}
