@@ -197,6 +197,7 @@ func (s *Supervisor) startBot(ctx context.Context, bot storage.Bot) error {
 		botID:    bot.ID,
 		inbox:    make(chan *protocol.Message, 64),
 		now:      time.Now,
+		logs:     newBotLogRing(DefaultBotLogCapacity),
 	}
 
 	rt, err := NewRuntime(bot.Source, session, DefaultBudget())
@@ -267,6 +268,21 @@ func (s *Supervisor) stopBot(id string) {
 	s.logger.Info("bot stopped", "id", id)
 }
 
+// BotLogsSince returns the tail of log lines the named bot has
+// emitted since the given sequence number, in chronological
+// order. Returns nil if no bot with that id is currently
+// running. Used by the dashboard SSE log-pane handler and the
+// matching htmx target on the bot detail page.
+func (s *Supervisor) BotLogsSince(id string, seq uint64) []BotLogEntry {
+	s.mu.Lock()
+	h, ok := s.running[id]
+	s.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	return h.session.LogsSince(seq)
+}
+
 // Sessions returns a snapshot of every running bot's (userID,
 // session). Used by cmd/ircat to register the sessions as bot
 // deliverers on the server after the supervisor has started them.
@@ -309,6 +325,13 @@ type Session struct {
 	now   func() time.Time
 
 	runtime *Runtime
+
+	// logs is the per-bot tail the dashboard streams via SSE.
+	// Every ctx:log() call the script makes lands here in
+	// addition to the global slog sink, so operators watching
+	// the bot detail page see lines immediately instead of
+	// sifting the server-wide log tail.
+	logs *botLogRing
 }
 
 // Deliver implements server.BotDeliverer. Non-blocking: a full
@@ -442,6 +465,21 @@ func (s *Session) PartChannel(channelName, reason string) error {
 func (s *Session) Nick() string { return s.nickName }
 func (s *Session) Log(level, message string) {
 	s.logger.Log(context.Background(), parseLogLevel(level), message)
+	if s.logs != nil {
+		s.logs.append(level, message, s.Now())
+	}
+}
+
+// LogsSince returns every log entry the bot has emitted since
+// the supplied sequence number, in chronological order. The
+// zero value asks for the full ring buffer (up to the current
+// capacity). Used by the dashboard SSE handler to seed a new
+// log pane and then stream fresh lines as they land.
+func (s *Session) LogsSince(seq uint64) []BotLogEntry {
+	if s.logs == nil {
+		return nil
+	}
+	return s.logs.since(seq)
 }
 
 // parseLogLevel maps a Lua-side level string to the matching slog

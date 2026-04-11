@@ -34,6 +34,18 @@ type PageDeps struct {
 	// Bots is the supervisor surface used by the bots CRUD
 	// pages. Optional — without it the form posts return 503.
 	Bots BotManager
+	// BotValidator is the pure-function pre-save Lua
+	// syntax-check hook the bot edit page calls into. Matches
+	// internal/bots.Validate. Optional — without it the
+	// Validate button returns 503 and the Save path skips the
+	// pre-check (today's destructive behaviour).
+	BotValidator func(source string) error
+	// BotLogs is the per-bot log tail source the bot detail
+	// page's SSE pane subscribes to. internal/bots.Supervisor
+	// satisfies it via BotLogsSince. Optional — without it the
+	// log pane renders the empty state and the SSE handler
+	// returns 503.
+	BotLogs BotLogSource
 	// LogTail is the in-memory ring buffer the /dashboard/logs
 	// SSE stream polls. Optional — without it the page renders
 	// the empty state and the SSE handler returns 503.
@@ -74,6 +86,28 @@ type BotManager interface {
 // matching Since method declared on the entry type.
 type LogRing interface {
 	Since(seq uint64) []LogEntry
+}
+
+// BotLogSource is the read-only surface the per-bot SSE log
+// pane subscribes to. internal/bots.Supervisor satisfies it
+// via BotLogsSince. Defined here (rather than importing
+// internal/bots) so the dashboard package does not depend on
+// the runtime, matching the existing BotManager indirection.
+type BotLogSource interface {
+	BotLogsSince(id string, seq uint64) []BotLogEntry
+}
+
+// BotLogEntry is the dashboard-side projection of one log
+// record emitted by a bot's ctx:log() call. The getters
+// mirror LogEntry so the SSE handler can reuse the same
+// JSON-emit helper for both sources.
+// internal/bots.BotLogEntry satisfies this interface via
+// value-receiver getters on the concrete type.
+type BotLogEntry interface {
+	Sequence() uint64
+	Timestamp() time.Time
+	LevelName() string
+	MessageText() string
 }
 
 // LogEntry is the dashboard-side projection of one log record
@@ -237,11 +271,12 @@ type botPayload struct {
 }
 
 type botDetailPayload struct {
-	ID      string
-	Name    string
-	Enabled bool
-	Source  string
-	Status  string
+	ID           string
+	Name         string
+	Enabled      bool
+	Source       string
+	Status       string
+	TickInterval string // Go duration literal, e.g. "2s", "500ms"; empty when zero
 }
 
 type operatorPayload struct {
@@ -593,12 +628,27 @@ func (s *Server) handleBotDetailPage(sess *session, w http.ResponseWriter, r *ht
 	}
 	data.Title = "bot — " + bot.Name
 	data.BotDetail = &botDetailPayload{
-		ID:      bot.ID,
-		Name:    bot.Name,
-		Enabled: bot.Enabled,
-		Source:  bot.Source,
+		ID:           bot.ID,
+		Name:         bot.Name,
+		Enabled:      bot.Enabled,
+		Source:       bot.Source,
+		TickInterval: formatTickInterval(bot.TickInterval),
 	}
 	s.renderPage(w, "bot_detail", data)
+}
+
+// formatTickInterval renders a stored bot tick duration as the
+// Go duration literal shown in the dashboard input. A zero
+// interval renders as the empty string so the input starts
+// blank (meaning "no tick"). time.Duration.String is good
+// enough for the shapes operators type by hand — "500ms",
+// "2s", "1m30s" — but we special-case the zero value so the
+// field is not pre-populated with "0s".
+func formatTickInterval(d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+	return d.String()
 }
 
 // handleBotSourcePost saves a fresh copy of the bot source via
@@ -624,11 +674,199 @@ func (s *Server) handleBotSourcePost(sess *session, w http.ResponseWriter, r *ht
 		return
 	}
 	bot.Source = r.PostForm.Get("source")
+	// Optional tick-interval field. Empty string means "leave
+	// the existing value alone"; an explicit "0" or "0s" means
+	// "disable ticking". Anything else goes through
+	// time.ParseDuration so operators can type "500ms", "2s",
+	// "1m30s" etc. A parse failure is surfaced via Flash and
+	// the save is rejected, mirroring the validator path below.
+	if raw := strings.TrimSpace(r.PostForm.Get("tick_interval")); raw != "" {
+		d, derr := time.ParseDuration(raw)
+		if derr != nil {
+			s.renderBotDetailWithFlash(sess, w, r, bot, "bad tick_interval: "+derr.Error())
+			return
+		}
+		if d < 0 {
+			s.renderBotDetailWithFlash(sess, w, r, bot, "tick_interval must be zero or positive")
+			return
+		}
+		bot.TickInterval = d
+	}
+	// Pre-save syntax check: if a validator is wired and the
+	// source fails to compile, re-render the edit page with the
+	// error and do NOT call UpdateBot. That keeps the previous
+	// running source and stored record intact, which is the
+	// whole point of the Validate button's lazy sibling — a
+	// broken save should not replace a running bot.
+	if s.pages.BotValidator != nil {
+		if verr := s.pages.BotValidator(bot.Source); verr != nil {
+			s.renderBotDetailWithFlash(sess, w, r, bot, "lua error: "+verr.Error())
+			return
+		}
+	}
 	if err := s.pages.Bots.UpdateBot(r.Context(), bot); err != nil {
 		http.Error(w, "update failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	http.Redirect(w, r, "/dashboard/bots/"+id, http.StatusSeeOther)
+}
+
+// renderBotDetailWithFlash re-renders the bot detail page with
+// an error message in the Flash field. Used by the source POST
+// handler so a validation or update failure does not redirect
+// away from the textarea the operator was editing.
+func (s *Server) renderBotDetailWithFlash(sess *session, w http.ResponseWriter, r *http.Request, bot *storage.Bot, flash string) {
+	data := s.newPageData(sess, "bots", "bot — "+bot.Name)
+	data.Flash = flash
+	data.BotDetail = &botDetailPayload{
+		ID:           bot.ID,
+		Name:         bot.Name,
+		Enabled:      bot.Enabled,
+		Source:       bot.Source,
+		TickInterval: formatTickInterval(bot.TickInterval),
+	}
+	s.renderPage(w, "bot_detail", data)
+}
+
+// handleBotValidatePost is the htmx target for the Validate
+// button on the bot edit page. It returns a tiny HTML fragment
+// (ok pill or error block) without touching storage. The
+// fragment replaces the contents of the #validate-result div
+// via hx-target.
+func (s *Server) handleBotValidatePost(sess *session, w http.ResponseWriter, r *http.Request) {
+	if s.pages == nil || s.pages.BotValidator == nil {
+		http.Error(w, "validator not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if !s.checkCSRF(sess, r.PostForm.Get("csrf")) {
+		http.Error(w, "bad csrf token", http.StatusForbidden)
+		return
+	}
+	source := r.PostForm.Get("source")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.pages.BotValidator(source); err != nil {
+		w.Write([]byte(`<span class="pill warn">invalid</span> <code>` + htmlEscape(err.Error()) + `</code>`))
+		return
+	}
+	w.Write([]byte(`<span class="pill ok">lua ok</span>`))
+}
+
+// handleBotLogsSSE streams the tail of one bot's ctx:log()
+// output to the matching pane on the bot detail page. The
+// shape mirrors handleLogsSSE exactly: seed the client with
+// the current ring contents, then poll every
+// botLogsPollInterval for anything newer and emit it as an
+// SSE data frame.
+//
+// Returns 503 if no BotLogs source is wired (test harness) or
+// 404 if the supplied id is not currently running — the ring
+// lives on the session, so a stopped bot has nothing to
+// stream. That mirrors the per-bot toggle/source posts which
+// also require the session to be live.
+func (s *Server) handleBotLogsSSE(sess *session, w http.ResponseWriter, r *http.Request) {
+	if s.pages == nil || s.pages.BotLogs == nil {
+		http.Error(w, "bot logs not configured", http.StatusServiceUnavailable)
+		return
+	}
+	id := r.PathValue("id")
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	var lastSeq uint64
+	backlog := s.pages.BotLogs.BotLogsSince(id, 0)
+	for _, e := range backlog {
+		if err := writeBotLogSSE(w, e); err != nil {
+			return
+		}
+		if e.Sequence() > lastSeq {
+			lastSeq = e.Sequence()
+		}
+	}
+	flusher.Flush()
+
+	ticker := time.NewTicker(botLogsPollInterval)
+	defer ticker.Stop()
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			entries := s.pages.BotLogs.BotLogsSince(id, lastSeq)
+			if len(entries) == 0 {
+				if _, err := w.Write([]byte(": ping\n\n")); err != nil {
+					return
+				}
+				flusher.Flush()
+				continue
+			}
+			for _, e := range entries {
+				if err := writeBotLogSSE(w, e); err != nil {
+					return
+				}
+				if e.Sequence() > lastSeq {
+					lastSeq = e.Sequence()
+				}
+			}
+			flusher.Flush()
+		}
+	}
+}
+
+// botLogsPollInterval matches logsPollInterval: the two SSE
+// handlers run off the same cadence so the bot detail pane
+// feels identical to the server-wide log tail.
+const botLogsPollInterval = 250 * time.Millisecond
+
+// writeBotLogSSE writes one bot log entry as an SSE data
+// frame. Format matches writeLogSSE so the browser-side JS
+// snippet in bot_detail.html can reuse the JSON.parse / append
+// pattern from logs.html without a second dialect.
+func writeBotLogSSE(w http.ResponseWriter, e BotLogEntry) error {
+	msg := jsonEscape(e.MessageText())
+	ts := e.Timestamp().UTC().Format("15:04:05.000")
+	payload := `{"seq":` + u64toa(e.Sequence()) +
+		`,"time":"` + ts +
+		`","level":"` + lowerLevel(e.LevelName()) +
+		`","message":"` + msg + `"}`
+	_, err := w.Write([]byte("data: " + payload + "\n\n"))
+	return err
+}
+
+// htmlEscape is the tiny escaper the validate fragment uses.
+// Enough for a compiler diagnostic; for anything more we would
+// route through html/template.
+func htmlEscape(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '&':
+			b.WriteString("&amp;")
+		case '<':
+			b.WriteString("&lt;")
+		case '>':
+			b.WriteString("&gt;")
+		case '"':
+			b.WriteString("&quot;")
+		case '\'':
+			b.WriteString("&#39;")
+		default:
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
 }
 
 // handleBotTogglePost flips a bot's Enabled flag and pushes the

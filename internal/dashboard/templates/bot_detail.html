@@ -2,6 +2,8 @@
 <h2>bot &mdash; {{.BotDetail.Name}}</h2>
 <p class="subtitle"><a href="/dashboard/bots">&larr; all bots</a></p>
 
+{{if .Flash}}<p class="error">{{.Flash}}</p>{{end}}
+
 <div class="panel">
   <h3>state</h3>
   <dl class="kv">
@@ -16,10 +18,51 @@
 
 <div class="panel">
   <h3>source</h3>
-  <form method="post" action="/dashboard/bots/{{.BotDetail.ID}}/source">
+  <form method="post" action="/dashboard/bots/{{.BotDetail.ID}}/source" id="bot-source-form">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <textarea name="source" rows="20">{{.BotDetail.Source}}</textarea>
-    <button type="submit" class="primary">save source</button>
+    <div class="toolbar">
+      <label>tick interval
+        <input type="text" name="tick_interval" value="{{.BotDetail.TickInterval}}" placeholder="e.g. 2s, 500ms (blank = no tick)">
+      </label>
+      <button type="submit" class="primary">save source</button>
+      <button type="button"
+              hx-post="/dashboard/bots/validate"
+              hx-include="#bot-source-form"
+              hx-target="#validate-result"
+              hx-swap="innerHTML">validate</button>
+      <span id="validate-result"></span>
+    </div>
   </form>
 </div>
+
+<div class="panel">
+  <h3>live log</h3>
+  <p class="subtitle">streaming ctx:log() output from this bot</p>
+  <div id="botlogstream"></div>
+</div>
+
+<script>
+(function() {
+  var stream = document.getElementById('botlogstream');
+  if (!stream) return;
+  var es = new EventSource('/dashboard/bots/{{.BotDetail.ID}}/logs/stream');
+  es.onmessage = function(e) {
+    var rec;
+    try { rec = JSON.parse(e.data); } catch(_) { return; }
+    var line = document.createElement('span');
+    line.className = 'line lvl-' + rec.level;
+    line.textContent = rec.time + ' ' + rec.level.toUpperCase().padEnd(5) + ' ' + rec.message;
+    stream.appendChild(line);
+    if (stream.childElementCount > 500) stream.removeChild(stream.firstChild);
+    stream.scrollTop = stream.scrollHeight;
+  };
+  es.onerror = function() {
+    var note = document.createElement('span');
+    note.className = 'line lvl-error';
+    note.textContent = '[stream disconnected]';
+    stream.appendChild(note);
+  };
+})();
+</script>
 {{end}}

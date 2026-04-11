@@ -140,13 +140,14 @@ func runServer(args []string) error {
 	server.WithReloader(reloader)(srv)
 
 	apiSrv := api.New(api.Options{
-		Store:      store,
-		World:      world,
-		Actuator:   srv,
-		BotManager: sup,
-		ServerInfo: srv,
-		Reloader:   reloader,
-		Logger:     logger.With("component", "api"),
+		Store:        store,
+		World:        world,
+		Actuator:     srv,
+		BotManager:   sup,
+		BotValidator: bots.Validate,
+		ServerInfo:   srv,
+		Reloader:     reloader,
+		Logger:       logger.With("component", "api"),
 	})
 
 	dash := dashboard.New(dashboard.Options{
@@ -154,13 +155,15 @@ func runServer(args []string) error {
 		Logger:     logger.With("component", "dashboard"),
 		APIHandler: apiSrv.Handler(),
 		PageDeps: &dashboard.PageDeps{
-			Store:      store,
-			World:      world,
-			ServerInfo: srv,
-			Actuator:   srv,
-			Federation: federationListerAdapter{srv: srv},
-			Bots:       sup,
-			LogTail:    logRingAdapter{ring: ring},
+			Store:        store,
+			World:        world,
+			ServerInfo:   srv,
+			Actuator:     srv,
+			Federation:   federationListerAdapter{srv: srv},
+			Bots:         sup,
+			BotValidator: bots.Validate,
+			BotLogs:      botLogAdapter{sup: sup},
+			LogTail:      logRingAdapter{ring: ring},
 		},
 		Metrics: srv,
 		ReadyFunc: func() error {
@@ -279,6 +282,32 @@ func (a logRingAdapter) Since(seq uint64) []dashboard.LogEntry {
 	}
 	entries := a.ring.Since(seq)
 	out := make([]dashboard.LogEntry, len(entries))
+	for i := range entries {
+		out[i] = entries[i]
+	}
+	return out
+}
+
+// botLogAdapter widens *bots.Supervisor.BotLogsSince (which
+// returns []bots.BotLogEntry) into the dashboard.BotLogSource
+// signature (which returns []dashboard.BotLogEntry). Mirrors
+// logRingAdapter above: the wrap is trivial because every
+// bots.BotLogEntry already satisfies dashboard.BotLogEntry via
+// getter methods, but Go still wants the explicit slice copy
+// before the interface conversion.
+type botLogAdapter struct {
+	sup *bots.Supervisor
+}
+
+func (a botLogAdapter) BotLogsSince(id string, seq uint64) []dashboard.BotLogEntry {
+	if a.sup == nil {
+		return nil
+	}
+	entries := a.sup.BotLogsSince(id, seq)
+	if len(entries) == 0 {
+		return nil
+	}
+	out := make([]dashboard.BotLogEntry, len(entries))
 	for i := range entries {
 		out[i] = entries[i]
 	}

@@ -37,13 +37,14 @@ import (
 // [API.Handler] to get an http.Handler suitable for mounting under
 // the dashboard's /api/v1 prefix.
 type API struct {
-	store      storage.Store
-	world      *state.World
-	logger     *slog.Logger
-	actuator   Actuator
-	botManager BotManager
-	reloader   Reloader
-	now        func() time.Time
+	store        storage.Store
+	world        *state.World
+	logger       *slog.Logger
+	actuator     Actuator
+	botManager   BotManager
+	botValidator BotValidator
+	reloader     Reloader
+	now          func() time.Time
 
 	// serverInfo describes the running ircat node. Captured at
 	// New time so the /server endpoint does not need to grow a
@@ -96,14 +97,15 @@ type Reloader interface {
 
 // Options configures [New].
 type Options struct {
-	Store      storage.Store
-	World      *state.World
-	Actuator   Actuator
-	BotManager BotManager
-	ServerInfo ServerInfoSource
-	Reloader   Reloader
-	Federation FederationLister
-	Logger     *slog.Logger
+	Store        storage.Store
+	World        *state.World
+	Actuator     Actuator
+	BotManager   BotManager
+	BotValidator BotValidator
+	ServerInfo   ServerInfoSource
+	Reloader     Reloader
+	Federation   FederationLister
+	Logger       *slog.Logger
 }
 
 // New constructs an API.
@@ -113,15 +115,16 @@ func New(opts Options) *API {
 		logger = slog.Default()
 	}
 	return &API{
-		store:      opts.Store,
-		world:      opts.World,
-		actuator:   opts.Actuator,
-		botManager: opts.BotManager,
-		serverInfo: opts.ServerInfo,
-		reloader:   opts.Reloader,
-		federation: opts.Federation,
-		logger:     logger,
-		now:        time.Now,
+		store:        opts.Store,
+		world:        opts.World,
+		actuator:     opts.Actuator,
+		botManager:   opts.BotManager,
+		botValidator: opts.BotValidator,
+		serverInfo:   opts.ServerInfo,
+		reloader:     opts.Reloader,
+		federation:   opts.Federation,
+		logger:       logger,
+		now:          time.Now,
 	}
 }
 
@@ -143,6 +146,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /tokens", a.requireToken(a.handleCreateToken))
 	mux.HandleFunc("DELETE /tokens/{id}", a.requireToken(a.handleDeleteToken))
 	mux.HandleFunc("GET /events", a.requireToken(a.handleListEvents))
+	mux.HandleFunc("POST /bots/validate", a.requireToken(a.handleValidateBot))
 	mux.HandleFunc("GET /bots", a.requireToken(a.handleListBots))
 	mux.HandleFunc("GET /bots/{id}", a.requireToken(a.handleGetBot))
 	mux.HandleFunc("POST /bots", a.requireToken(a.handleCreateBot))

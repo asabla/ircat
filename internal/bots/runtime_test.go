@@ -250,6 +250,40 @@ func TestParseLogLevel(t *testing.T) {
 	}
 }
 
+func TestValidate(t *testing.T) {
+	cases := []struct {
+		name    string
+		source  string
+		wantErr bool
+	}{
+		{"empty", "", false},
+		{"comment only", "-- nothing to see", false},
+		{"function def", "function on_message(ctx, ev) ctx:say(ev.channel, 'hi') end", false},
+		{"syntax error", "function broken(", true},
+		{"stray token", "function x() end ???", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := Validate(tc.source)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("Validate err=%v wantErr=%v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestValidate_NoSideEffects makes sure the validator never
+// executes top-level code: a script with a top-level error()
+// call must still validate cleanly because LoadString only
+// compiles, it does not run.
+func TestValidate_NoSideEffects(t *testing.T) {
+	src := `error("top-level explosion")
+function on_message(ctx, ev) end`
+	if err := Validate(src); err != nil {
+		t.Fatalf("Validate should not run top-level: %v", err)
+	}
+}
+
 func TestExtractCommand(t *testing.T) {
 	cases := []struct {
 		in      string
