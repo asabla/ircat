@@ -40,6 +40,12 @@ type PageDeps struct {
 	// Validate button returns 503 and the Save path skips the
 	// pre-check (today's destructive behaviour).
 	BotValidator func(source string) error
+	// BotLogs is the per-bot log tail source the bot detail
+	// page's SSE pane subscribes to. internal/bots.Supervisor
+	// satisfies it via BotLogsSince. Optional — without it the
+	// log pane renders the empty state and the SSE handler
+	// returns 503.
+	BotLogs BotLogSource
 	// LogTail is the in-memory ring buffer the /dashboard/logs
 	// SSE stream polls. Optional — without it the page renders
 	// the empty state and the SSE handler returns 503.
@@ -80,6 +86,28 @@ type BotManager interface {
 // matching Since method declared on the entry type.
 type LogRing interface {
 	Since(seq uint64) []LogEntry
+}
+
+// BotLogSource is the read-only surface the per-bot SSE log
+// pane subscribes to. internal/bots.Supervisor satisfies it
+// via BotLogsSince. Defined here (rather than importing
+// internal/bots) so the dashboard package does not depend on
+// the runtime, matching the existing BotManager indirection.
+type BotLogSource interface {
+	BotLogsSince(id string, seq uint64) []BotLogEntry
+}
+
+// BotLogEntry is the dashboard-side projection of one log
+// record emitted by a bot's ctx:log() call. The getters
+// mirror LogEntry so the SSE handler can reuse the same
+// JSON-emit helper for both sources.
+// internal/bots.BotLogEntry satisfies this interface via
+// value-receiver getters on the concrete type.
+type BotLogEntry interface {
+	Sequence() uint64
+	Timestamp() time.Time
+	LevelName() string
+	MessageText() string
 }
 
 // LogEntry is the dashboard-side projection of one log record
@@ -690,6 +718,95 @@ func (s *Server) handleBotValidatePost(sess *session, w http.ResponseWriter, r *
 		return
 	}
 	w.Write([]byte(`<span class="pill ok">lua ok</span>`))
+}
+
+// handleBotLogsSSE streams the tail of one bot's ctx:log()
+// output to the matching pane on the bot detail page. The
+// shape mirrors handleLogsSSE exactly: seed the client with
+// the current ring contents, then poll every
+// botLogsPollInterval for anything newer and emit it as an
+// SSE data frame.
+//
+// Returns 503 if no BotLogs source is wired (test harness) or
+// 404 if the supplied id is not currently running — the ring
+// lives on the session, so a stopped bot has nothing to
+// stream. That mirrors the per-bot toggle/source posts which
+// also require the session to be live.
+func (s *Server) handleBotLogsSSE(sess *session, w http.ResponseWriter, r *http.Request) {
+	if s.pages == nil || s.pages.BotLogs == nil {
+		http.Error(w, "bot logs not configured", http.StatusServiceUnavailable)
+		return
+	}
+	id := r.PathValue("id")
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	var lastSeq uint64
+	backlog := s.pages.BotLogs.BotLogsSince(id, 0)
+	for _, e := range backlog {
+		if err := writeBotLogSSE(w, e); err != nil {
+			return
+		}
+		if e.Sequence() > lastSeq {
+			lastSeq = e.Sequence()
+		}
+	}
+	flusher.Flush()
+
+	ticker := time.NewTicker(botLogsPollInterval)
+	defer ticker.Stop()
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			entries := s.pages.BotLogs.BotLogsSince(id, lastSeq)
+			if len(entries) == 0 {
+				if _, err := w.Write([]byte(": ping\n\n")); err != nil {
+					return
+				}
+				flusher.Flush()
+				continue
+			}
+			for _, e := range entries {
+				if err := writeBotLogSSE(w, e); err != nil {
+					return
+				}
+				if e.Sequence() > lastSeq {
+					lastSeq = e.Sequence()
+				}
+			}
+			flusher.Flush()
+		}
+	}
+}
+
+// botLogsPollInterval matches logsPollInterval: the two SSE
+// handlers run off the same cadence so the bot detail pane
+// feels identical to the server-wide log tail.
+const botLogsPollInterval = 250 * time.Millisecond
+
+// writeBotLogSSE writes one bot log entry as an SSE data
+// frame. Format matches writeLogSSE so the browser-side JS
+// snippet in bot_detail.html can reuse the JSON.parse / append
+// pattern from logs.html without a second dialect.
+func writeBotLogSSE(w http.ResponseWriter, e BotLogEntry) error {
+	msg := jsonEscape(e.MessageText())
+	ts := e.Timestamp().UTC().Format("15:04:05.000")
+	payload := `{"seq":` + u64toa(e.Sequence()) +
+		`,"time":"` + ts +
+		`","level":"` + lowerLevel(e.LevelName()) +
+		`","message":"` + msg + `"}`
+	_, err := w.Write([]byte("data: " + payload + "\n\n"))
+	return err
 }
 
 // htmlEscape is the tiny escaper the validate fragment uses.

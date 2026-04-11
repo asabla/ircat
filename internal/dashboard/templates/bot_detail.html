@@ -32,4 +32,34 @@
     </div>
   </form>
 </div>
+
+<div class="panel">
+  <h3>live log</h3>
+  <p class="subtitle">streaming ctx:log() output from this bot</p>
+  <div id="botlogstream"></div>
+</div>
+
+<script>
+(function() {
+  var stream = document.getElementById('botlogstream');
+  if (!stream) return;
+  var es = new EventSource('/dashboard/bots/{{.BotDetail.ID}}/logs/stream');
+  es.onmessage = function(e) {
+    var rec;
+    try { rec = JSON.parse(e.data); } catch(_) { return; }
+    var line = document.createElement('span');
+    line.className = 'line lvl-' + rec.level;
+    line.textContent = rec.time + ' ' + rec.level.toUpperCase().padEnd(5) + ' ' + rec.message;
+    stream.appendChild(line);
+    if (stream.childElementCount > 500) stream.removeChild(stream.firstChild);
+    stream.scrollTop = stream.scrollHeight;
+  };
+  es.onerror = function() {
+    var note = document.createElement('span');
+    note.className = 'line lvl-error';
+    note.textContent = '[stream disconnected]';
+    stream.appendChild(note);
+  };
+})();
+</script>
 {{end}}
