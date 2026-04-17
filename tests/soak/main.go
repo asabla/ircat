@@ -27,10 +27,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"math/rand"
+	"net"
 	"os"
 	"os/signal"
 	"strings"
@@ -112,29 +114,12 @@ func main() {
 	}()
 	log.Printf("connected %d clients", *nConns)
 
-	// Round-robin each client into its assigned channels. We
-	// JOIN every channel for every client so the load test
-	// exercises broadcast fan-out at the configured channel
-	// count.
-	for i, c := range clients {
-		for j := 0; j < *nChannels; j++ {
-			channelName := fmt.Sprintf("#soak%d", j)
-			if err := c.Send(fmt.Sprintf("JOIN %s", channelName)); err != nil {
-				log.Fatalf("join[%d/%d]: %v", i, j, err)
-			}
-		}
-	}
-	// Drain server replies long enough for the JOIN bursts to
-	// land. We do not assert on each numeric — that would slow
-	// the warmup to a crawl at high conn counts.
-	time.Sleep(*warmup)
-	log.Printf("warmup complete")
-
-	// Sustained PRIVMSG load. Each client runs at
-	// (msgsPerSec / nConns) per second. The producer goroutines
-	// share a single context so a Ctrl-C cleanly tears the run
-	// down.
-	ctx, cancel := signalContext(*duration)
+	// Outer context covers the whole run: JOIN burst, warmup, and
+	// the measured PRIVMSG phase. Drainers live for this window.
+	// The big headroom allows for a slow JOIN burst on a loaded
+	// runner (high conn count × high channel count fans out
+	// quadratic work on the server side).
+	ctx, cancel := signalContext(*warmup + *duration + 60*time.Minute)
 	defer cancel()
 
 	var (
@@ -142,6 +127,76 @@ func main() {
 		received atomic.Int64
 		drops    atomic.Int64
 	)
+
+	// Drainers: one goroutine per client, running for the whole
+	// test. They MUST be started before the JOIN burst — otherwise
+	// the server fans JOIN broadcasts and NAMES/TOPIC replies into
+	// a socket no one is reading, the kernel receive buffer fills,
+	// the server's writeLoop back-pressures, and the per-conn
+	// sendq overflow guard cancels the connection. That bug
+	// manifests client-side as the very next JOIN write returning
+	// "connection reset by peer".
+	var drainerWg sync.WaitGroup
+	drainerWg.Add(*nConns)
+	for _, c := range clients {
+		c := c
+		go func() {
+			defer drainerWg.Done()
+			drainClient(ctx, c, &received)
+		}()
+	}
+
+	// Each client joins every channel in parallel, paced so the
+	// server's per-conn sendq does not back up under the fan-out
+	// storm. Every JOIN to a channel with N existing members
+	// generates N+4 replies (fanout + joiner's topic/names/
+	// endofnames), so a naive all-at-once burst at high conn
+	// counts trivially exceeds the bounded sendq. We cap each
+	// client to roughly joinPacePerSec JOINs per second, which
+	// keeps the instantaneous fan-out within what the writeLoop
+	// can drain to the socket.
+	{
+		const joinPacePerSec = 200
+		var (
+			joinWg  sync.WaitGroup
+			joinErr atomic.Value // stores error
+		)
+		joinWg.Add(*nConns)
+		for i, c := range clients {
+			i, c := i, c
+			go func() {
+				defer joinWg.Done()
+				pace := time.Second / time.Duration(joinPacePerSec)
+				for j := 0; j < *nChannels; j++ {
+					if err := c.Send(fmt.Sprintf("JOIN #soak%d", j)); err != nil {
+						joinErr.CompareAndSwap(nil, fmt.Errorf("join[%d/%d]: %w", i, j, err))
+						return
+					}
+					time.Sleep(pace)
+				}
+			}()
+		}
+		joinWg.Wait()
+		if v := joinErr.Load(); v != nil {
+			cancel()
+			drainerWg.Wait()
+			log.Fatal(v.(error))
+		}
+	}
+	// Let the JOIN broadcasts quiesce before we start measuring.
+	time.Sleep(*warmup)
+	log.Printf("warmup complete")
+
+	// Reset so the summary only counts what arrived during the
+	// measured PRIVMSG window.
+	received.Store(0)
+
+	// Sustained PRIVMSG load. Each client runs at
+	// (msgsPerSec / nConns) per second. Senders share a context
+	// bounded by *duration; a Ctrl-C tears the run down via ctx.
+	senderCtx, senderCancel := context.WithTimeout(ctx, *duration)
+	defer senderCancel()
+
 	perConnRate := float64(*msgsPerSec) / float64(*nConns)
 	if perConnRate <= 0 {
 		perConnRate = 0.001
@@ -156,58 +211,18 @@ func main() {
 		i, c := i, c
 		go func() {
 			defer wg.Done()
-			// Reader: drain the server's pipe so the conn does
-			// not back up. We MUST keep reading for the lifetime
-			// of the run — letting the OS receive buffer fill
-			// would back-pressure the server's writeLoop and
-			// trip the per-conn sendq overflow guard, which
-			// looks like a "drop" on the sender side.
-			//
-			// We use short rolling deadlines so the goroutine
-			// can wake up and notice ctx cancellation; on
-			// timeout we just loop back instead of exiting.
-			readerDone := make(chan struct{})
-			go func() {
-				defer close(readerDone)
-				for {
-					if ctx.Err() != nil {
-						return
-					}
-					line, err := c.ReadLine(time.Now().Add(500 * time.Millisecond))
-					if err != nil {
-						// Distinguish "deadline exceeded"
-						// (loop back) from "conn closed"
-						// (return). The ircclient helper
-						// surfaces both as a generic error,
-						// so we use ctx as the lifetime flag
-						// and only check for hard EOF via a
-						// short retry.
-						if ctx.Err() != nil {
-							return
-						}
-						continue
-					}
-					if line != "" {
-						received.Add(1)
-					}
-				}
-			}()
-			// Sender: emit PRIVMSG at the configured rate to a
-			// random one of the joined channels.
 			r := rand.New(rand.NewSource(int64(i)))
 			ticker := time.NewTicker(interval)
 			defer ticker.Stop()
 			for {
 				select {
-				case <-ctx.Done():
-					<-readerDone
+				case <-senderCtx.Done():
 					return
 				case <-ticker.C:
 					ch := fmt.Sprintf("#soak%d", r.Intn(*nChannels))
 					line := fmt.Sprintf("PRIVMSG %s :soak %d %d", ch, i, sent.Load())
 					if err := c.Send(line); err != nil {
 						drops.Add(1)
-						<-readerDone
 						return
 					}
 					sent.Add(1)
@@ -217,6 +232,10 @@ func main() {
 	}
 	wg.Wait()
 	elapsed := time.Since(t0)
+
+	// Senders are done; tell drainers to stop and wait for them.
+	cancel()
+	drainerWg.Wait()
 
 	// Summary. The harness reports sent / received / drops /
 	// rate. Server-side RSS observation is the operator's job
@@ -258,6 +277,33 @@ func runMeshMode(addrsFlag string, conns, channels, msgsPerSec int, duration, wa
 	defer cancel()
 	if err := RunMesh(ctx, cfg); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// drainClient reads every line the server sends, dropping them on
+// the floor after incrementing the receive counter. Short rolling
+// read deadlines let the goroutine wake up to notice ctx
+// cancellation; a non-timeout read error (EOF, closed conn) exits
+// the drainer so a dead connection does not spin.
+func drainClient(ctx context.Context, c *ircclient.Client, received *atomic.Int64) {
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		line, err := c.ReadLine(time.Now().Add(500 * time.Millisecond))
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				continue
+			}
+			return
+		}
+		if line != "" {
+			received.Add(1)
+		}
 	}
 }
 
