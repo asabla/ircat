@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
+	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -78,19 +81,7 @@ func RunMesh(ctx context.Context, cfg MeshConfig) error {
 	defer meshCloseAll(clients)
 	log.Printf("mesh: connected %d clients (%d per node)", totalConns, cfg.ConnsPerNode)
 
-	// Phase 2: join channels.
-	for i, c := range clients {
-		for j := 0; j < cfg.Channels; j++ {
-			ch := fmt.Sprintf("#mesh%d", j)
-			if err := c.Send(fmt.Sprintf("JOIN %s", ch)); err != nil {
-				return fmt.Errorf("join[%d/%d]: %w", i, j, err)
-			}
-		}
-	}
-	time.Sleep(cfg.Warmup)
-	log.Printf("mesh: warmup complete")
-
-	// Phase 3: sustained PRIVMSG load with cross-node probes.
+	// Shared counters used by both the drainer and sender phases.
 	var (
 		sent     [3]atomic.Int64
 		received [3]atomic.Int64
@@ -99,6 +90,46 @@ func RunMesh(ctx context.Context, cfg MeshConfig) error {
 		probeHit atomic.Int64
 	)
 
+	// Drainers live for the whole remaining run (JOIN + warmup +
+	// measured phase). Starting them before the JOIN burst keeps
+	// the server's per-conn sendq from overflowing while we fan
+	// JOIN broadcasts across three nodes.
+	drainerCtx, drainerCancel := context.WithCancel(ctx)
+	defer drainerCancel()
+
+	var drainerWg sync.WaitGroup
+	drainerWg.Add(totalConns)
+	for i, c := range clients {
+		i, c := i, c
+		node := nodeOf[i]
+		go func() {
+			defer drainerWg.Done()
+			meshDrainClient(drainerCtx, c, &received[node], &probeHit)
+		}()
+	}
+
+	// Phase 2: join channels (drainers are running).
+	for i, c := range clients {
+		for j := 0; j < cfg.Channels; j++ {
+			ch := fmt.Sprintf("#mesh%d", j)
+			if err := c.Send(fmt.Sprintf("JOIN %s", ch)); err != nil {
+				drainerCancel()
+				drainerWg.Wait()
+				return fmt.Errorf("join[%d/%d]: %w", i, j, err)
+			}
+		}
+	}
+	time.Sleep(cfg.Warmup)
+	log.Printf("mesh: warmup complete")
+
+	// Reset counters so the summary only reflects the measured
+	// PRIVMSG phase.
+	for n := 0; n < 3; n++ {
+		received[n].Store(0)
+	}
+	probeHit.Store(0)
+
+	// Phase 3: sustained PRIVMSG load with cross-node probes.
 	perConnRate := float64(cfg.MsgsPerSec) / float64(totalConns)
 	if perConnRate <= 0 {
 		perConnRate = 0.001
@@ -117,34 +148,6 @@ func RunMesh(ctx context.Context, cfg MeshConfig) error {
 		node := nodeOf[i]
 		go func() {
 			defer wg.Done()
-
-			// Reader goroutine: drain server pipe and count
-			// cross-node probes from other nodes.
-			readerDone := make(chan struct{})
-			go func() {
-				defer close(readerDone)
-				for {
-					if meshCtx.Err() != nil {
-						return
-					}
-					line, err := c.ReadLine(time.Now().Add(500 * time.Millisecond))
-					if err != nil {
-						if meshCtx.Err() != nil {
-							return
-						}
-						continue
-					}
-					if line != "" {
-						received[node].Add(1)
-					}
-					// Detect cross-node probes from other nodes.
-					if len(line) > 8 && line[0:8] == "XPROBE::" {
-						probeHit.Add(1)
-					}
-				}
-			}()
-
-			// Sender goroutine.
 			r := rand.New(rand.NewSource(int64(i)))
 			ticker := time.NewTicker(interval)
 			defer ticker.Stop()
@@ -152,7 +155,6 @@ func RunMesh(ctx context.Context, cfg MeshConfig) error {
 			for {
 				select {
 				case <-meshCtx.Done():
-					<-readerDone
 					return
 				case <-ticker.C:
 					ch := fmt.Sprintf("#mesh%d", r.Intn(cfg.Channels))
@@ -168,7 +170,6 @@ func RunMesh(ctx context.Context, cfg MeshConfig) error {
 					}
 					if err := c.Send(line); err != nil {
 						drops[node].Add(1)
-						<-readerDone
 						return
 					}
 					sent[node].Add(1)
@@ -178,6 +179,10 @@ func RunMesh(ctx context.Context, cfg MeshConfig) error {
 	}
 	wg.Wait()
 	elapsed := time.Since(t0)
+
+	// Senders are done; shut drainers down too.
+	drainerCancel()
+	drainerWg.Wait()
 
 	// Phase 4: report.
 	totalSent := sent[0].Load() + sent[1].Load() + sent[2].Load()
@@ -226,6 +231,38 @@ func meshCloseAll(clients []*ircclient.Client) {
 	for _, c := range clients {
 		if c != nil {
 			_ = c.Close()
+		}
+	}
+}
+
+// meshDrainClient drains server replies for a single mesh client,
+// counting lines received and cross-node probe hits. Short rolling
+// read deadlines keep the goroutine responsive to ctx cancellation;
+// a non-timeout error (EOF, closed conn) exits so a dead connection
+// does not spin.
+func meshDrainClient(ctx context.Context, c *ircclient.Client, received, probeHit *atomic.Int64) {
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		line, err := c.ReadLine(time.Now().Add(500 * time.Millisecond))
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				continue
+			}
+			return
+		}
+		if line != "" {
+			received.Add(1)
+		}
+		// Probe line is ":nick!user@host PRIVMSG #chan :XPROBE::N:M"
+		// so we just substring-match the tag rather than parse.
+		if strings.Contains(line, "XPROBE::") {
+			probeHit.Add(1)
 		}
 	}
 }
