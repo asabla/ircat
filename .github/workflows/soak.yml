@@ -1,12 +1,16 @@
 name: soak
 
 # Nightly soak run that drives the existing tests/soak harness
-# against a fresh ircat instance for one hour. The targets here
-# are deliberately smaller than the v1.1 reference soak (10k
-# conns / 1k channels / 24h) — this job runs on a GitHub-hosted
-# runner which has 4 CPU and 16 GB RAM, not a dedicated
-# Hetzner box. The 24h reference soak is documented in
-# docs/OPERATIONS.md as a manual operator drill.
+# against a fresh ircat instance. The targets here are deliberately
+# smaller than the v1.1 reference soak (10k conns / 1k channels /
+# 24h) — this job runs on a GitHub-hosted runner which has 4 CPU
+# and 16 GB RAM, not a dedicated Hetzner box. Every client joins
+# every channel, so fan-out work grows as O(conns × channels²);
+# the defaults below are what a 4-core runner can sustain without
+# tripping the per-conn sendq guard. The 24h reference soak is
+# documented in docs/OPERATIONS.md as a manual operator drill —
+# override the workflow_dispatch inputs to run a larger shape
+# from a beefier self-hosted runner.
 #
 # The job uploads the per-run summary as a workflow artefact
 # and posts a comment on the latest commit if the harness
@@ -21,10 +25,10 @@ on:
     inputs:
       conns:
         description: 'concurrent connections'
-        default: '5000'
+        default: '500'
       channels:
         description: 'distinct channels'
-        default: '500'
+        default: '10'
       msgs_per_sec:
         description: 'aggregate target msgs/sec'
         default: '500'
@@ -140,8 +144,8 @@ jobs:
       - name: run soak harness
         id: soak
         env:
-          CONNS: ${{ github.event.inputs.conns || '5000' }}
-          CHANNELS: ${{ github.event.inputs.channels || '500' }}
+          CONNS: ${{ github.event.inputs.conns || '500' }}
+          CHANNELS: ${{ github.event.inputs.channels || '10' }}
           RATE: ${{ github.event.inputs.msgs_per_sec || '500' }}
           DURATION: ${{ github.event.inputs.duration || '1h' }}
         run: |
