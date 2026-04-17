@@ -16,12 +16,19 @@ import (
 	"github.com/asabla/ircat/internal/state"
 )
 
-// outboundQueue is the bounded per-connection write queue. Picked to
-// be small enough that a stuck client triggers SendQ-exceeded quickly
-// without blocking the rest of the network, and large enough that
-// normal bursty traffic (a JOIN that triggers NAMES + WHO replies)
-// flows through without back-pressuring the sender.
-const outboundQueue = 64
+// outboundQueue is the bounded per-connection write queue. Sized so
+// transient broadcast spikes (e.g. a joiner fans a JOIN into a
+// busy channel while the writeLoop is mid-syscall on the previous
+// message) don't trip SendQ-exceeded on otherwise healthy clients,
+// while still disconnecting a genuinely stuck client within a
+// bounded backlog.
+//
+// 1024 slots × ~8 bytes of channel overhead per slot = ~8 KiB per
+// conn; at 5 000 concurrent clients that's ~40 MiB — negligible.
+// The only user-visible cost of bumping this is that a client that
+// actually stops reading buffers a bit more before being cut off,
+// which is fine at IRC message sizes.
+const outboundQueue = 1024
 
 // Conn is one accepted client connection. The lifetime is owned by
 // [Server.acceptLoop]; nothing outside this package should hold a
@@ -291,6 +298,14 @@ func (c *Conn) readLoop() {
 // exits when ctx is done *and* the queue has drained, or when a
 // write fails.
 //
+// Messages go through a bufio.Writer so a broadcast burst (one JOIN
+// fanned out to every member of a busy channel) collapses into a
+// small number of syscalls instead of one per message. The loop
+// drains every ready message from c.out before flushing, so under
+// load writes are naturally coalesced; under idle, a single
+// message still round-trips promptly because Flush runs on every
+// iteration that found something to write.
+//
 // On exit it closes the underlying net.Conn so readLoop (which is
 // otherwise parked in a long ReadBytes) unblocks immediately. The
 // drain-then-close ordering is what lets handleQuit queue an ERROR,
@@ -299,16 +314,40 @@ func (c *Conn) readLoop() {
 func (c *Conn) writeLoop() {
 	defer c.cancel(errors.New("write loop exited"))
 	defer func() { _ = c.nc.Close() }()
+	bw := bufio.NewWriterSize(c.nc, outboundBufferBytes)
 	for {
 		select {
 		case <-c.ctx.Done():
-			c.drainOutbound()
+			c.drainOutbound(bw)
+			_ = bw.Flush()
 			return
 		case msg, ok := <-c.out:
 			if !ok {
+				_ = bw.Flush()
 				return
 			}
-			if !c.writeMessage(msg) {
+			if !c.writeMessage(bw, msg) {
+				return
+			}
+			// Coalesce any additional messages already queued
+			// into the same flush.
+			batched := true
+			for batched {
+				select {
+				case next, ok := <-c.out:
+					if !ok {
+						_ = bw.Flush()
+						return
+					}
+					if !c.writeMessage(bw, next) {
+						return
+					}
+				default:
+					batched = false
+				}
+			}
+			if err := bw.Flush(); err != nil {
+				c.logger.Debug("flush error", "error", err)
 				return
 			}
 		}
@@ -318,11 +357,11 @@ func (c *Conn) writeLoop() {
 // drainOutbound writes every message currently sitting in the
 // outbound queue and then returns. It is non-blocking — once the
 // queue is empty it stops.
-func (c *Conn) drainOutbound() {
+func (c *Conn) drainOutbound(bw *bufio.Writer) {
 	for {
 		select {
 		case msg := <-c.out:
-			if !c.writeMessage(msg) {
+			if !c.writeMessage(bw, msg) {
 				return
 			}
 		default:
@@ -331,16 +370,24 @@ func (c *Conn) drainOutbound() {
 	}
 }
 
-// writeMessage encodes msg and writes it to the socket. Returns
-// false on write error so the caller can stop.
-func (c *Conn) writeMessage(msg *protocol.Message) bool {
+// outboundBufferBytes is the size of the per-conn bufio.Writer in
+// front of the socket. 8 KiB is comfortably larger than the 512 B
+// RFC 1459 line limit, so a busy-channel fan-out typically fits in
+// one or two syscalls instead of one per recipient.
+const outboundBufferBytes = 8192
+
+// writeMessage encodes msg and writes it to the buffered writer.
+// The underlying socket Write happens lazily (on Flush or when the
+// buffer fills). Returns false on write error so the caller can
+// stop.
+func (c *Conn) writeMessage(bw *bufio.Writer, msg *protocol.Message) bool {
 	data, err := msg.Bytes()
 	if err != nil {
 		c.logger.Warn("encode error, dropping message", "error", err, "command", msg.Command)
 		return true
 	}
 	_ = c.nc.SetWriteDeadline(c.server.now().Add(30 * time.Second))
-	if _, err := c.nc.Write(data); err != nil {
+	if _, err := bw.Write(data); err != nil {
 		c.logger.Debug("write error", "error", err)
 		return false
 	}
